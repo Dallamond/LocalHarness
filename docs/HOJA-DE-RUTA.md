@@ -10,7 +10,9 @@ Corre en tu PC principal (Windows, RTX 3060 y pronto Tesla M40). Se mejora por i
 | M0 Codex | ⏳ Codex no está instalado en el PC |
 | M1 | ✅ CLI `py -3.12 -m localharness …`; tarea real terminó en `review` y `main` intacto hasta `merge` |
 | M2 | ✅ API + SSE + GUI; ciclo completo en navegador probado con CLI falsa. Falta tu prueba manual y una real |
-| M3–M6 | Pendientes |
+| M3 | ✅ Núcleo, API y CLI; probado real con Haiku. Falta GUI de planes/bandeja |
+| M4 | 🔄 Proveedor `local` sobre llama-server (Director/jefe técnico); falta medir calidad |
+| M5–M6 | Pendientes |
 
 Hallazgos de M0 que cambian el diseño:
 - **Aislamiento obligatorio.** Sin aislar, la CLI hija hereda tus MCP (Canva, Vercel…), plugins, hooks y CLAUDE.md:
