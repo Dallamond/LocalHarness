@@ -35,7 +35,12 @@ def review_data(store: Store, task: dict) -> dict:
     ws = task_workspace(store, task)
     if not ws or not ws.path.exists():
         return {"available": False, "stat": "", "diff": "", "target": None}
-    return {"available": True, "stat": ws.stat(), "diff": ws.diff(), "target": target_branch(store, task)}
+    base, head = task.get("base_commit") or ws.base, task.get("head_commit")
+    if head:  # resultado fijado en su commit (las subtareas de un plan comparten rama)
+        stat, diff = workspace.git(ws.path, "diff", "--stat", base, head), ws.diff_range(base, head)
+    else:
+        stat, diff = workspace.git(ws.path, "diff", "--stat", base), ws.diff_range(base)
+    return {"available": True, "stat": stat, "diff": diff, "target": target_branch(store, task)}
 
 
 def _get(store: Store, tid: int) -> dict:

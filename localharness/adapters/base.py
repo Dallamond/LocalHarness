@@ -25,6 +25,7 @@ class RunSpec:
     max_budget_usd: float | None = None      # Claude: tope de gasto por tarea
     approval_policy: str = "never"           # Codex: nadie contesta preguntas en modo automático
     session_id: str | None = None    # para reanudar
+    json_schema: dict | None = None  # Claude: salida estructurada validada (llega en result.structured_output)
     extra_args: list[str] = field(default_factory=list)
 
 

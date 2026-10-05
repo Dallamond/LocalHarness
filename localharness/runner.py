@@ -26,18 +26,20 @@ async def run(adapter: Adapter, spec: RunSpec, on_event: Callable[[Event], None]
         )
     except (FileNotFoundError, PermissionError, OSError) as e:
         on_event(Event("error", text=f"No se puede lanzar {cmd[0]}: {e}"))
-        return {"status": "failed", "exit_code": None, "duration_s": 0.0, "final": None}
+        return {"status": "failed", "exit_code": None, "duration_s": 0.0, "final": None, "structured": None}
 
     final: str | None = None
+    structured: dict | None = None
     errored = False
     stderr_buf: list[str] = []
 
     async def pump_out():
-        nonlocal final, errored
+        nonlocal final, errored, structured
         async for raw in proc.stdout:
             for ev in adapter.parse(raw.decode("utf-8", "replace")):
                 if ev.kind == "result":
                     final = ev.text
+                    structured = ev.data.get("structured")
                 elif ev.kind == "error":
                     errored = True
                 on_event(ev)
@@ -73,4 +75,5 @@ async def run(adapter: Adapter, spec: RunSpec, on_event: Callable[[Event], None]
         status = "failed"
         if stderr_buf:
             on_event(Event("error", text="".join(stderr_buf)[-2000:]))
-    return {"status": status, "exit_code": proc.returncode, "duration_s": time.monotonic() - t0, "final": final}
+    return {"status": status, "exit_code": proc.returncode, "duration_s": time.monotonic() - t0, "final": final,
+            "structured": structured}

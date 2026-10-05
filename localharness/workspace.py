@@ -37,6 +37,25 @@ class Workspace:
         git(self.path, "add", "-A", "-N")
         return git(self.path, "diff", "--stat", self.base)
 
+    def diff_range(self, frm: str, to: str | None = None) -> str:
+        """Diff entre dos commits; sin `to`, contra el árbol de trabajo (incluye archivos nuevos)."""
+        if to is None:
+            git(self.path, "add", "-A", "-N")
+            return git(self.path, "diff", frm)
+        return git(self.path, "diff", frm, to)
+
+    def changes(self, frm: str | None = None, to: str | None = None) -> list:
+        """Archivos cambiados con estado y líneas, para la política de riesgo."""
+        from localharness.policy import parse_numstat
+        frm = frm or self.base
+        rng = [frm] + ([to] if to else [])
+        if to is None:
+            git(self.path, "add", "-A", "-N")
+        return parse_numstat(git(self.path, "diff", "--numstat", *rng), git(self.path, "diff", "--name-status", *rng))
+
+    def head(self) -> str:
+        return git(self.path, "rev-parse", "HEAD").strip()
+
     def checkpoint(self, message: str) -> str | None:
         git(self.path, "add", "-A")
         if not git(self.path, "status", "--porcelain").strip():

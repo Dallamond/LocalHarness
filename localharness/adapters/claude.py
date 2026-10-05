@@ -11,8 +11,11 @@ Verificado con la CLI real (2.1.287, Windows, 05/10/2026; fixtures en tests/fixt
 - sin aislar, la CLI hija hereda MCP, plugins, hooks y CLAUDE.md del usuario: ~245k tokens de contexto
   para responder «ok». Con `--safe-mode --strict-mcp-config` bajan a ~4,6k (144× menos). `--bare` no
   sirve: prohíbe el login OAuth de la suscripción;
-- `rate_limit_event` informa del uso del plan (ventanas de 5 h y 7 días).
+- `rate_limit_event` informa del uso del plan (ventanas de 5 h y 7 días);
+- `--json-schema` devuelve la salida validada en `result.structured_output` (fixture claude_json_schema.jsonl).
 """
+
+import json
 
 from localharness.adapters.base import Adapter, RunSpec
 from localharness.events import Event
@@ -54,6 +57,8 @@ class ClaudeAdapter(Adapter):
             cmd += ["--max-budget-usd", str(spec.max_budget_usd)]
         if spec.session_id:
             cmd += ["--resume", spec.session_id]
+        if spec.json_schema:  # la CLI añade su herramienta StructuredOutput (gasta 1 turno)
+            cmd += ["--json-schema", json.dumps(spec.json_schema, ensure_ascii=False, separators=(",", ":"))]
         tools = spec.allowed_tools or (READ_TOOLS if spec.read_only else WRITE_TOOLS)
         # --tools limita lo disponible (verificado); --allowedTools auto-aprueba patrones como Bash(git status).
         cmd += ["--permission-mode", "bypassPermissions",
@@ -93,7 +98,8 @@ class ClaudeAdapter(Adapter):
                                          "permission_denials": obj.get("permission_denials") or []})
             if not failed:
                 return [usage, Event("result", text=obj.get("result") or "",
-                                     data={"session_id": obj.get("session_id")})]
+                                     data={"session_id": obj.get("session_id"),
+                                           "structured": obj.get("structured_output")})]
             detail = obj.get("result") or "; ".join(map(str, obj.get("errors") or [])) or obj.get("error") or ""
             return [usage, Event("error", text=f"claude falló ({subtype or 'desconocido'}): {detail}".rstrip(": "))]
         if t == "error":

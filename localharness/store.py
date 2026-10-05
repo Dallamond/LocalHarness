@@ -20,6 +20,21 @@ MIGRATIONS = [
         kind TEXT NOT NULL, text TEXT, data TEXT, ts TEXT DEFAULT CURRENT_TIMESTAMP);
     CREATE INDEX events_task ON events(task_id, id);
     """,
+    # M3: planes del Director y aprobaciones por niveles
+    """
+    CREATE TABLE plans (id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id),
+        request TEXT NOT NULL, director_agent_id INTEGER REFERENCES agents(id),
+        reviewer_agent_id INTEGER REFERENCES agents(id), status TEXT NOT NULL DEFAULT 'planning',
+        plan TEXT, level TEXT, level_reasons TEXT DEFAULT '[]', branch TEXT, worktree TEXT, base_commit TEXT,
+        cost_usd REAL, error TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, finished_at TEXT);
+    ALTER TABLE tasks ADD COLUMN plan_id INTEGER REFERENCES plans(id);
+    ALTER TABLE tasks ADD COLUMN seq INTEGER;
+    ALTER TABLE tasks ADD COLUMN level TEXT;
+    ALTER TABLE tasks ADD COLUMN level_reasons TEXT DEFAULT '[]';
+    ALTER TABLE tasks ADD COLUMN review TEXT;
+    ALTER TABLE tasks ADD COLUMN approved_by TEXT;
+    ALTER TABLE tasks ADD COLUMN head_commit TEXT;
+    """,
 ]
 
 
@@ -85,6 +100,30 @@ class Store:
     def get_task(self, tid: int) -> dict | None:
         return self._one("SELECT * FROM tasks WHERE id=?", tid)
 
+    def add_plan(self, project_id: int, request: str, director_agent_id: int | None,
+                 reviewer_agent_id: int | None = None) -> dict:
+        cur = self.db.execute("INSERT INTO plans(project_id,request,director_agent_id,reviewer_agent_id) VALUES(?,?,?,?)",
+                              (project_id, request, director_agent_id, reviewer_agent_id))
+        self.db.commit()
+        return self.get_plan(cur.lastrowid)  # type: ignore[arg-type,return-value]
+
+    def get_plan(self, pid: int) -> dict | None:
+        return self._one("SELECT * FROM plans WHERE id=?", pid)
+
+    def list_plans(self, project_id: int | None = None) -> list[dict]:
+        if project_id is None:
+            return [dict(r) for r in self.db.execute("SELECT * FROM plans ORDER BY id")]
+        return [dict(r) for r in self.db.execute("SELECT * FROM plans WHERE project_id=? ORDER BY id", (project_id,))]
+
+    def update_plan(self, pid: int, **f: Any) -> None:
+        f = {k: json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else v for k, v in f.items()}
+        keys = ", ".join(f"{k}=?" for k in f)
+        self.db.execute(f"UPDATE plans SET {keys} WHERE id=?", (*f.values(), pid))
+        self.db.commit()
+
+    def plan_tasks(self, plan_id: int) -> list[dict]:
+        return [dict(r) for r in self.db.execute("SELECT * FROM tasks WHERE plan_id=? ORDER BY seq, id", (plan_id,))]
+
     def list_tasks(self, project_id: int | None = None, status: str | None = None) -> list[dict]:
         sql, args = "SELECT * FROM tasks WHERE 1=1", []
         if project_id is not None:
@@ -96,10 +135,12 @@ class Store:
     def mark_interrupted(self) -> int:
         """Al arrancar: una tarea que seguía 'running' murió con el proceso anterior (como Arena)."""
         cur = self.db.execute("UPDATE tasks SET status='interrupted' WHERE status='running'")
+        self.db.execute("UPDATE plans SET status='interrupted' WHERE status IN ('planning','running')")
         self.db.commit()
         return cur.rowcount
 
     def update_task(self, tid: int, **f: Any) -> None:
+        f = {k: json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else v for k, v in f.items()}
         keys = ", ".join(f"{k}=?" for k in f)
         self.db.execute(f"UPDATE tasks SET {keys} WHERE id=?", (*f.values(), tid))
         self.db.commit()
