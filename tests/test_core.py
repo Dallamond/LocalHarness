@@ -127,6 +127,17 @@ class WorkspaceTests(unittest.TestCase):
             ws.remove()
 
 
+class WorkspaceEncodingTests(unittest.TestCase):
+    def test_diff_keeps_utf8(self):
+        # en Windows git devuelve UTF-8 y text=True lo leía como cp1252 («Ã¡»): el revisor veía texto roto
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = make_repo(tmp)
+            ws = workspace.create(repo, 3, Path(tmp) / "wt")
+            (ws.path / "señal.txt").write_text("pequeño café €\n", encoding="utf-8")
+            d = ws.diff()
+            self.assertIn("pequeño café €", d); self.assertIn("señal.txt", d)
+
+
 class WorkspaceRobustnessTests(unittest.TestCase):
     def test_stale_leftovers_do_not_block_creation(self):
         with tempfile.TemporaryDirectory() as tmp:

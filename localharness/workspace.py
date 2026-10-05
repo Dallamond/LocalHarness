@@ -15,7 +15,9 @@ class GitError(Exception):
 
 
 def git(cwd: str | Path, *args: str) -> str:
-    p = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+    # UTF-8 explícito: en Windows text=True decodifica en cp1252 y rompe las tildes de los diffs
+    p = subprocess.run(["git", "-c", "core.quotepath=off", *args], cwd=cwd, capture_output=True,
+                       encoding="utf-8", errors="replace")
     if p.returncode != 0:
         raise GitError(f"git {' '.join(args)}: {p.stderr.strip()}")
     return p.stdout
