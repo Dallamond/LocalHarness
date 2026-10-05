@@ -15,9 +15,10 @@ const usage = computed(() => {
 
 const links = [
   { to: "/inicio", text: "Inicio", icon: "M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" },
+  { to: "/chat", text: "Chat", icon: "M4 5h16v11H9l-5 4z" },
   { to: "/bandeja", text: "Pendiente de ti", icon: "M4 13h4l2 3h4l2-3h4M5 5h14l1 8v6H4v-6z", badge: true },
   { to: "/planes", text: "Planes", icon: "M6 4h12v16H6zM9 9h6M9 13h6M9 17h3" },
-  { to: "/tareas", text: "Tareas sueltas", icon: "M5 7h14M5 12h14M5 17h9" },
+  { to: "/modelos", text: "Modelos locales", icon: "M5 5h14v6H5zM5 13h14v6H5zM8 8h.01M8 16h.01" },
   { to: "/ajustes", text: "Ajustes", icon: "M4 7h9m4 0h3M4 17h3m4 0h9M15 4v6M9 14v6" },
 ];
 </script>

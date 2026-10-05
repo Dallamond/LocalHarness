@@ -17,7 +17,7 @@ export interface Agent {
   role: string | null;
   config: {
     max_turns?: number; max_budget_usd?: number; read_only?: boolean; tools?: string[];
-    skills?: string[]; base_url?: string;
+    skills?: string[]; base_url?: string; description?: string;
   };
 }
 
@@ -135,7 +135,40 @@ export interface Settings {
   task_timeout_min: number;
   local_base_url: string;
   context: { max_memory_chars: number; max_skill_chars: number; skill_dirs: string[] };
+  llama: { server: string; model_dirs: string[]; port: number; ctx: number; ngl: number };
   agent_defaults: { provider: string; model: string; role: string; max_turns: number | null; max_budget_usd: number | null };
+}
+
+export interface LocalModel {
+  name: string;
+  file: string;
+  path: string;
+  dir: string;
+  size_gb: number;
+  quant: string | null;
+}
+
+export interface LlamaStatus {
+  state: "off" | "loading" | "ready" | "failed" | "external";
+  model: string | null;
+  port: number;
+  pid: number | null;
+  started_at: number | null;
+  exit_code: number | null;
+  log: string;
+}
+
+export interface LlamaInfo {
+  server: string | null;
+  dirs: string[];
+  models: LocalModel[];
+  status: LlamaStatus;
+  config: Settings["llama"];
+}
+
+/** Selector nativo del PC (el servidor es local). null si se cancela; lanza error si no hay escritorio. */
+export async function pickPath(kind: "folder" | "file" = "folder", title?: string): Promise<string | null> {
+  return (await post<{ path: string | null }>("/api/pick", { kind, title })).path;
 }
 
 export const live = reactive({

@@ -124,7 +124,7 @@ const diffLines = computed(() => (review.value?.diff ?? "").split("\n"));
 <template>
   <div class="page">
     <div class="row head">
-      <RouterLink to="/tareas" class="muted">← Tareas</RouterLink>
+      <RouterLink :to="`/chat/${id}`" class="muted">← Conversación</RouterLink>
       <h2 class="title">#{{ id }} {{ task?.title ?? "" }}</h2>
       <StatusChip v-if="task" label="estado" :state="statusChip(task.status)" :text="STATUS_TEXT[task.status] ?? task.status" />
     </div>

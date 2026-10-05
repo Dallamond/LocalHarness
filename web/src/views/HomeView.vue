@@ -81,7 +81,7 @@ const INBOX_TEXT: Record<string, string> = {
 };
 
 function openInbox(i: (typeof live.inbox)[number]) {
-  router.push(i.type === "task_review" ? `/tareas/${i.task_id}` : `/planes/${i.plan_id}`);
+  router.push(i.type === "task_review" ? `/chat/${i.task_id}` : `/planes/${i.plan_id}`);
 }
 </script>
 

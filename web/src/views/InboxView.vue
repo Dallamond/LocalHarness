@@ -13,7 +13,7 @@ const TYPE_TEXT: Record<string, string> = {
 };
 
 function open(i: (typeof live.inbox)[number]) {
-  if (i.type === "task_review") router.push(`/tareas/${i.task_id}`);
+  if (i.type === "task_review") router.push(`/chat/${i.task_id}`);
   else router.push(`/planes/${i.plan_id}`);
 }
 </script>

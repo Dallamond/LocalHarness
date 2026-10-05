@@ -139,10 +139,11 @@ interface AgentForm {
   read_only: boolean;
   skills: string[];
   base_url: string;
+  description: string;
 }
 const blank = (): AgentForm => ({
   name: "", provider: "claude", model: "", role: "trabajador", max_turns: null, max_budget_usd: null,
-  read_only: false, skills: [], base_url: "",
+  read_only: false, skills: [], base_url: "", description: "",
 });
 const newAgent = reactive<AgentForm>(blank());
 const showNew = ref(false);
@@ -176,6 +177,7 @@ function startEdit(a: Agent) {
     name: a.name, provider: a.provider, model: a.model ?? "", role: a.role ?? "",
     max_turns: a.config.max_turns ?? null, max_budget_usd: a.config.max_budget_usd ?? null,
     read_only: !!a.config.read_only, skills: [...(a.config.skills ?? [])], base_url: a.config.base_url ?? "",
+    description: a.config.description ?? "",
   });
 }
 
@@ -187,6 +189,7 @@ async function saveAgent(a: Agent) {
       body: JSON.stringify({
         model: edit.model, role: edit.role, max_turns: edit.max_turns || null,
         max_budget_usd: edit.max_budget_usd || null, read_only: edit.read_only, skills: edit.skills,
+        description: edit.description,
         ...(a.provider === "local" ? { base_url: edit.base_url } : {}),
       }),
     });
@@ -260,6 +263,10 @@ watch(look, applyLook, { deep: true });
           </label>
           <label class="field"><span class="label">Turnos máx.</span><input v-model.number="newAgent.max_turns" type="number" min="1" /></label>
           <label class="field"><span class="label">Tope en $</span><input v-model.number="newAgent.max_budget_usd" type="number" min="0.01" step="0.01" /></label>
+          <label class="field wide">
+            <span class="label">Descripción</span>
+            <input v-model.trim="newAgent.description" placeholder="En qué es bueno (el Director lo lee para repartir trabajo)" />
+          </label>
           <label v-if="newAgent.provider === 'local'" class="field wide">
             <span class="label">URL del llama-server</span>
             <input v-model.trim="newAgent.base_url" :placeholder="saved?.local_base_url" class="code" />
@@ -287,6 +294,7 @@ watch(look, applyLook, { deep: true });
                   {{ a.model ?? "(modelo por defecto)" }}</span>
               </div>
               <span class="agent__limits small muted">{{ limits(a) }}</span>
+              <span v-if="a.config.description" class="small desc">{{ a.config.description }}</span>
               <span v-if="a.config.skills?.length" class="small tagline">{{ a.config.skills.join(", ") }}</span>
               <div class="row agent__actions">
                 <button class="btn btn--small" @click="editing === a.id ? (editing = null) : startEdit(a)">
@@ -306,6 +314,10 @@ watch(look, applyLook, { deep: true });
               </label>
               <label class="field"><span class="label">Turnos máx.</span><input v-model.number="edit.max_turns" type="number" min="1" /></label>
               <label class="field"><span class="label">Tope en $</span><input v-model.number="edit.max_budget_usd" type="number" min="0.01" step="0.01" /></label>
+              <label class="field wide">
+                <span class="label">Descripción</span>
+                <input v-model.trim="edit.description" placeholder="En qué es bueno (el Director lo lee para repartir trabajo)" />
+              </label>
               <label v-if="a.provider === 'local'" class="field wide">
                 <span class="label">URL del llama-server</span>
                 <input v-model.trim="edit.base_url" :placeholder="saved?.local_base_url" class="code" />
@@ -556,6 +568,11 @@ watch(look, applyLook, { deep: true });
 }
 .agent__limits {
   flex: 1;
+}
+.desc {
+  flex-basis: 100%;
+  padding-left: 50px;
+  color: var(--ink-dim);
 }
 .tagline {
   padding: 2px 8px;

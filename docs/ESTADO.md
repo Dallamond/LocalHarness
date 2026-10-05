@@ -108,18 +108,27 @@ Feedback tras probar la GUI: «la respuesta final se pone en un md que no puedo 
 - `POST /api/pick {kind: folder|file}`: abre el selector NATIVO de Windows (tkinter) en el PC y devuelve la ruta;
   501 si no hay escritorio (en la web/Linux): entonces la GUI debe dejar escribir la ruta.
 
-**GUI PENDIENTE (lo siguiente):**
-- Vista **Chat** (`/chat`, sustituye a «Tareas sueltas»; `/tareas` → `/chat`, se mantiene `/tareas/:id` para el
-  diff completo): lista de conversaciones a la izquierda; burbujas (petición = `task.prompt`, eventos `user`,
-  `text`/`result` del agente con **markdown renderizado** — instalar `marked` + `dompurify`), herramientas como
-  líneas grises plegables; caja de escribir abajo: si la tarea terminó → `reply`; si no hay tarea → nueva
-  (proyecto + agente con su descripción visible). Botón «Vincular carpeta» (usa `/api/pick`, nombre = nombre de
-  la carpeta, casilla «inicializar git»). Al terminar, tarjeta con archivos cambiados y Aprobar/Integrar/Rechazar.
-  Modo «Equipo (Director)» que lanza un plan y abre `/planes/:id`.
-- Página **Modelos locales** (`/modelos`): carpeta de modelos y exe de llama-server con botón «Elegir…»
-  (`/api/pick`), tarjetas por GGUF (nombre, tamaño, cuantización) con Arrancar/Parar, estado con sondeo cada 2 s
-  (cargar tarda minutos), cola del log y botón «Crear agente local con este modelo» (rol director/jefe).
-- Ajustes → Agentes: campo «Descripción» (alta y edición). Tipos en `api.ts`: `config.description`.
+**GUI HECHA (compila; falta que Lucas la pruebe en el navegador):**
+- **Chat** (`ChatView.vue`, `/chat` y `/chat/:id`; `/tareas` redirige aquí, `/tareas/:id` queda para el diff):
+  conversaciones a la izquierda; burbujas con markdown (`Markdown.vue`: marked + DOMPurify); herramientas
+  plegadas en una línea gris; notas de estado; «escribiendo…» mientras trabaja; tarjeta de cambios con
+  Aprobar/Integrar/Rechazar. Conversación nueva: modo «Un agente» (tarjetas de agentes con su descripción) o
+  «Equipo (Director)» (lanza un plan), «Vincular carpeta» con «Elegir…» (selector nativo) y «inicializar git».
+  Enter envía, Mayús+Enter salto de línea; botón Parar mientras trabaja.
+- **Modelos locales** (`ModelsView.vue`, `/modelos`): estado del llama-server (punto de color, tiempo, log,
+  Parar), tarjetas por GGUF agrupadas por carpeta (tamaño, cuantización, Arrancar/«Cambiar a este»), crear agente
+  local con rol (jefe/director/consultas) y descripción automática, carpetas y exe con «Elegir…», puerto, contexto y
+  capas en GPU. Sondea cada 2 s mientras carga.
+- Ajustes → Agentes: campo Descripción (alta y edición) y se muestra en la lista.
+- Ojo: un agente local usa el modelo que esté ARRANCADO (llama-server sirve uno); su `model` es solo el nombre.
+
+**Lista de prueba para Lucas:**
+1. Modelos locales → Elegir carpeta… (se abre la ventana de Windows) → aparecen tus GGUF → Arrancar Qwen →
+   pasa de «cargando» a «listo» → «+ Crear agente» con rol jefe.
+2. Chat → Nueva conversación → Vincular carpeta (Elegir…) → elige el agente local → escribe una pregunta → la
+   respuesta sale en burbuja con formato → contesta algo y debe responder teniendo en cuenta lo anterior.
+3. Igual con un agente Claude (Sonnet con topes) que pida algo ambiguo: te pregunta, contestas, sigue en la misma
+   rama; al terminar sale la tarjeta de cambios.
 
 ## Pendiente (después de lo anterior)
 1. Recoger el feedback de Lucas de `docs/PROBAR.md` y arreglar lo que salga.
