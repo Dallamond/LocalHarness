@@ -122,7 +122,7 @@ function diffClass(l: string): string {
           <li v-for="(r, i) in t.level_reasons" :key="i">{{ r }}</li>
         </ul>
         <div v-if="t.kind === 'worker'" class="row actions">
-          <button v-if="t.head_commit" class="btn" @click="toggleDiff(t)">{{ open === t.id ? "Ocultar diff" : "Ver diff" }}</button>
+          <button v-if="t.head_commit && ['review', 'approved'].includes(t.status)" class="btn" @click="toggleDiff(t)">{{ open === t.id ? "Ocultar diff" : "Ver diff" }}</button>
           <template v-if="t.status === 'review' && plan.status === 'paused'">
             <button class="btn btn--ok" :disabled="acting" @click="act(`/api/tasks/${t.id}/decide`, { approve: true })">Aprobar y seguir</button>
             <button class="btn btn--danger" :disabled="acting" @click="act(`/api/tasks/${t.id}/decide`, { approve: false }, '¿Rechazar? Se deshace el commit de esta subtarea y el plan sigue.')">Rechazar y seguir</button>

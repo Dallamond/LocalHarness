@@ -52,7 +52,7 @@ export interface PlanTask extends Task {
 
 export type PlanStatus =
   | "planning" | "awaiting_you" | "approved" | "running" | "paused" | "ready" | "merged" | "rejected"
-  | "failed" | "cancelled" | "interrupted";
+  | "failed" | "cancelled" | "interrupted" | "done";
 
 export interface Plan {
   id: number;
@@ -247,6 +247,7 @@ export const PLAN_TEXT: Record<PlanStatus, string> = {
   failed: "fallido",
   cancelled: "cancelado",
   interrupted: "interrumpido",
+  done: "terminado sin cambios",
 };
 
 export function planChip(s: PlanStatus): "ok" | "warn" | "crit" | "pending" | "off" {

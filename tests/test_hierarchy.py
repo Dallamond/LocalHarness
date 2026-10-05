@@ -105,11 +105,14 @@ class HierarchyTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("borra archivos" in r for r in item["reasons"]))
         # el jefe técnico no llega a revisar: N2 por reglas no se le delega
         self.assertNotIn("reviewer", [k[0] for k in self.kinds(p["id"])])
+        self.assertFalse((Path(p["worktree"]) / "README.md").exists())
         self.h.decide_task(item["task_id"], approve=False)
+        self.assertTrue((Path(p["worktree"]) / "README.md").exists())  # el borrado se deshizo
         p = await self.h.run(p["id"])
-        self.assertEqual(p["status"], "ready")
-        ws_readme = Path(p["worktree"]) / "README.md"
-        self.assertTrue(ws_readme.exists())  # el borrado se deshizo
+        # sin nada aprobado que integrar, el plan se cierra solo y limpia su rama
+        self.assertEqual(p["status"], "done")
+        self.assertNotIn("localharness/plan-", git(self.repo, "branch", "--list"))
+        self.assertEqual(inbox(self.store), [])
 
     async def test_reviewer_can_only_raise_the_level(self):
         p = await self.h.plan(self._plan("dos pasos, ESCALA el último")["id"])

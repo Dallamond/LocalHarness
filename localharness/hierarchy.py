@@ -252,6 +252,14 @@ class Hierarchy:
                 reasons.append("no hay jefe técnico asignado: decides tú")
             self._decide(t["id"], "review", level, reasons)
             return self._pause(pid, f"La subtarea {t['seq']} necesita tu decisión ({LEVEL_NAME[level]})")
+        if not any(t["kind"] == "worker" and t["status"] == "approved" for t in self.store.plan_tasks(pid)):
+            # nada que integrar (consultas o subtareas sin cambios/rechazadas): se cierra y se limpia la rama
+            try:
+                ws.remove()
+            except workspace.GitError:
+                pass
+            self._set(pid, status="done", finished_at=now(), cost_usd=self._total_cost(pid))
+            return self.store.get_plan(pid)
         self._set(pid, status="ready", cost_usd=self._total_cost(pid))  # integrar la rama: siempre tú
         return self.store.get_plan(pid)
 
