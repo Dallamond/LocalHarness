@@ -140,6 +140,15 @@ Funciona: el chat con Claude (conversación con respuestas) y, bastante bien, la
    - Resultado esperado: un documento corto con la opción recomendada, una prueba real con Qwen en el sandbox
      (`python -m localharness sandbox`) y el coste/tiempo medido.
 
+9. **El agente local muestra el nombre del modelo anterior.** Lucas apagó DeepSeek y arrancó otro; responde más rápido
+   (sí usa el nuevo) pero sigue saliendo «DeepSeek». No está colgado: llama-server sirve el modelo arrancado, y la
+   etiqueta sale de `agent.model`, que «+ Crear agente» rellena con el nombre del GGUF (`ModelsView.vue`, `createAgent`).
+   En `adapters/local.py:73-76` el evento `session` usa `spec.model` y solo pregunta a `/v1/models` si está vacío; el
+   nombre del agente también lleva el modelo. Arreglo propuesto: el evento `session` siempre con el modelo REAL de
+   `/v1/models` (y no mandar `model` al servidor salvo que haga falta); crear agentes locales sin modelo fijo, con
+   nombres por rol (p. ej. `local-jefe`); en el chat, el Inicio y Ajustes mostrar «usa: <modelo arrancado>», y avisar si
+   el agente pide un modelo concreto y el arrancado es otro (o permitir arrancar ese modelo desde ahí).
+
 ## Sesión 2 — feedback de Lucas y lo que se hizo
 Feedback tras probar la GUI: «la respuesta final se pone en un md que no puedo contestar». Pide:
 1. **Chat para mandar tareas** (como un chat): vincular la carpeta desde ahí, ver/describir los agentes y
