@@ -85,7 +85,7 @@ class Runner:
     def publish_task(self, tid: int) -> None:
         t = self.store.get_task(tid)
         if t:
-            self.hub.publish("task", t)
+            self.hub.publish("task", task_out(t))
 
     def publish_plan(self, pid: int) -> None:
         p = self.store.get_plan(pid)
@@ -226,7 +226,7 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
     # --- tareas
     @app.get("/api/tasks")
     async def tasks(request: Request, project_id: int | None = None) -> list[dict]:
-        return list(reversed(st(request).list_tasks(project_id)))
+        return [task_out(t) for t in reversed(st(request).list_tasks(project_id))]
 
     @app.post("/api/tasks", status_code=201)
     async def add_task(request: Request, body: TaskIn) -> dict:
@@ -239,14 +239,14 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
             raise HTTPException(409, "Ese proyecto ya tiene una tarea en marcha (una por repo a la vez)")
         title = (body.title or body.prompt.strip().splitlines()[0])[:80]
         t = store.add_task(body.project_id, title, body.prompt, body.agent_id)
-        request.app.state.hub.publish("task", t)
+        request.app.state.hub.publish("task", task_out(t))
         if body.start:
             request.app.state.runner.start(t["id"])
-        return t
+        return task_out(t)
 
     @app.get("/api/tasks/{tid}")
     async def task(request: Request, tid: int) -> dict:
-        return task_or_404(st(request), tid)
+        return task_out(task_or_404(st(request), tid))
 
     @app.get("/api/tasks/{tid}/events")
     async def task_events(request: Request, tid: int, after: int = 0) -> list[dict]:
@@ -268,22 +268,22 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         if store.list_tasks(t["project_id"], status="running"):
             raise HTTPException(409, "Ese proyecto ya tiene una tarea en marcha")
         request.app.state.runner.start(tid)
-        return t
+        return task_out(t)
 
     @app.post("/api/tasks/{tid}/cancel")
     async def cancel(request: Request, tid: int) -> dict:
         t = task_or_404(st(request), tid)
         if not await request.app.state.runner.cancel(tid):
             raise HTTPException(409, f"La tarea no está en marcha (está en '{t['status']}')")
-        return st(request).get_task(tid)
+        return task_out(st(request).get_task(tid))
 
     def _action(request: Request, fn, *args) -> dict:
         try:
             t = fn(st(request), *args)
         except actions.ActionError as e:
             raise HTTPException(409, str(e)) from None
-        request.app.state.hub.publish("task", st(request).get_task(t["id"]))
-        return t
+        request.app.state.hub.publish("task", task_out(st(request).get_task(t["id"])))
+        return task_out(t)
 
     @app.post("/api/tasks/{tid}/approve")
     async def approve(request: Request, tid: int) -> dict:

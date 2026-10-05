@@ -10,8 +10,8 @@
 | M1 CLI | ✅ |
 | M2 API + GUI | ✅ probado con CLI falsa (también en navegador) |
 | M3 Jerarquía | ✅ Director + jefe técnico + N0/N1/N2 + bandeja; CLI y API. Probado real con Haiku (0,087 $) |
-| M4 Modelos locales | 🔄 primera integración: proveedor `local` (llama-server) para Director/jefe técnico |
-| GUI de M3/M4 | ⏳ falta: vistas de planes y bandeja (la API ya está) |
+| M4 Modelos locales | 🔄 proveedor `local` probado real con Qwen2.5-Coder 7B Q8 (Director y jefe, coste 0) |
+| GUI de M3 | ✅ Pendiente de ti, Planes, detalle de plan; probada en navegador con agentes locales |
 
 ## Decisiones de Lucas (05/10/2026)
 - **Gastar lo mínimo del plan Pro de Claude** (iba por el 82 % semanal). Probar con CLIs falsas; ejecuciones reales
@@ -50,10 +50,22 @@ Trampas conocidas:
 - Un modelo local NO tiene herramientas: recibe el contexto del repo en el prompt (`repo_context` caracteres) y
   no se le asignan subtareas de escritura (`can_write=False`). Útil como Director o jefe técnico gratis.
 
+## Pruebas reales hechas (05/10/2026)
+- M3 con Claude Haiku (Director, 2 trabajadores, jefe): plan correcto, ambas subtareas aprobadas por el jefe, 0,087 $.
+  Destapó un fallo ya corregido: la salida de git se leía en cp1252 y el revisor veía tildes rotas.
+- M4 con Qwen2.5-Coder 7B Q8 en la 3060 (`llama serve qwen2.5-coder-7b`; tarda ~4 min en cargar del disco):
+  consulta de solo lectura correcta en 28 s; plan con Director y jefe locales en 14 s; el jefe local detectó que
+  el trabajador (falso) no hizo lo pedido y escaló a N2. Todo coste 0.
+
 ## Pendiente inmediato
-1. GUI: vista Planes (crear, ver subtareas con nivel y motivos, aprobar/decidir/integrar) y Bandeja.
-2. M4: medir calidad del revisor local frente a Claude con el mismo diff (criterio de aceptación de M4).
-3. llama-server avisa de CORS abierto: valorar `--api-key` (solo escucha en 127.0.0.1).
+1. Plan cuyas subtareas no cambian nada: debería terminar `done`, no `ready` (no hay nada que integrar).
+   En el detalle de plan, ocultar «Ver diff» si la subtarea no tiene cambios.
+2. M4: medir calidad del revisor local frente a Claude con el mismo diff (criterio de aceptación de M4) y probar
+   Qwen3.5-9B / Qwen-2.5-Coder-14B. Reparto 3060/M40 cuando llegue la tarjeta.
+3. Las tareas sueltas antiguas sin cambios que quedaron en `review` siguen en la bandeja: descartarlas o migrarlas.
+4. llama-server avisa de CORS abierto: valorar `--api-key` (solo escucha en 127.0.0.1).
+5. M5 (skills y memoria Markdown inyectadas) y M6 (rama de integración, limpieza de worktrees huérfanos).
+6. Estética: sustituir la «blueprint» por la oficina simulada cuando Lucas decida el estilo.
 
 ## Hallazgos técnicos clave (no repetir)
 - La CLI hija va aislada: `--safe-mode --strict-mcp-config` (sin eso, 245k tokens por «ok»). `--bare` prohíbe OAuth.
