@@ -67,10 +67,11 @@ if __name__ == "__main__":
 # nombre: (proveedor, modelo, rol, config). Los de Claude con topes bajos para gastar poco plan.
 AGENTS = {
     "qwen-director": ("local", None, "director", {}),
-    "qwen-jefe": ("local", None, "jefe", {}),
+    "qwen-jefe": ("local", None, "jefe", {"skills": ["revision-de-diff"]}),
     "haiku-director": ("claude", "haiku", "director", {"max_turns": 6, "max_budget_usd": 0.3}),
-    "haiku-jefe": ("claude", "haiku", "jefe", {"max_turns": 4, "max_budget_usd": 0.2}),
-    "sonnet-trabajador": ("claude", "sonnet", "trabajador", {"max_turns": 12, "max_budget_usd": 0.5}),
+    "haiku-jefe": ("claude", "haiku", "jefe", {"max_turns": 4, "max_budget_usd": 0.2, "skills": ["revision-de-diff"]}),
+    "sonnet-trabajador": ("claude", "sonnet", "trabajador", {"max_turns": 12, "max_budget_usd": 0.5,
+                                                            "skills": ["cambios-minimos"]}),
 }
 
 DEFAULT_PATH = Path.home() / "LocalHarness-sandbox"

@@ -85,6 +85,10 @@ class Store:
     def get_project(self, pid: int) -> dict | None:
         return self._one("SELECT * FROM projects WHERE id=?", pid)
 
+    def set_project_memory(self, pid: int, memory_dir: str | None) -> None:
+        self.db.execute("UPDATE projects SET memory_dir=? WHERE id=?", (memory_dir, pid))
+        self.db.commit()
+
     def find_project(self, name: str) -> dict | None:
         return self._one("SELECT * FROM projects WHERE name=?", name)
 

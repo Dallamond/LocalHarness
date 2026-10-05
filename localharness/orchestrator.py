@@ -8,6 +8,7 @@ from localharness import workspace
 from localharness.adapters import get_adapter
 from localharness.adapters.base import RunSpec
 from localharness.adapters.local import config_kwargs
+from localharness.context import build_prompt, load_memory, load_skills
 from localharness.events import Event
 from localharness.runner import run
 from localharness.store import Store
@@ -49,11 +50,23 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
         if on_event:
             on_event(task_id, ev)
 
-    spec = RunSpec(prompt=task["prompt"], cwd=str(ws.path), model=agent["model"],
+    # M5: skills del agente + de la tarea, y memoria del proyecto, inyectadas como texto (igual en todo proveedor)
+    wanted = list(dict.fromkeys([*(cfg.get("skills") or []), *json.loads(task.get("skills") or "[]")]))
+    catalog = load_skills() if wanted else {}
+    prompt, injected = build_prompt(task["prompt"], load_memory(project.get("memory_dir")),
+                                    [catalog[n] for n in wanted if n in catalog])
+    missing = [n for n in wanted if n not in catalog]
+
+    spec = RunSpec(prompt=prompt, cwd=str(ws.path), model=agent["model"],
                    max_turns=cfg.get("max_turns"), max_budget_usd=cfg.get("max_budget_usd"),
                    read_only=bool(cfg.get("read_only")) if read_only is None else read_only,
                    allowed_tools=cfg.get("tools"), json_schema=json_schema)
     sink(Event("status", text="running"))
+    if injected["memory"] or injected["skills"]:
+        names = [m["file"] for m in injected["memory"]] + [s["name"] for s in injected["skills"]]
+        sink(Event("context", text=", ".join(names), data=injected))
+    if missing:
+        sink(Event("warning", text=f"Skills no encontradas: {', '.join(missing)}"))
     try:
         res = await run(adapter, spec, sink, timeout_s=cfg.get("timeout_s") or timeout_s)
     except asyncio.CancelledError:

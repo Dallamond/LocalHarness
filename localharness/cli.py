@@ -66,6 +66,15 @@ def cmd_doctor(args, store: Store | None = None) -> int:
 
 
 def cmd_project(args, store: Store) -> int:
+    if args.action == "memory":
+        p = store.find_project(args.name or "")
+        if not p:
+            return _fail(f"no existe el proyecto {args.name!r}")
+        d = Path(args.path).resolve() if args.path else DEFAULT_DB.parent / "memory" / p["name"]
+        d.mkdir(parents=True, exist_ok=True)
+        store.set_project_memory(p["id"], str(d))
+        print(f"Memoria de {p['name']}: {d}  (los .md de esa carpeta se inyectan en cada tarea, solo lectura)")
+        return 0
     if args.action == "add":
         repo = Path(args.path).resolve()
         try:
@@ -80,6 +89,14 @@ def cmd_project(args, store: Store) -> int:
     return 0
 
 
+def cmd_skills(args, store: Store | None = None) -> int:
+    from localharness.context import load_skills, skill_dirs
+    print("carpetas: " + ", ".join(map(str, skill_dirs())) + "   (añade más con LOCALHARNESS_SKILL_DIRS)")
+    for s in load_skills().values():
+        print(f"  {s.name:32} {s.description[:90]}")
+    return 0
+
+
 def cmd_agent(args, store: Store) -> int:
     if args.action == "add":
         if args.provider not in ADAPTERS:
@@ -87,7 +104,8 @@ def cmd_agent(args, store: Store) -> int:
         cfg = {k: v for k, v in {"max_turns": args.max_turns, "max_budget_usd": args.budget,
                                  "read_only": args.read_only or None,
                                  "tools": args.tools.split(",") if args.tools else None,
-                                 "binary": args.binary, "base_url": args.base_url}.items() if v is not None}
+                                 "binary": args.binary, "base_url": args.base_url,
+                                 "skills": args.skill or None}.items() if v is not None}
         a = store.add_agent(args.name, args.provider, model=args.model, role=args.role, config=cfg)
         print(f"Agente #{a['id']} {a['name']} ({a['provider']}{'/' + a['model'] if a['model'] else ''}) {cfg}")
     else:
@@ -118,7 +136,7 @@ def cmd_run(args, store: Store) -> int:
     if not agent:
         return _fail(f"no existe el agente {args.agent!r} (python -m localharness agent add …)")
     title = args.title or args.prompt.strip().splitlines()[0][:60]
-    task = store.add_task(project["id"], title, args.prompt, agent["id"])
+    task = store.add_task(project["id"], title, args.prompt, agent["id"], skills=args.skill or [])
     print(f"Tarea #{task['id']} «{title}» con {agent['name']} sobre {project['name']}")
     try:
         res = asyncio.run(execute_task(store, task["id"], on_event=_print_event, timeout_s=args.timeout))
@@ -362,9 +380,11 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(fn=cmd_serve)
 
     p = sub.add_parser("project", help="proyectos (repos git)")
-    p.add_argument("action", choices=["add", "list"])
+    p.add_argument("action", choices=["add", "list", "memory"])
     p.add_argument("name", nargs="?"); p.add_argument("path", nargs="?")
     p.set_defaults(fn=cmd_project)
+
+    sub.add_parser("skills", help="lista las skills disponibles (M5)").set_defaults(fn=cmd_skills)
 
     p = sub.add_parser("agent", help="agentes (configuraciones de proveedor)")
     p.add_argument("action", choices=["add", "list"]); p.add_argument("name", nargs="?")
@@ -373,11 +393,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--read-only", action="store_true"); p.add_argument("--tools", help="lista blanca, p. ej. Read,Edit,Write")
     p.add_argument("--binary", help="ruta del ejecutable si no es el del PATH")
     p.add_argument("--base-url", help="local: URL de llama-server (por defecto http://127.0.0.1:8080)")
+    p.add_argument("--skill", action="append", help="skill que este agente usa siempre (repetible)")
     p.set_defaults(fn=cmd_agent)
 
     p = sub.add_parser("run", help="ejecuta una petición en un worktree aislado")
     p.add_argument("project"); p.add_argument("prompt"); p.add_argument("--agent", required=True)
     p.add_argument("--title"); p.add_argument("--timeout", type=float, default=1800.0)
+    p.add_argument("--skill", action="append", help="skill a inyectar (repetible); ver: python -m localharness skills")
     p.set_defaults(fn=cmd_run)
 
     p = sub.add_parser("plan", help="M3: Director → subtareas → jefe técnico → tú")
@@ -412,7 +434,7 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("falta el nombre")
     if args.cmd == "project" and args.action == "add" and not args.path:
         ap.error("falta la ruta del repo")
-    if args.cmd in ("doctor", "serve", "llama"):
+    if args.cmd in ("doctor", "serve", "llama", "skills"):
         return args.fn(args)
     store = _store(args)
     try:

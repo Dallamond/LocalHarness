@@ -15,6 +15,7 @@ from collections.abc import Callable
 from localharness import workspace
 from localharness.actions import ActionError, now
 from localharness.adapters import ADAPTERS
+from localharness.context import load_skills
 from localharness.events import Event
 from localharness.orchestrator import execute_task
 from localharness.policy import N0, N1, N2, LEVEL_NAME, RISK_LEVEL, Policy, assess_changes, combine
@@ -36,6 +37,7 @@ PLAN_SCHEMA = {
                     "prompt": {"type": "string"},
                     "agent": {"type": "string"},
                     "risk": {"type": "string", "enum": RISKS},
+                    "skills": {"type": "array", "items": {"type": "string"}},
                 },
                 "required": ["title", "prompt", "agent", "risk"],
             },
@@ -61,7 +63,8 @@ class PlanError(Exception):
     pass
 
 
-def director_prompt(request: str, agents: list[dict]) -> str:
+def director_prompt(request: str, agents: list[dict], skills: dict | None = None) -> str:
+    catalog = "\n".join(f"- `{s.name}`: {s.description}" for s in (skills or {}).values()) or "(ninguna)"
     lines = "\n".join(f"- `{a['name']}`: proveedor {a['provider']}, modelo {a['model'] or 'por defecto'}, "
                       f"rol {a['role'] or 'trabajador'}" for a in agents)
     return f"""Eres el Director (planificador jefe) de un equipo de agentes de programación. NO modificas archivos:
@@ -72,6 +75,10 @@ PETICIÓN DEL USUARIO:
 
 AGENTES DISPONIBLES (elige SOLO entre estos, por su nombre exacto):
 {lines}
+
+SKILLS DISPONIBLES (procedimientos que se inyectan al agente; pon en `skills` las útiles para cada subtarea,
+por su nombre exacto, o ninguna):
+{catalog}
 
 Reglas del plan:
 - Divide la petición en subtareas pequeñas y verificables que se ejecutarán EN ORDEN sobre la misma rama
@@ -103,7 +110,7 @@ Decide:
 `risk` es tu estimación del riesgo del cambio. Sé concreto y breve en `reason`."""
 
 
-def validate_plan(data: dict | None, agents: list[dict]) -> dict:
+def validate_plan(data: dict | None, agents: list[dict], skills: dict | None = None) -> dict:
     """Validación propia (además de --json-schema): estructura y agentes existentes."""
     if not isinstance(data, dict):
         raise PlanError("El Director no devolvió un plan estructurado")
@@ -120,6 +127,8 @@ def validate_plan(data: dict | None, agents: list[dict]) -> dict:
         if s["risk"] not in RISKS:
             raise PlanError(f"Subtarea {i}: riesgo inválido {s['risk']!r}")
         s["agent_id"] = by_name[s["agent"]]["id"]
+        asked = s.get("skills") if isinstance(s.get("skills"), list) else []
+        s["skills"] = [n for n in asked if isinstance(n, str) and n in (skills or {})]  # nombres inventados fuera
     if data.get("risk") not in RISKS:
         data["risk"] = max((s["risk"] for s in subtasks), key=RISKS.index)
     return data
@@ -191,7 +200,8 @@ class Hierarchy:
         ws = workspace.create(project["repo_path"], f"plan-{pid}", self.worktree_root)
         self._set(pid, status="planning", branch=ws.branch, worktree=str(ws.path), base_commit=ws.base)
         plan = self.store.get_plan(pid)
-        d = self._new_task(plan, f"Plan: {plan['request']}", director_prompt(plan["request"], workers),
+        catalog = load_skills()
+        d = self._new_task(plan, f"Plan: {plan['request']}", director_prompt(plan["request"], workers, catalog),
                            plan["director_agent_id"], 0, "director")
         res = await execute_task(self.store, d["id"], binaries=self.binaries, on_event=self._emit, ws=ws,
                                  json_schema=PLAN_SCHEMA, read_only=True)
@@ -200,12 +210,14 @@ class Hierarchy:
         self.store.update_task(d["id"], status="done", level=LEVEL_NAME[N0])
         self._emit(d["id"], Event("status", text="done"))
         try:
-            data = validate_plan(res.get("structured") or _json_or_none(res.get("final")), workers)
+            data = validate_plan(res.get("structured") or _json_or_none(res.get("final")), workers, catalog)
         except PlanError as e:
             return self._fail(pid, str(e))
         level, reasons = plan_level(data, self.policy)
         for i, s in enumerate(data["subtasks"], 1):
-            self._new_task(self.store.get_plan(pid), s["title"], s["prompt"], s["agent_id"], i, "worker")
+            t = self._new_task(self.store.get_plan(pid), s["title"], s["prompt"], s["agent_id"], i, "worker")
+            if s["skills"]:
+                self.store.update_task(t["id"], skills=s["skills"])
         status = "awaiting_you" if level == N2 else "approved"
         self._set(pid, plan=data, level=LEVEL_NAME[level], level_reasons=reasons, status=status,
                   cost_usd=self._total_cost(pid))
