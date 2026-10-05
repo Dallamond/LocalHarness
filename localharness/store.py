@@ -34,6 +34,7 @@ MIGRATIONS = [
     ALTER TABLE tasks ADD COLUMN review TEXT;
     ALTER TABLE tasks ADD COLUMN approved_by TEXT;
     ALTER TABLE tasks ADD COLUMN head_commit TEXT;
+    ALTER TABLE tasks ADD COLUMN kind TEXT DEFAULT 'worker';  -- director | worker | reviewer
     """,
 ]
 

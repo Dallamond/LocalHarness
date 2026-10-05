@@ -12,7 +12,7 @@ LEVEL_NAME = {N0: "N0", N1: "N1", N2: "N2"}
 RISK_LEVEL = {"low": N0, "medium": N1, "high": N2}
 
 # Propuesta de la hoja de ruta (§7.4), editable por proyecto
-DEFAULT_SENSITIVE = [".env*", "*.pem", "*.key", "migrations/*", ".github/*", "*.lock", "package-lock.json",
+DEFAULT_SENSITIVE = [".env*", "*.pem", "*.key", "migrations/*", "*/migrations/*", ".github/*", "*.lock", "package-lock.json",
                      "pnpm-lock.yaml", "yarn.lock", "poetry.lock", "uv.lock", "Cargo.lock"]
 DEFAULT_DEPENDENCY = ["package.json", "requirements*.txt", "pyproject.toml", "setup.py", "setup.cfg", "Cargo.toml",
                       "go.mod", "Gemfile", "*.csproj"]

@@ -1,18 +1,78 @@
 #!/usr/bin/env python3
-"""Falso `claude -p`: emite stream-json como el real (según docs) y crea un archivo en cwd."""
-import json, sys
+"""Falso `claude -p`: emite stream-json como el real (verificado con la CLI 2.1.287) sin gastar nada.
+
+Lee el prompt de stdin. Según el caso:
+- `--json-schema` con `subtasks` → hace de Director: devuelve un plan (2 subtareas; 5 si el prompt dice GRANDE;
+  una que borra README.md si dice BORRA). Agente elegido: el primero de la lista «- `nombre`».
+- `--json-schema` con `verdict` → hace de jefe técnico: aprueba salvo que el diff contenga ESCALA.
+- trabajador: crea el archivo indicado con «crea el archivo X» (por defecto hola.txt) o borra README.md con BORRA.
+"""
+import json, os, re, sys
+
 if "--boom" in sys.argv:
     sys.exit(3)
 if sys.argv[1:3] == ["auth", "status"]:
     print(json.dumps({"authMethod": "claude.ai"})); sys.exit(0)
-def out(o): print(json.dumps(o), flush=True)
-if "--fail-result" in sys.argv:  # el CLI real reporta fallos con código 0 (visto en otros orquestadores)
+
+
+def out(o):
+    print(json.dumps(o, ensure_ascii=False), flush=True)
+
+
+try:
+    sys.stdin.reconfigure(encoding="utf-8")
+    prompt = sys.stdin.read()
+except Exception:
+    prompt = ""
+if "--fail-result" in sys.argv:  # el CLI real reporta fallos con código 0
     out({"type": "system", "subtype": "init", "session_id": "s"})
     out({"type": "result", "subtype": "error_during_execution", "is_error": True, "errors": ["boom"]})
     sys.exit(0)
-out({"type": "system", "subtype": "init", "session_id": "sess-1", "model": "fake"})
-out({"type": "assistant", "message": {"content": [{"type": "text", "text": "Voy a crear hola.txt"},
-     {"type": "tool_use", "name": "Write", "input": {"file_path": "hola.txt"}}]}})
-open("hola.txt", "w").write("hola\n")
-out({"type": "result", "subtype": "success", "is_error": False, "result": "Hecho", "total_cost_usd": 0.01,
-     "num_turns": 2, "session_id": "sess-1"})
+
+tools = sys.argv[sys.argv.index("--tools") + 1].split(",") if "--tools" in sys.argv else []
+schema = json.loads(sys.argv[sys.argv.index("--json-schema") + 1]) if "--json-schema" in sys.argv else None
+out({"type": "system", "subtype": "init", "session_id": "sess-1", "model": "fake", "tools": tools,
+     "apiKeySource": "none"})
+out({"type": "rate_limit_event", "rate_limit_info": {"status": "allowed", "rateLimitType": "five_hour",
+     "utilization": 0.1, "unifiedWindows": {"five_hour": {"utilization": 0.1}, "seven_day": {"utilization": 0.5}}}})
+
+
+def finish(result, structured=None, cost=0.01):
+    o = {"type": "result", "subtype": "success", "is_error": False, "result": result, "total_cost_usd": cost,
+         "num_turns": 2, "session_id": "sess-1"}
+    if structured is not None:
+        o["structured_output"] = structured
+    out(o)
+
+
+if schema and "subtasks" in schema.get("properties", {}):
+    agents = re.findall(r"^- `([^`]+)`", prompt, re.M)
+    agent = agents[0] if agents else "nadie"
+    if "BORRA" in prompt:
+        subs = [{"title": "Borrar README", "prompt": "BORRA el README.md", "agent": agent, "risk": "high"}]
+    else:
+        n = 5 if "GRANDE" in prompt else 2
+        subs = [{"title": f"Paso {i}", "prompt": f"crea el archivo paso{i}.txt", "agent": agent, "risk": "low"}
+                for i in range(1, n + 1)]
+        if "ESCALA" in prompt:
+            subs[-1]["prompt"] += " con el texto ESCALA"
+    plan = {"summary": "plan falso", "risk": "high" if "BORRA" in prompt else "low", "subtasks": subs}
+    out({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "StructuredOutput", "input": plan}]}})
+    finish(json.dumps(plan, ensure_ascii=False), plan, cost=0.005)
+elif schema and "verdict" in schema.get("properties", {}):
+    v = ({"verdict": "escalate", "risk": "medium", "reason": "contenido dudoso"} if "ESCALA" in prompt.split("DIFF:")[-1]
+         else {"verdict": "approve", "risk": "low", "reason": "correcto"})
+    finish(json.dumps(v), v, cost=0.002)
+else:
+    out({"type": "assistant", "message": {"content": [{"type": "text", "text": "Voy a trabajar"}]}})
+    if "BORRA" in prompt and os.path.exists("README.md"):
+        out({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": "rm README.md"}}]}})
+        os.remove("README.md")
+    else:
+        m = re.search(r"crea el archivo (\S+)", prompt)
+        name = m.group(1) if m else "hola.txt"
+        text = "ESCALA\n" if "ESCALA" in prompt else "hola\n"
+        out({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Write", "input": {"file_path": name}}]}})
+        with open(name, "w", encoding="utf-8") as f:
+            f.write(text)
+    finish("Hecho")

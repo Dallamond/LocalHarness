@@ -76,14 +76,16 @@ class Workspace:
         git(self.repo, "branch", "-D", self.branch)
 
 
-def create(repo: str | Path, task_id: int, root: str | Path | None = None, link_node_modules: bool = False) -> Workspace:
+def create(repo: str | Path, task_id: int | str, root: str | Path | None = None, link_node_modules: bool = False) -> Workspace:
+    """`task_id` entero → rama `localharness/task-N`; texto (p. ej. «plan-3») → `localharness/plan-3`."""
     repo = Path(repo).resolve()
     git(repo, "rev-parse", "--git-dir")  # falla si no es un repo
     base = git(repo, "rev-parse", "HEAD").strip()
-    branch = f"localharness/task-{task_id}"
+    name = f"task-{task_id}" if isinstance(task_id, int) else task_id
+    branch = f"localharness/{name}"
     root = Path(root) if root else repo.parent / ".localharness-worktrees" / repo.name
     root.mkdir(parents=True, exist_ok=True)
-    path = (root / f"task-{task_id}").resolve()
+    path = (root / name).resolve()
     with _CREATE_LOCK:
         _clean_stale(repo, path, branch)
         git(repo, "worktree", "add", "-q", "-b", branch, str(path), base)
