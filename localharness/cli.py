@@ -194,6 +194,103 @@ def cmd_discard(args, store: Store) -> int:
     return 0
 
 
+def _hier(store: Store):
+    from localharness.hierarchy import Hierarchy
+    return Hierarchy(store, on_event=_print_event)
+
+
+def _print_plan(store: Store, pid: int) -> None:
+    p = store.get_plan(pid)
+    print(f"\nPlan #{p['id']}  estado {p['status']}  nivel {p['level'] or '-'}  coste equiv. {p['cost_usd'] or 0:.4f} $")
+    for r in json.loads(p["level_reasons"] or "[]"):
+        print(f"  motivo: {r}")
+    if p["error"]:
+        print(f"  aviso: {p['error']}")
+    for t in store.plan_tasks(pid):
+        who = f" (aprobó {t['approved_by']})" if t["approved_by"] else ""
+        print(f"  #{t['id']:<4} {t['kind']:9} {t['status']:9} {t['level'] or '-':3} {t['title']}{who}")
+        if t["kind"] == "worker" and t["status"] == "review":
+            for r in json.loads(t["level_reasons"] or "[]"):
+                print(f"         · {r}")
+
+
+def _drive(store: Store, pid: int, plan_first: bool) -> int:
+    h = _hier(store)
+    try:
+        p = asyncio.run(h.plan(pid)) if plan_first else store.get_plan(pid)
+        if p["status"] in ("approved", "paused"):
+            p = asyncio.run(h.run(pid))
+    except (actions.ActionError, workspace.GitError) as e:
+        return _fail(str(e))
+    _print_plan(store, pid)
+    hints = {"awaiting_you": f"Aprueba el plan: python -m localharness plan approve {pid}",
+             "paused": "Decide la subtarea: python -m localharness plan decide <id> --approve | --reject",
+             "ready": f"Revisa: git diff main...{p['branch']}   ·   integra: python -m localharness plan merge {pid}"}
+    if p["status"] in hints:
+        print(hints[p["status"]])
+    return 0 if p["status"] not in ("failed", "cancelled") else 1
+
+
+def cmd_plan(args, store: Store) -> int:
+    if args.action == "new":
+        project = store.find_project(args.target or "")
+        director = store.find_agent(args.director or "")
+        reviewer = store.find_agent(args.reviewer) if args.reviewer else None
+        if not project or not director or not args.request:
+            return _fail("uso: plan new <proyecto> \"<petición>\" --director <agente> [--reviewer <agente>]")
+        if args.reviewer and not reviewer:
+            return _fail(f"no existe el agente {args.reviewer!r}")
+        p = store.add_plan(project["id"], args.request, director["id"], reviewer["id"] if reviewer else None)
+        print(f"Plan #{p['id']} con Director {director['name']}" + (f" y jefe técnico {reviewer['name']}" if reviewer else ""))
+        return _drive(store, p["id"], plan_first=True)
+    if args.action == "list":
+        for p in store.list_plans():
+            print(f"#{p['id']:<4} {p['status']:12} {p['level'] or '-':3} {(p['cost_usd'] or 0):.4f}$  {p['request'][:60]}")
+        return 0
+    if args.action == "inbox":
+        from localharness.hierarchy import inbox
+        items = inbox(store)
+        for i in items:
+            ref = f"plan #{i['plan_id']}" + (f" tarea #{i['task_id']}" if i.get("task_id") else "") if i.get("plan_id") else f"tarea #{i['task_id']}"
+            print(f"[{i['level']}] {i['type']:14} {ref:22} {i['title']}  — {'; '.join(i['reasons'])}")
+        if not items:
+            print("Nada pendiente de ti.")
+        return 0
+    try:
+        ident = int(args.target)
+    except (TypeError, ValueError):
+        return _fail("falta el id")
+    h = _hier(store)
+    try:
+        if args.action == "show":
+            if not store.get_plan(ident):
+                return _fail(f"no existe el plan #{ident}")
+            _print_plan(store, ident)
+            return 0
+        if args.action == "approve":
+            h.approve_plan(ident)
+            return _drive(store, ident, plan_first=False)
+        if args.action == "decide":
+            if args.approve == args.reject:
+                return _fail("indica --approve o --reject")
+            t = h.decide_task(ident, approve=args.approve)
+            return _drive(store, t["plan_id"], plan_first=False)
+        if args.action == "merge":
+            p = store.get_plan(ident)
+            if not args.yes and not _confirm(f"¿Integrar {p and p['branch']} en tu rama actual? Nunca se hace push."):
+                return _fail("no integrado")
+            h.merge_plan(ident)
+            print("Integrado. El push lo haces tú cuando quieras.")
+            return 0
+        if args.action == "reject":
+            h.reject_plan(ident)
+            print("Plan rechazado: rama y worktree borrados.")
+            return 0
+    except actions.ActionError as e:
+        return _fail(str(e))
+    return _fail(f"acción desconocida {args.action}")
+
+
 def cmd_serve(args) -> int:
     try:
         import uvicorn
@@ -238,6 +335,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("project"); p.add_argument("prompt"); p.add_argument("--agent", required=True)
     p.add_argument("--title"); p.add_argument("--timeout", type=float, default=1800.0)
     p.set_defaults(fn=cmd_run)
+
+    p = sub.add_parser("plan", help="M3: Director → subtareas → jefe técnico → tú")
+    p.add_argument("action", choices=["new", "list", "show", "approve", "decide", "merge", "reject", "inbox"])
+    p.add_argument("target", nargs="?", help="proyecto (new) o id de plan/tarea")
+    p.add_argument("request", nargs="?", help="petición (new)")
+    p.add_argument("--director"); p.add_argument("--reviewer")
+    p.add_argument("--approve", action="store_true"); p.add_argument("--reject", action="store_true")
+    p.add_argument("--yes", action="store_true")
+    p.set_defaults(fn=cmd_plan)
 
     sub.add_parser("tasks", help="lista tareas").set_defaults(fn=cmd_tasks)
     p = sub.add_parser("show", help="detalle de una tarea"); p.add_argument("id", type=int)
