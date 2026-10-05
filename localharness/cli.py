@@ -135,7 +135,7 @@ def cmd_run(args, store: Store) -> int:
     if t["status"] == "review":
         print(f"Revisa:  python -m localharness show {t['id']} --diff\n"
               f"Integra: python -m localharness merge {t['id']}   (pide confirmación; no hace push)")
-    return 0 if t["status"] == "review" else 1
+    return 0 if t["status"] in ("review", "done") else 1
 
 
 def cmd_tasks(args, store: Store) -> int:

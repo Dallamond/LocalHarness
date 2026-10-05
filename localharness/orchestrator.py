@@ -63,10 +63,12 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
         raise
     ws.checkpoint(f"localharness: {task['title']}")
     head = ws.head()
-    status = "review" if res["status"] == "done" else res["status"]  # 'review' = esperando tu aprobación
+    changes = ws.changes(base, head)
+    # review = esperando tu aprobación; sin cambios en archivos (consultas, planes, revisiones) = done
+    status = ("review" if changes else "done") if res["status"] == "done" else res["status"]
     store.update_task(task_id, status=status, final=res["final"], finished_at=_now(), head_commit=head)
     sink(Event("status", text=status))
-    return {**res, "status": status, "diff": ws.diff_range(base, head), "changes": ws.changes(base, head),
+    return {**res, "status": status, "diff": ws.diff_range(base, head), "changes": changes,
             "stat": git_stat(ws, base, head)}
 
 

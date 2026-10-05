@@ -195,7 +195,7 @@ class Hierarchy:
                            plan["director_agent_id"], 0, "director")
         res = await execute_task(self.store, d["id"], binaries=self.binaries, on_event=self._emit, ws=ws,
                                  json_schema=PLAN_SCHEMA, read_only=True)
-        if res["status"] != "review":
+        if res["status"] not in ("review", "done"):
             return self._fail(pid, f"El Director falló ({res['status']})")
         self.store.update_task(d["id"], status="done", level=LEVEL_NAME[N0])
         self._emit(d["id"], Event("status", text="done"))
@@ -230,7 +230,7 @@ class Hierarchy:
                 continue
             sub = data["subtasks"][t["seq"] - 1]
             res = await execute_task(self.store, t["id"], binaries=self.binaries, on_event=self._emit, ws=ws)
-            if res["status"] != "review":
+            if res["status"] not in ("review", "done"):
                 return self._pause(pid, f"La subtarea {t['seq']} terminó en '{res['status']}'", failed=True)
             rules = assess_changes(res["changes"], self.policy)
             if not res["changes"]:
@@ -264,7 +264,7 @@ class Hierarchy:
         res = await execute_task(self.store, r["id"], binaries=self.binaries, on_event=self._emit, ws=ws,
                                  json_schema=REVIEW_SCHEMA, read_only=True)
         verdict = res.get("structured") or _json_or_none(res.get("final"))
-        ok = res["status"] == "review" and isinstance(verdict, dict) and verdict.get("verdict")
+        ok = res["status"] in ("review", "done") and isinstance(verdict, dict) and verdict.get("verdict")
         self.store.update_task(r["id"], status="done" if ok else "failed", level=LEVEL_NAME[N0])
         self._emit(r["id"], Event("status", text="done" if ok else "failed"))
         if res.get("changes"):  # un revisor de solo lectura no debería cambiar nada; si pasa, se escala
