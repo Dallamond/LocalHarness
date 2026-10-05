@@ -1,8 +1,9 @@
 from localharness.adapters.base import Adapter, AdapterError
 from localharness.adapters.claude import ClaudeAdapter
 from localharness.adapters.codex import CodexAdapter
+from localharness.adapters.local import LocalAdapter
 
-ADAPTERS: dict[str, type[Adapter]] = {"claude": ClaudeAdapter, "codex": CodexAdapter}
+ADAPTERS: dict[str, type[Adapter]] = {"claude": ClaudeAdapter, "codex": CodexAdapter, "local": LocalAdapter}
 
 
 def get_adapter(name: str, **kw) -> Adapter:

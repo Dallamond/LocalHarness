@@ -7,6 +7,7 @@ from collections.abc import Callable
 from localharness import workspace
 from localharness.adapters import get_adapter
 from localharness.adapters.base import RunSpec
+from localharness.adapters.local import config_kwargs
 from localharness.events import Event
 from localharness.runner import run
 from localharness.store import Store
@@ -30,7 +31,9 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
     if busy and ws is None:  # conflictos de merge entre tareas: por ahora, una tarea por repo a la vez
         raise ValueError(f"El proyecto ya tiene una tarea en curso: #{busy[0]['id']}")
     cfg = json.loads(agent["config"] or "{}")
-    adapter = get_adapter(agent["provider"], binary=(binaries or {}).get(agent["provider"]) or cfg.get("binary"))
+    extra = config_kwargs(cfg) if agent["provider"] == "local" else {}
+    adapter = get_adapter(agent["provider"], binary=(binaries or {}).get(agent["provider"]) or cfg.get("binary"),
+                          **extra)
 
     if ws is None:
         ws = workspace.create(project["repo_path"], task_id, worktree_root)

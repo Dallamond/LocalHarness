@@ -14,6 +14,7 @@ from collections.abc import Callable
 
 from localharness import workspace
 from localharness.actions import ActionError, now
+from localharness.adapters import ADAPTERS
 from localharness.events import Event
 from localharness.orchestrator import execute_task
 from localharness.policy import N0, N1, N2, LEVEL_NAME, RISK_LEVEL, Policy, assess_changes, combine
@@ -181,8 +182,12 @@ class Hierarchy:
     async def plan(self, pid: int) -> dict:
         plan = self.store.get_plan(pid)
         project = self.store.get_project(plan["project_id"])
-        workers = [a for a in self.store.list_agents() if a["id"] != plan["director_agent_id"]
-                   and a["id"] != plan["reviewer_agent_id"]] or self.store.list_agents()
+        # trabajadores: solo agentes capaces de modificar archivos (un modelo local no lo es)
+        writers = [a for a in self.store.list_agents() if ADAPTERS[a["provider"]].can_write]
+        others = [a for a in writers if a["id"] not in (plan["director_agent_id"], plan["reviewer_agent_id"])]
+        workers = others or writers
+        if not workers:
+            return self._fail(pid, "No hay agentes capaces de modificar archivos (claude/codex) para las subtareas")
         ws = workspace.create(project["repo_path"], f"plan-{pid}", self.worktree_root)
         self._set(pid, status="planning", branch=ws.branch, worktree=str(ws.path), base_commit=ws.base)
         plan = self.store.get_plan(pid)

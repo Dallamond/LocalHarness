@@ -12,6 +12,8 @@ from localharness.events import Event
 
 async def run(adapter: Adapter, spec: RunSpec, on_event: Callable[[Event], None],
               timeout_s: float = 1800.0, env: dict[str, str] | None = None) -> dict:
+    if not adapter.is_cli:  # p. ej. llama-server por HTTP
+        return await adapter.execute(spec, on_event, timeout_s)
     cmd = adapter.build_command(spec)
     cmd = [*resolve(cmd[0]), *cmd[1:]]  # en Windows: shim .cmd de npm -> exe real, sin cmd.exe
     stdin_text = adapter.stdin_text(spec)

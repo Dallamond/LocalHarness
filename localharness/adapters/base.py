@@ -31,6 +31,8 @@ class RunSpec:
 
 class Adapter(ABC):
     name = "base"
+    is_cli = True     # False: el adaptador ejecuta por sí mismo (execute), p. ej. un servidor HTTP local
+    can_write = True  # False: no puede modificar archivos (no se le asignan subtareas de implementación)
     env_remove: tuple[str, ...] = ()  # variables que NO deben llegar a la CLI hija
 
     def __init__(self, binary: str | None = None):

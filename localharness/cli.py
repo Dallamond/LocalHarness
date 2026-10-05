@@ -87,7 +87,7 @@ def cmd_agent(args, store: Store) -> int:
         cfg = {k: v for k, v in {"max_turns": args.max_turns, "max_budget_usd": args.budget,
                                  "read_only": args.read_only or None,
                                  "tools": args.tools.split(",") if args.tools else None,
-                                 "binary": args.binary}.items() if v is not None}
+                                 "binary": args.binary, "base_url": args.base_url}.items() if v is not None}
         a = store.add_agent(args.name, args.provider, model=args.model, role=args.role, config=cfg)
         print(f"Agente #{a['id']} {a['name']} ({a['provider']}{'/' + a['model'] if a['model'] else ''}) {cfg}")
     else:
@@ -291,6 +291,40 @@ def cmd_plan(args, store: Store) -> int:
     return _fail(f"acción desconocida {args.action}")
 
 
+def cmd_llama(args) -> int:
+    from localharness import llama
+    if args.action == "models":
+        models = llama.list_models()
+        print(f"llama-server: {llama.server_binary() or 'NO ENCONTRADO (define LOCALHARNESS_LLAMA_SERVER)'}")
+        print("carpetas: " + (", ".join(map(str, llama.model_dirs())) or "ninguna (define LOCALHARNESS_MODEL_DIRS)"))
+        for m in models:
+            print(f"  {m.stat().st_size / 2**30:5.1f} GB  {m.name}")
+        return 0
+    if args.action == "status":
+        import urllib.request
+        url = f"http://127.0.0.1:{args.port}"
+        try:
+            with urllib.request.urlopen(url + "/v1/models", timeout=3) as r:
+                data = json.loads(r.read())
+            print(f"llama-server en {url}: {', '.join(m.get('id', '?') for m in data.get('data', []))}")
+            return 0
+        except OSError as e:
+            return _fail(f"no responde llama-server en {url} ({e})")
+    if not args.model:
+        return _fail("uso: llama serve <nombre o parte del nombre del GGUF> [--port 8080 --ctx 16384 --ngl 99]")
+    try:
+        cmd = llama.serve_command(llama.find_model(args.model), args.port, args.ctx, args.ngl)
+    except LookupError as e:
+        return _fail(str(e))
+    print("Lanzando: " + subprocess.list2cmdline(cmd))
+    print(f"Agente para usarlo: python -m localharness agent add local-rev --provider local --role jefe "
+          f"(servidor http://127.0.0.1:{args.port}). Ctrl+C para pararlo.")
+    try:
+        return subprocess.call(cmd)
+    except KeyboardInterrupt:
+        return 0
+
+
 def cmd_serve(args) -> int:
     try:
         import uvicorn
@@ -329,6 +363,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--max-turns", type=int); p.add_argument("--budget", type=float, help="tope en USD por tarea")
     p.add_argument("--read-only", action="store_true"); p.add_argument("--tools", help="lista blanca, p. ej. Read,Edit,Write")
     p.add_argument("--binary", help="ruta del ejecutable si no es el del PATH")
+    p.add_argument("--base-url", help="local: URL de llama-server (por defecto http://127.0.0.1:8080)")
     p.set_defaults(fn=cmd_agent)
 
     p = sub.add_parser("run", help="ejecuta una petición en un worktree aislado")
@@ -345,6 +380,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--yes", action="store_true")
     p.set_defaults(fn=cmd_plan)
 
+    p = sub.add_parser("llama", help="M4: modelos locales con llama-server")
+    p.add_argument("action", choices=["models", "serve", "status"]); p.add_argument("model", nargs="?")
+    p.add_argument("--port", type=int, default=8080); p.add_argument("--ctx", type=int, default=16384)
+    p.add_argument("--ngl", type=int, default=99, help="capas en GPU (99 = todas)")
+    p.set_defaults(fn=cmd_llama)
+
     sub.add_parser("tasks", help="lista tareas").set_defaults(fn=cmd_tasks)
     p = sub.add_parser("show", help="detalle de una tarea"); p.add_argument("id", type=int)
     p.add_argument("--diff", action="store_true"); p.set_defaults(fn=cmd_show)
@@ -358,7 +399,7 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("falta el nombre")
     if args.cmd == "project" and args.action == "add" and not args.path:
         ap.error("falta la ruta del repo")
-    if args.cmd in ("doctor", "serve"):
+    if args.cmd in ("doctor", "serve", "llama"):
         return args.fn(args)
     store = _store(args)
     try:
