@@ -1,6 +1,6 @@
 # Estado y traspaso — leer primero al retomar (también desde Claude Code en la web)
 
-Última actualización: 05/10/2026 (fin de la sesión 2). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
+Última actualización: 05/10/2026 (fin de la sesión 2; tareas de la 3 apuntadas). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
 
 ## Dónde estamos
 | Hito | Estado |
@@ -85,7 +85,41 @@ qwen-director, qwen-jefe (local), haiku-director, haiku-jefe, sonnet-trabajador 
   consulta de solo lectura correcta en 28 s; plan con Director y jefe locales en 14 s; el jefe local detectó que
   el trabajador (falso) no hizo lo pedido y escaló a N2. Todo coste 0.
 
-## Sesión 2 — feedback de Lucas y lo que quedó a medias (EMPEZAR POR AQUÍ)
+## Sesión 3 — TAREAS PENDIENTES (EMPEZAR POR AQUÍ)
+Feedback de Lucas tras probar el chat y los modelos locales (05/10/2026). Nada de esto está implementado aún.
+Funciona: el chat con Claude (conversación con respuestas) y, bastante bien, la página de modelos locales.
+
+1. **Subagentes en Claude.** Le pidió al agente que creara subagentes y respondió que no tiene esa herramienta.
+   Causa (verificada en la tarea #3 de su base de datos): la CLI hija va con `--tools` limitado a
+   `Read,Glob,Grep,Edit,Write` (`adapters/claude.py`, `WRITE_TOOLS`); falta la herramienta de subagentes `Agent`.
+   Propuesta: opción por agente `config.subagents` (casilla «Puede crear subagentes» en Ajustes → Agentes, solo
+   claude) que añade `Agent` a `--tools`/`--allowedTools` (p. ej. campo `extra_tools` en `RunSpec`). Desactivada por
+   defecto: multiplica el gasto del plan. Comprobar con la CLI real que el nombre es `Agent` (antes `Task`) con
+   `--safe-mode`, con Haiku y topes.
+2. **Barra de progreso al cargar un modelo** en Modelos locales. llama.cpp imprime un `.` por cada 1 % de tensores
+   cargados (callback de progreso por defecto): contar los puntos de la línea tras `load_tensors` en
+   `data/llama-server.log` → % (p. ej. 90 % tensores + etapas contexto/calentamiento hasta «listo»). Añadirlo a
+   `LlamaManager.status()` como `progress {pct, stage}`.
+3. **Mostrar siempre 1–2 líneas del log de llama-server** en la tarjeta de estado (las últimas no vacías y que no sean
+   solo puntos), para ver que va bien sin abrir el log entero.
+4. **Medidor de tokens por segundo.** El adaptador local ya manda `tps` (`timings.predicted_per_second`) en el evento
+   `usage` al final. Añadir: evento `speed` cada ~1,5 s durante el streaming (tokens/s, tokens, fase «pensando» si son
+   `reasoning_content` —DeepSeek-R1 piensa mucho: la tarea #4 tardó 10 min— o «escribiendo»), mostrarlo en vivo en el
+   chat (burbuja «escribiendo…»), en la tarjeta del agente del Inicio y la última velocidad en Modelos locales.
+5. **Configuración pequeña por modelo local**: por cada GGUF, contexto, capas en GPU y argumentos extra
+   (p. ej. `-fa on -t 8`), guardado en ajustes (`llama.per_model[path]`) y usado al arrancar. En los agentes locales,
+   exponer en Ajustes `temperature`, `max_tokens` y `repo_context` (ya existen en `config_kwargs`, no en la GUI).
+6. **Tarea «colgada».** Era la #3: aprobada pero sin integrar (estado `approved`), así que se queda esperando en
+   «Pendiente de ti». Lucas quiere poder aceptar o no directamente desde el Inicio: botones en «Te toca a ti»
+   (tarea por revisar → Aprobar e integrar / Descartar; plan → Aprobar / Rechazar; integrar plan → Integrar /
+   Rechazar; subtarea N2 → Aprobar y seguir / Rechazar, o abrir el plan para ver el diff). Revisar además que las
+   subtareas `pending` de planes que acaban (failed/cancelled/rejected) no se queden pendientes para siempre.
+7. **Repasar roles y skills** («creo que se puede optimizar mucho; tendremos que ver cómo lo acabamos
+   configurando»). Decidir con Lucas antes de tocar: qué roles existen (Director, jefe técnico, trabajador,
+   consultas…), qué skills lleva cada uno por defecto, si el rol fija herramientas y límites (p. ej. jefe = solo
+   lectura) y cómo se crean desde Modelos locales (hoy: nombre del modelo + rol, descripción automática).
+
+## Sesión 2 — feedback de Lucas y lo que se hizo
 Feedback tras probar la GUI: «la respuesta final se pone en un md que no puedo contestar». Pide:
 1. **Chat para mandar tareas** (como un chat): vincular la carpeta desde ahí, ver/describir los agentes y
    **responder a las preguntas** del agente (sobre todo Claude). Mañana lo prueba con agentes locales.
