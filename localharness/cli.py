@@ -325,6 +325,15 @@ def cmd_llama(args) -> int:
         return 0
 
 
+def cmd_sandbox(args, store: Store) -> int:
+    from localharness import sandbox
+    path = Path(args.path) if args.path else sandbox.DEFAULT_PATH
+    for line in sandbox.create(store, path, reset=args.reset):
+        print(line)
+    print("Entorno de pruebas listo. Guía: docs/PROBAR.md")
+    return 0
+
+
 def cmd_serve(args) -> int:
     try:
         import uvicorn
@@ -385,6 +394,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--port", type=int, default=8080); p.add_argument("--ctx", type=int, default=16384)
     p.add_argument("--ngl", type=int, default=99, help="capas en GPU (99 = todas)")
     p.set_defaults(fn=cmd_llama)
+
+    p = sub.add_parser("sandbox", help="crea un repo de pruebas con fallos y agentes ya configurados")
+    p.add_argument("path", nargs="?"); p.add_argument("--reset", action="store_true")
+    p.set_defaults(fn=cmd_sandbox)
 
     sub.add_parser("tasks", help="lista tareas").set_defaults(fn=cmd_tasks)
     p = sub.add_parser("show", help="detalle de una tarea"); p.add_argument("id", type=int)
