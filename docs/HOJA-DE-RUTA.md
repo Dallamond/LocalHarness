@@ -9,7 +9,8 @@ Corre en tu PC principal (Windows, RTX 3060 y pronto Tesla M40). Se mejora por i
 | M0 Claude | ✅ Verificado con la CLI real (ver `tests/fixtures_reales/informe.json`) |
 | M0 Codex | ⏳ Codex no está instalado en el PC |
 | M1 | ✅ CLI `py -3.12 -m localharness …`; tarea real terminó en `review` y `main` intacto hasta `merge` |
-| M2–M6 | Pendientes |
+| M2 | ✅ API + SSE + GUI; ciclo completo en navegador probado con CLI falsa. Falta tu prueba manual y una real |
+| M3–M6 | Pendientes |
 
 Hallazgos de M0 que cambian el diseño:
 - **Aislamiento obligatorio.** Sin aislar, la CLI hija hereda tus MCP (Canva, Vercel…), plugins, hooks y CLAUDE.md:
@@ -88,7 +89,7 @@ Aceptación: login `claude.ai`; fixtures reales de Claude y Codex guardados; los
 `review` con diff y coste. Ya existe el 80 % (14 pruebas). Falta ajustar parsers con los fixtures reales y el CLI.
 Aceptación: una tarea real sobre un repo de prueba termina en `review` y no toca `main`.
 
-**M2 — API + GUI mínima.** FastAPI + SSE (eventos en vivo), vistas Proyectos, Tareas y Ejecución, visor de diff,
+**M2 — API + GUI mínima.** Integrar exige aprobar antes y confirmar (dos pasos: N2). FastAPI + SSE (eventos en vivo), vistas Proyectos, Tareas y Ejecución, visor de diff,
 botones Aprobar / Rechazar / Integrar. Aceptación: ciclo completo desde el navegador.
 
 **M3 — Jerarquía y aprobaciones.** Director con plan JSON validado por esquema; jefes técnicos que revisan diffs;

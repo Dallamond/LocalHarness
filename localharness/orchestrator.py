@@ -32,7 +32,7 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
     store.update_task(task_id, status="running", branch=ws.branch, worktree=str(ws.path), base_commit=ws.base)
 
     def sink(ev: Event) -> None:  # el estado se guarda ANTES de avisar: quien escucha lee la tarea ya al día
-        store.add_event(task_id, ev.kind, ev.text, ev.data)
+        ev.id = store.add_event(task_id, ev.kind, ev.text, ev.data)
         if ev.kind == "session" and ev.data.get("session_id"):
             store.update_task(task_id, session_id=ev.data["session_id"])
         if ev.kind == "usage" and ev.data.get("cost_usd") is not None:

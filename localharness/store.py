@@ -104,10 +104,11 @@ class Store:
         self.db.execute(f"UPDATE tasks SET {keys} WHERE id=?", (*f.values(), tid))
         self.db.commit()
 
-    def add_event(self, tid: int, kind: str, text: str = "", data: dict | None = None) -> None:
-        self.db.execute("INSERT INTO events(task_id,kind,text,data) VALUES(?,?,?,?)",
+    def add_event(self, tid: int, kind: str, text: str = "", data: dict | None = None) -> int:
+        cur = self.db.execute("INSERT INTO events(task_id,kind,text,data) VALUES(?,?,?,?)",
                         (tid, kind, text, json.dumps(data or {}, ensure_ascii=False, default=str)))
         self.db.commit()
+        return cur.lastrowid  # type: ignore[return-value]
 
     def list_events(self, tid: int, after: int = 0) -> list[dict]:
         return [dict(r) for r in self.db.execute(

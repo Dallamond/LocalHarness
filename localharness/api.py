@@ -90,8 +90,8 @@ class Runner:
             except Exception as e:  # noqa: BLE001 — cualquier fallo se registra en la tarea, no tumba el servidor
                 if self.store.get_task(tid)["status"] in ("pending", "running"):
                     self.store.update_task(tid, status="failed", finished_at=actions.now())
-                self.store.add_event(tid, "error", str(e))
-                self.hub.publish("task_event", {"task_id": tid, "kind": "error", "text": str(e), "data": {}})
+                eid = self.store.add_event(tid, "error", str(e))
+                self.hub.publish("task_event", {"task_id": tid, "id": eid, "kind": "error", "text": str(e), "data": {}})
             finally:
                 self.active.pop(tid, None)
                 self.publish_task(tid)

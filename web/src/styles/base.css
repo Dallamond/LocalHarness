@@ -1,0 +1,178 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+#app {
+  zoom: var(--zoom);
+}
+
+body {
+  background-color: var(--bg);
+  /* Rejilla de plano: menor 16 px, mayor 80 px */
+  background-image:
+    linear-gradient(var(--grid-major) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-major) 1px, transparent 1px),
+    linear-gradient(var(--grid-minor) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-minor) 1px, transparent 1px);
+  background-size:
+    80px 80px,
+    80px 80px,
+    16px 16px,
+    16px 16px;
+  background-attachment: fixed;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+}
+
+/* Títulos de página */
+h2.title {
+  font-size: 20px;
+  color: var(--ink);
+}
+
+a {
+  color: var(--accent);
+}
+
+button,
+select,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+input[type="radio"],
+input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/*
+ * Jerarquía de texto:
+ * - Texto fijo (títulos, rótulos, nombres de campo, botones): Inter.
+ * - Datos que cambian (cifras, rutas, flags): JetBrains Mono con cifras tabulares (`.mono` / `.data`).
+ */
+.mono,
+.data {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+}
+
+.data {
+  color: var(--data-ink);
+}
+
+/* Los nombres de campo son texto fijo aunque estén dentro de un bloque de datos */
+dt,
+.mono dt,
+.mono .label {
+  font-family: var(--font-sans);
+}
+
+.label {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+/* Rótulo de sección dentro de una página (encima de un grupo de tarjetas) */
+h3.label,
+h4.label {
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn:hover {
+  background: rgba(108, 180, 255, 0.08);
+}
+
+.btn--primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Efecto croquis: se aplica solo a bordes destacados y ejes, nunca a texto ni datos */
+.sketch {
+  filter: url(#sketch);
+}
+
+:root[data-sketch="off"] .sketch,
+:root[data-contrast="alto"] .sketch {
+  filter: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sketch {
+    filter: none;
+  }
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Datos de un agente caído: se ven (último valor conocido) pero atenuados */
+.is-stale > :not(header):not(.reg) {
+  opacity: 0.45;
+}
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+/* Las cifras en vivo destacan sobre el texto fijo */
+.mono {
+  color: var(--data-ink);
+}

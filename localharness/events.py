@@ -9,6 +9,7 @@ class Event:
     kind: str
     text: str = ""
     data: dict[str, Any] = field(default_factory=dict)
+    id: int | None = None  # id en la base de datos, una vez guardado
 
     def as_dict(self) -> dict[str, Any]:
-        return {"kind": self.kind, "text": self.text, "data": self.data}
+        return {"id": self.id, "kind": self.kind, "text": self.text, "data": self.data}

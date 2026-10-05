@@ -1,0 +1,85 @@
+/* Piezas de LocalHarness sobre la base de Arena LLM */
+.page {
+  display: grid;
+  gap: var(--gap);
+  max-width: 1200px;
+}
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.field {
+  display: grid;
+  gap: 4px;
+}
+.field input,
+.field select,
+.field textarea {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  padding: 6px 8px;
+  color: var(--ink);
+  font: inherit;
+  min-width: 0;
+}
+.field textarea {
+  font-family: var(--font-mono);
+  resize: vertical;
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.btn--danger {
+  border-color: var(--crit);
+  color: var(--crit);
+}
+.btn--ok {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+.error {
+  color: var(--crit);
+  font-size: 13px;
+}
+.muted {
+  color: var(--ink-dim);
+}
+table.list {
+  width: 100%;
+  border-collapse: collapse;
+}
+table.list th {
+  text-align: left;
+  font-size: 11px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  font-weight: 600;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+table.list td {
+  padding: 7px 8px;
+  border-bottom: 1px solid rgba(42, 74, 122, 0.45);
+  vertical-align: top;
+}
+table.list tr.clickable {
+  cursor: pointer;
+}
+table.list tr.clickable:hover td {
+  background: rgba(108, 180, 255, 0.05);
+}
+pre.block {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

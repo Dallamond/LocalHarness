@@ -1,0 +1,68 @@
+/* Tokens del estilo "blueprint sketch" (docs/GUI-DISENO.md §3). Ajustar al verlo. */
+:root {
+  --bg: #0a111c;
+  --grid-minor: rgba(110, 160, 255, 0.06);
+  --grid-major: rgba(110, 160, 255, 0.12);
+  --panel: #0f1828;
+  --panel-raised: #132036;
+  --line: #2a4a7a;
+  --line-strong: #5b8fd6;
+  --ink: #e8f0ff;
+  --ink-dim: #93a8c8;
+  --ink-faint: #6f87ab; /* AA sobre --panel para texto pequeño */
+  --accent: #6cb4ff;
+
+  /* Paleta de dispositivos: el índice se asigna por device_id en el servidor */
+  --dev-1: #4cc9f0;
+  --dev-2: #ff9f43;
+  --dev-3: #f472b6;
+  --dev-4: #a3e635;
+  --dev-5: #facc15;
+  --dev-6: #60a5fa;
+  --dev-cpu: #b794f6;
+  --dev-ram: #6ee7b7;
+
+  --warn: #ffe066;
+  --crit: #ff6b6b;
+  --ok: #6ee7b7;
+
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  /* Datos vivos (cifras que cambian): monoespaciada con cifras tabulares, separada del texto fijo */
+  --font-data: var(--font-mono);
+  --data-ink: #f4f8ff;
+
+  --radius: 0; /* láminas con marcas de registro, no esquinas redondeadas */
+  --gap: 16px;
+  --nav-w: 200px;
+  --nav-w-collapsed: 56px;
+  --topbar-h: 48px;
+}
+
+/* --- Apariencia configurable (Ajustes → Apariencia) --- */
+:root {
+  --zoom: 1;
+  --accent-soft: #2b4d6e;
+}
+
+/* Contraste alto: textos secundarios y líneas más claros, bordes más visibles */
+:root[data-contrast="alto"] {
+  --ink: #ffffff;
+  --ink-dim: #c9d7ee;
+  --ink-faint: #a9bcd9;
+  --line: #4672ad;
+  --line-strong: #8cb6f0;
+  --panel: #0c1524;
+  --grid-minor: rgba(110, 160, 255, 0.04);
+  --grid-major: rgba(110, 160, 255, 0.08);
+}
+
+:root[data-grid="tenue"] {
+  --grid-minor: rgba(110, 160, 255, 0.025);
+  --grid-major: rgba(110, 160, 255, 0.06);
+}
+
+:root[data-grid="off"] {
+  --grid-minor: transparent;
+  --grid-major: transparent;
+}

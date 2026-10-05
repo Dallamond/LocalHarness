@@ -4,3 +4,5 @@ __pycache__/
 data/
 *.db
 _referencias/
+node_modules/
+web/dist/
