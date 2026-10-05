@@ -119,6 +119,27 @@ Funciona: el chat con Claude (conversación con respuestas) y, bastante bien, la
    consultas…), qué skills lleva cada uno por defecto, si el rol fija herramientas y límites (p. ej. jefe = solo
    lectura) y cómo se crean desde Modelos locales (hoy: nombre del modelo + rol, descripción automática).
 
+8. **INVESTIGAR: modelos locales como agentes autónomos.** Hoy un agente local solo «piensa en un chat»: recibe el
+   repo en el prompt, no lee ni escribe archivos ni ejecuta nada (`can_write=False`). Lucas quiere que trabajen solos
+   en su propio entorno (worktree + terminal/pruebas) hasta que el jefe técnico vea la tarea completa y los pare.
+   Líneas a investigar (comprobar antes de decidir; nada verificado aún):
+   - **Bucle de agente propio en LocalHarness** usando *tool calling* de llama-server (API compatible con OpenAI;
+     con `--jinja` los modelos con plantilla de herramientas, p. ej. Qwen2.5-Coder/Qwen3, devuelven `tool_calls`).
+     Herramientas mínimas confinadas al worktree: leer, listar/buscar, editar/escribir, ejecutar un comando con
+     lista blanca y tiempo límite (tests, linters). Medir qué tal lo hacen de verdad los modelos de 7–14B.
+   - **Reutilizar una CLI de agente que acepte un endpoint OpenAI local** en vez de escribir el bucle: candidatas a
+     evaluar Codex CLI (proveedor local / `--oss`), OpenCode, Aider, Qwen Code, Goose, OpenHands. Sería otro
+     adaptador como `claude.py` (JSONL → eventos). Criterios: Windows, salida en streaming parseable, límites de
+     turnos, que funcione con la 3060 (12 GB).
+   - **Entorno de pruebas aislado**: el worktree ya aísla los archivos; falta aislar los comandos (lista blanca,
+     sin red, quizá contenedor o la sandbox de la propia CLI). Nunca push.
+   - **Quién decide que ha terminado**: bucle trabajador → jefe técnico revisa el diff y los tests → «sigue con
+     esto» (vuelve al trabajador con las notas) o «completado» (para). Topes duros: iteraciones, tiempo, tokens.
+     Encaja con `POST /api/tasks/{id}/reply` (la respuesta del jefe sería el siguiente mensaje) y con los niveles
+     N0/N1/N2 actuales.
+   - Resultado esperado: un documento corto con la opción recomendada, una prueba real con Qwen en el sandbox
+     (`python -m localharness sandbox`) y el coste/tiempo medido.
+
 ## Sesión 2 — feedback de Lucas y lo que se hizo
 Feedback tras probar la GUI: «la respuesta final se pone en un md que no puedo contestar». Pide:
 1. **Chat para mandar tareas** (como un chat): vincular la carpeta desde ahí, ver/describir los agentes y
