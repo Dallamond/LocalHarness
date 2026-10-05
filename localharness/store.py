@@ -25,7 +25,7 @@ MIGRATIONS = [
 
 class Store:
     def __init__(self, path: str | Path = ":memory:"):
-        self.db = sqlite3.connect(str(path))
+        self.db = sqlite3.connect(str(path), check_same_thread=False)  # la API lo usa desde el hilo del bucle y el de git
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys=ON")
         self.migrate()

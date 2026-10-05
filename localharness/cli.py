@@ -9,7 +9,6 @@
 
 import argparse
 import asyncio
-import datetime
 import json
 import os
 import shutil
@@ -17,7 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from localharness import workspace
+from localharness import actions, workspace
 from localharness.adapters import ADAPTERS
 from localharness.adapters.claude import login_method
 from localharness.binaries import resolve
@@ -41,12 +40,6 @@ def _store(args) -> Store:
 def _fail(msg: str) -> int:
     print(f"Error: {msg}", file=sys.stderr)
     return 1
-
-
-def _ws(store: Store, task: dict) -> workspace.Workspace:
-    project = store.get_project(task["project_id"])
-    return workspace.Workspace(Path(project["repo_path"]), Path(task["worktree"]), task["branch"],
-                               task["base_commit"])
 
 
 def cmd_doctor(args, store: Store | None = None) -> int:
@@ -160,48 +153,58 @@ def cmd_show(args, store: Store) -> int:
               "finished_at"):
         print(f"{k:12} {t[k]}")
     print(f"{'final':12} {t['final']}")
-    if t["worktree"] and Path(t["worktree"]).exists():
-        ws = _ws(store, t)
-        print("\n" + (ws.diff() if args.diff else ws.stat() or "(sin cambios)"))
+    r = actions.review_data(store, t)
+    if r["available"]:
+        print("\n" + (r["diff"] if args.diff else r["stat"] or "(sin cambios)"))
     return 0
+
+
+def _confirm(question: str) -> bool:
+    return input(f"{question} [s/N] ").strip().lower() in ("s", "si", "sí", "y")
 
 
 def cmd_merge(args, store: Store) -> int:
     t = store.get_task(args.id)
-    if not t or t["status"] != "review":
-        return _fail(f"solo se integran tareas en 'review' (#{args.id}: {t and t['status']})")
-    ws = _ws(store, t)
-    target = args.into or workspace.git(ws.repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
-    print(ws.stat())
-    if not args.yes and input(f"¿Integrar {t['branch']} en {target}? Nunca se hace push. [s/N] ").strip().lower() not in ("s", "si", "sí", "y"):
+    if not t or t["status"] not in actions.REVIEWABLE:
+        return _fail(f"solo se integran tareas en revisión (#{args.id}: {t and t['status']})")
+    r = actions.review_data(store, t)
+    print(r["stat"])
+    target = args.into or r["target"]
+    if not args.yes and not _confirm(f"¿Integrar {t['branch']} en {target}? Nunca se hace push."):
         return _fail("no integrado")
     try:
-        ws.merge(args.into)
-    except workspace.GitError as e:
+        actions.merge(store, t["id"], args.into)
+    except actions.ActionError as e:
         return _fail(str(e))
-    ws.remove()
-    store.update_task(t["id"], status="merged", finished_at=_now())
     print(f"Integrado en {target}. El push lo haces tú cuando quieras.")
     return 0
 
 
 def cmd_discard(args, store: Store) -> int:
     t = store.get_task(args.id)
-    if not t or not t["branch"]:
-        return _fail(f"la tarea #{args.id} no tiene rama")
-    if not args.yes and input(f"¿Borrar worktree y rama {t['branch']}? [s/N] ").strip().lower() not in ("s", "si", "sí", "y"):
+    if not t:
+        return _fail(f"no existe la tarea #{args.id}")
+    if not args.yes and not _confirm(f"¿Borrar worktree y rama {t['branch']}?"):
         return _fail("no descartado")
     try:
-        _ws(store, t).remove()
-    except workspace.GitError as e:
-        print(f"Aviso: {e}")
-    store.update_task(t["id"], status="discarded", finished_at=_now())
+        actions.discard(store, t["id"])
+    except actions.ActionError as e:
+        return _fail(str(e))
     print("Descartada.")
     return 0
 
 
-def _now() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+def cmd_serve(args) -> int:
+    try:
+        import uvicorn
+        from localharness.api import create_app
+    except ImportError:
+        return _fail("faltan dependencias del servidor: .venv/Scripts/python -m pip install -e .[server]")
+    db = Path(args.db or os.environ.get("LOCALHARNESS_DB") or DEFAULT_DB)
+    db.parent.mkdir(parents=True, exist_ok=True)
+    print(f"LocalHarness en http://{args.host}:{args.port}  (base de datos {db})")
+    uvicorn.run(create_app(db), host=args.host, port=args.port, log_level="warning")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -213,6 +216,10 @@ def main(argv: list[str] | None = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("doctor", help="comprueba git, CLIs y login").set_defaults(fn=cmd_doctor)
+
+    p = sub.add_parser("serve", help="API + GUI web (M2)")
+    p.add_argument("--host", default="127.0.0.1"); p.add_argument("--port", type=int, default=8095)
+    p.set_defaults(fn=cmd_serve)
 
     p = sub.add_parser("project", help="proyectos (repos git)")
     p.add_argument("action", choices=["add", "list"])
@@ -245,8 +252,8 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("falta el nombre")
     if args.cmd == "project" and args.action == "add" and not args.path:
         ap.error("falta la ruta del repo")
-    if args.cmd == "doctor":
-        return cmd_doctor(args)
+    if args.cmd in ("doctor", "serve"):
+        return args.fn(args)
     store = _store(args)
     try:
         return args.fn(args, store)

@@ -1,5 +1,6 @@
 """Ciclo de una tarea: worktree -> agente -> checkpoint -> diff listo para revisar. Sin push automático."""
 
+import asyncio
 import json
 from collections.abc import Callable
 
@@ -30,7 +31,7 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
     ws = workspace.create(project["repo_path"], task_id, worktree_root)
     store.update_task(task_id, status="running", branch=ws.branch, worktree=str(ws.path), base_commit=ws.base)
 
-    def sink(ev: Event) -> None:
+    def sink(ev: Event) -> None:  # el estado se guarda ANTES de avisar: quien escucha lee la tarea ya al día
         store.add_event(task_id, ev.kind, ev.text, ev.data)
         if ev.kind == "session" and ev.data.get("session_id"):
             store.update_task(task_id, session_id=ev.data["session_id"])
@@ -42,10 +43,18 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
     spec = RunSpec(prompt=task["prompt"], cwd=str(ws.path), model=agent["model"],
                    max_turns=cfg.get("max_turns"), max_budget_usd=cfg.get("max_budget_usd"),
                    read_only=bool(cfg.get("read_only")), allowed_tools=cfg.get("tools"))
-    res = await run(adapter, spec, sink, timeout_s=cfg.get("timeout_s") or timeout_s)
+    sink(Event("status", text="running"))
+    try:
+        res = await run(adapter, spec, sink, timeout_s=cfg.get("timeout_s") or timeout_s)
+    except asyncio.CancelledError:
+        ws.checkpoint(f"localharness (cancelada): {task['title']}")  # lo hecho queda en la rama, por si sirve
+        store.update_task(task_id, status="cancelled", finished_at=_now())
+        sink(Event("status", text="cancelled"))
+        raise
     ws.checkpoint(f"localharness: {task['title']}")
     status = "review" if res["status"] == "done" else res["status"]  # 'review' = esperando tu aprobación
     store.update_task(task_id, status=status, final=res["final"], finished_at=_now())
+    sink(Event("status", text=status))
     return {**res, "status": status, "diff": ws.diff(), "stat": ws.stat()}
 
 
