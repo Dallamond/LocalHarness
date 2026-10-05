@@ -97,6 +97,31 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(c.post(f"/api/tasks/{t['id']}/cancel").json()["status"], "cancelled")
             self.assertEqual(c.get("/api/health").json()["running"], [])
 
+    def test_plan_flow_from_api(self):
+        with TestClient(self.app) as c:
+            pid, director = self._setup(c)
+            body = {"project_id": pid, "director_agent_id": director, "reviewer_agent_id": director,
+                    "request": "trabajo GRANDE"}
+            p = c.post("/api/plans", json=body).json()
+            end = time.monotonic() + 15
+            while c.get(f"/api/plans/{p['id']}").json()["status"] in ("planning",) and time.monotonic() < end:
+                time.sleep(0.05)
+            p = c.get(f"/api/plans/{p['id']}").json()
+            self.assertEqual(p["status"], "awaiting_you"); self.assertEqual(len(p["plan"]["subtasks"]), 5)
+            self.assertEqual(c.get("/api/inbox").json()[0]["type"], "plan_approval")
+            # una subtarea del plan no se integra por la vía de tareas sueltas
+            sub = [t for t in p["tasks"] if t["kind"] == "worker"][0]
+            self.assertEqual(c.post(f"/api/tasks/{sub['id']}/reject").status_code, 409)
+            self.assertEqual(c.post(f"/api/plans/{p['id']}/approve").status_code, 200)
+            while c.get(f"/api/plans/{p['id']}").json()["status"] in ("approved", "running") and time.monotonic() < end:
+                time.sleep(0.05)
+            p = c.get(f"/api/plans/{p['id']}").json()
+            self.assertEqual(p["status"], "ready", p["error"])
+            self.assertEqual(c.post(f"/api/plans/{p['id']}/merge", json={}).status_code, 422)
+            self.assertEqual(c.post(f"/api/plans/{p['id']}/merge", json={"confirm": True}).json()["status"], "merged")
+            self.assertTrue((self.repo / "paso5.txt").exists())
+            self.assertEqual(c.get("/api/inbox").json(), [])
+
     def test_validation(self):
         with TestClient(self.app) as c:
             self.assertEqual(c.post("/api/projects", json={"name": "x", "repo_path": self.tmp.name}).status_code, 422)

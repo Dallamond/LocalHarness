@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from localharness import actions, workspace
 from localharness.adapters import ADAPTERS
 from localharness.events import Event
+from localharness.hierarchy import Hierarchy, inbox
 from localharness.hub import EventHub, sse_format
 from localharness.orchestrator import execute_task
 from localharness.store import Store
@@ -58,6 +59,17 @@ class MergeIn(BaseModel):
     confirm: bool = False  # la GUI lo manda tras tu confirmación explícita
 
 
+class PlanIn(BaseModel):
+    project_id: int
+    request: str = Field(min_length=1)
+    director_agent_id: int
+    reviewer_agent_id: int | None = None
+
+
+class DecideIn(BaseModel):
+    approve: bool
+
+
 class Runner:
     """Tareas en marcha en este proceso (para cancelar y para saber qué está vivo)."""
 
@@ -65,12 +77,37 @@ class Runner:
                  worktree_root: str | None):
         self.store, self.hub, self.binaries, self.worktree_root = store, hub, binaries, worktree_root
         self.active: dict[int, asyncio.Task] = {}
+        self.plans: dict[int, asyncio.Task] = {}
+        self.hier = Hierarchy(store, on_event=self.on_event, on_plan=self.publish_plan, binaries=binaries,
+                              worktree_root=worktree_root)
         self.last_limit = _last_limit(store)  # último uso del plan conocido (evento rate_limit_event)
 
     def publish_task(self, tid: int) -> None:
         t = self.store.get_task(tid)
         if t:
             self.hub.publish("task", t)
+
+    def publish_plan(self, pid: int) -> None:
+        p = self.store.get_plan(pid)
+        if p:
+            self.hub.publish("plan", plan_out(p))
+
+    def run_plan(self, pid: int, plan_first: bool) -> None:
+        """Planifica (si toca) y ejecuta hasta terminar o hasta necesitar tu decisión."""
+        async def go() -> None:
+            try:
+                p = await self.hier.plan(pid) if plan_first else self.store.get_plan(pid)
+                if p["status"] in ("approved", "paused"):
+                    await self.hier.run(pid)
+            except asyncio.CancelledError:
+                self.store.update_plan(pid, status="cancelled", finished_at=actions.now())
+            except Exception as e:  # noqa: BLE001 — se registra en el plan, no tumba el servidor
+                self.store.update_plan(pid, status="failed", error=str(e), finished_at=actions.now())
+            finally:
+                self.plans.pop(pid, None)
+                self.publish_plan(pid)
+
+        self.plans[pid] = asyncio.create_task(go())
 
     def on_event(self, tid: int, ev: Event) -> None:
         self.hub.publish("task_event", {"task_id": tid, **ev.as_dict()})
@@ -106,9 +143,19 @@ class Runner:
         await asyncio.gather(task, return_exceptions=True)
         return True
 
+    async def cancel_plan(self, pid: int) -> bool:
+        task = self.plans.get(pid)
+        if not task:
+            return False
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        return True
+
     async def shutdown(self) -> None:
         for tid in list(self.active):
             await self.cancel(tid)
+        for pid in list(self.plans):
+            await self.cancel_plan(pid)
 
 
 def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | None = None,
@@ -256,6 +303,82 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         # Integrar en la rama principal es nivel N2 (tú): antes hay que aprobar la tarea
         return _action(request, actions.merge, tid, None, True)
 
+    # --- planes (M3)
+    def plan_or_404(store: Store, pid: int) -> dict:
+        p = store.get_plan(pid)
+        if not p:
+            raise HTTPException(404, f"No existe el plan #{pid}")
+        return p
+
+    def _plan_action(fn, *args) -> dict:
+        try:
+            return fn(*args)
+        except actions.ActionError as e:
+            raise HTTPException(409, str(e)) from None
+
+    @app.get("/api/plans")
+    async def plans(request: Request) -> list[dict]:
+        return [plan_out(p) for p in reversed(st(request).list_plans())]
+
+    @app.get("/api/plans/{pid}")
+    async def plan(request: Request, pid: int) -> dict:
+        p = plan_or_404(st(request), pid)
+        return {**plan_out(p), "tasks": [task_out(t) for t in st(request).plan_tasks(pid)]}
+
+    @app.post("/api/plans", status_code=201)
+    async def add_plan(request: Request, body: PlanIn) -> dict:
+        store = st(request)
+        if not store.get_project(body.project_id):
+            raise HTTPException(422, "Proyecto inexistente")
+        for aid in (body.director_agent_id, body.reviewer_agent_id):
+            if aid is not None and not store.get_agent(aid):
+                raise HTTPException(422, f"Agente inexistente: #{aid}")
+        if any(p["status"] in ("planning", "running") for p in store.list_plans(body.project_id)):
+            raise HTTPException(409, "Ese proyecto ya tiene un plan en marcha")
+        p = store.add_plan(body.project_id, body.request, body.director_agent_id, body.reviewer_agent_id)
+        request.app.state.runner.publish_plan(p["id"])
+        request.app.state.runner.run_plan(p["id"], plan_first=True)
+        return plan_out(p)
+
+    @app.post("/api/plans/{pid}/approve")
+    async def approve_plan(request: Request, pid: int) -> dict:
+        plan_or_404(st(request), pid)
+        runner = request.app.state.runner
+        p = _plan_action(runner.hier.approve_plan, pid)
+        runner.run_plan(pid, plan_first=False)
+        return plan_out(p)
+
+    @app.post("/api/plans/{pid}/reject")
+    async def reject_plan(request: Request, pid: int) -> dict:
+        plan_or_404(st(request), pid)
+        return plan_out(_plan_action(request.app.state.runner.hier.reject_plan, pid))
+
+    @app.post("/api/plans/{pid}/merge")
+    async def merge_plan(request: Request, pid: int, body: MergeIn) -> dict:
+        plan_or_404(st(request), pid)
+        if not body.confirm:
+            raise HTTPException(422, "Integrar exige confirmación explícita")
+        return plan_out(_plan_action(request.app.state.runner.hier.merge_plan, pid))
+
+    @app.post("/api/plans/{pid}/cancel")
+    async def cancel_plan(request: Request, pid: int) -> dict:
+        p = plan_or_404(st(request), pid)
+        if not await request.app.state.runner.cancel_plan(pid):
+            raise HTTPException(409, f"El plan no está en marcha (está en '{p['status']}')")
+        return plan_out(st(request).get_plan(pid))
+
+    @app.post("/api/tasks/{tid}/decide")
+    async def decide(request: Request, tid: int, body: DecideIn) -> dict:
+        task_or_404(st(request), tid)
+        runner = request.app.state.runner
+        t = _plan_action(runner.hier.decide_task, tid, body.approve)
+        runner.run_plan(t["plan_id"], plan_first=False)  # el plan sigue con la siguiente subtarea
+        return task_out(t)
+
+    @app.get("/api/inbox")
+    async def get_inbox(request: Request) -> list[dict]:
+        return inbox(st(request))
+
     # --- eventos en vivo
     @app.get("/api/events")
     async def events(request: Request) -> StreamingResponse:
@@ -293,6 +416,16 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
             return FileResponse(web_dist / "index.html")
 
     return app
+
+
+def plan_out(p: dict) -> dict:
+    return {**p, "plan": json.loads(p["plan"]) if p.get("plan") else None,
+            "level_reasons": json.loads(p.get("level_reasons") or "[]")}
+
+
+def task_out(t: dict) -> dict:
+    return {**t, "level_reasons": json.loads(t.get("level_reasons") or "[]"),
+            "review": json.loads(t["review"]) if t.get("review") else None}
 
 
 def _last_limit(store: Store) -> dict | None:

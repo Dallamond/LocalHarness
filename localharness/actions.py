@@ -47,6 +47,8 @@ def _get(store: Store, tid: int) -> dict:
     task = store.get_task(tid)
     if not task:
         raise ActionError(f"No existe la tarea #{tid}")
+    if task.get("plan_id"):  # las subtareas se deciden dentro de su plan (hierarchy.py)
+        raise ActionError(f"La tarea #{tid} es parte del plan #{task['plan_id']}: decídela desde el plan")
     return task
 
 
