@@ -16,7 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from localharness import actions, workspace
+from localharness import actions, settings, workspace
 from localharness.adapters import ADAPTERS
 from localharness.adapters.claude import login_method
 from localharness.binaries import resolve
@@ -31,6 +31,7 @@ def _store(args) -> Store:
     path = Path(args.db or os.environ.get("LOCALHARNESS_DB") or DEFAULT_DB)
     path.parent.mkdir(parents=True, exist_ok=True)
     store = Store(path)
+    settings.apply(store)
     n = store.mark_interrupted()
     if n:
         print(f"Aviso: {n} tarea(s) que quedaron a medias se marcan como 'interrupted'.")

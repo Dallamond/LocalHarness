@@ -78,6 +78,14 @@ class Workspace:
         git(self.repo, "branch", "-D", self.branch)
 
 
+def init_repo(path: str | Path) -> None:
+    """Convierte una carpeta en repo con un commit inicial de todo lo que hay (solo cuando tú lo pides)."""
+    git(path, "init", "-q")
+    git(path, "add", "-A")
+    git(path, "-c", "user.name=localharness", "-c", "user.email=localharness@local", "commit", "-q",
+        "--allow-empty", "-m", "LocalHarness: estado inicial")
+
+
 def create(repo: str | Path, task_id: int | str, root: str | Path | None = None, link_node_modules: bool = False) -> Workspace:
     """`task_id` entero → rama `localharness/task-N`; texto (p. ej. «plan-3») → `localharness/plan-3`."""
     repo = Path(repo).resolve()

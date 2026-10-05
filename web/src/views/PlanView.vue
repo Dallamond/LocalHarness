@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from "vue";
-import BlueprintCard from "../components/BlueprintCard.vue";
+import Card from "../components/Card.vue";
 import StatusChip from "../components/StatusChip.vue";
 import {
   PLAN_TEXT, STATUS_TEXT, agentName, api, live, onTaskEvent, planChip, post, projectName, statusChip, usd,
@@ -80,7 +80,7 @@ function diffClass(l: string): string {
     </div>
     <p v-if="error" class="error">{{ error }}</p>
 
-    <BlueprintCard title="Petición" :level="['awaiting_you', 'paused', 'ready'].includes(plan.status) ? 'warn' : undefined">
+    <Card title="Petición" :level="['awaiting_you', 'paused', 'ready'].includes(plan.status) ? 'warn' : undefined">
       <p class="req">{{ plan.request }}</p>
       <p class="muted small">
         {{ projectName(plan.project_id) }} · Director {{ agentName(plan.director_agent_id) }} ·
@@ -104,9 +104,9 @@ function diffClass(l: string): string {
           @click="act(`/api/plans/${id}/reject`, {}, '¿Rechazar el plan? Se borran su rama y su worktree.')"
         >Rechazar plan</button>
       </div>
-    </BlueprintCard>
+    </Card>
 
-    <BlueprintCard title="Subtareas">
+    <Card title="Subtareas">
       <p v-if="!tasks.length" class="muted">El Director está preparando el plan…</p>
       <div v-for="t in tasks" :key="t.id" class="sub" :class="`sub--${t.kind}`">
         <div class="row">
@@ -131,7 +131,7 @@ function diffClass(l: string): string {
         <pre v-if="open === t.id && diffs[t.id]" class="block diff"><span v-for="(l, i) in diffs[t.id].diff.split('\n')" :key="i" :class="diffClass(l)">{{ l }}
 </span></pre>
       </div>
-    </BlueprintCard>
+    </Card>
   </div>
   <p v-else-if="error" class="error">{{ error }}</p>
 </template>
@@ -165,7 +165,7 @@ function diffClass(l: string): string {
 }
 .sub {
   padding: 10px 0;
-  border-bottom: 1px solid rgba(42, 74, 122, 0.45);
+  border-bottom: 1px solid var(--line);
 }
 .sub--reviewer,
 .sub--director {

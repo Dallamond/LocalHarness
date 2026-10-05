@@ -1,6 +1,6 @@
 # Estado y traspaso — leer primero al retomar (también desde Claude Code en la web)
 
-Última actualización: 05/10/2026 (fin de la sesión 1). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
+Última actualización: 05/10/2026 (fin de la sesión 2). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
 
 ## Dónde estamos
 | Hito | Estado |
@@ -20,8 +20,9 @@
 - **Gastar lo mínimo del plan Pro de Claude** (iba por el 82 % semanal). Probar con CLIs falsas; ejecuciones reales
   solo con Sonnet y topes (`--max-turns`, `--max-budget-usd`). Tiene ~100 € de créditos de Claude en la nube para
   cuando se agote el límite (pendiente aclarar si son créditos de API o uso extra).
-- **La estética «blueprint» es provisional.** En el futuro la GUI será una pequeña oficina simulada (low-poly o 2D,
-  por decidir). Prioridad ahora: que todo funcione. No invertir en estilos.
+- **Estética:** la «blueprint» se sustituyó (05/10/2026) por un estilo cálido y redondeado (Figtree, tema claro/oscuro,
+  barra lateral) porque Lucas no quería un aspecto «cuadrado e IA». Sigue siendo provisional: el destino es una
+  pequeña oficina simulada (low-poly o 2D, por decidir).
 - Pruebas de navegador: normalmente se las pide a Lucas con una lista de pasos; en su ausencia, las hace Claude.
 - Codex aparcado. Repo en GitHub: `Dallamond/LocalHarness`, rama `main`. Nunca push desde los agentes.
 
@@ -61,6 +62,18 @@ Trampas conocidas:
   inventados se descartan). Memoria = `.md` de `projects.memory_dir` (`project memory <nombre> [ruta]`, por defecto
   `data/memory/<proyecto>`), fuera del worktree → solo lectura. Evento `context` registra qué se inyectó.
 
+## GUI (05/10/2026, sesión 2)
+- **Inicio** (`/inicio`, `HomeView.vue`): cifras rápidas, «Te toca a ti», el equipo (cada agente: libre o qué hace
+  ahora, a partir de su último evento `text`/`tool`), «Lo último que ha pasado» (archivos tocados y veredicto del jefe
+  técnico) y planes. Datos: `GET /api/activity` (`current` = último evento de cada tarea en marcha, `recent` = últimas
+  terminadas con `files` del numstat) + SSE.
+- **Ajustes** (`/ajustes?s=…`, `SettingsView.vue`): agentes (crear, editar modelo/rol/límites/skills/URL local, borrar
+  si no tienen historial), proyectos (alta y carpeta de memoria), aprobaciones (límites y patrones de policy), ejecución
+  (timeout por tarea, URL del llama-server por defecto), skills y memoria (límites de caracteres, carpetas extra,
+  catálogo), valores de agentes nuevos y apariencia (tema/densidad/tamaño, solo en el navegador).
+- Ajustes del servidor: `settings.py` + tabla `settings` (migración 3). `GET/PUT /api/settings`, `POST /api/settings/reset`,
+  `GET /api/skills`, `PATCH/DELETE /api/agents/{id}`, `PATCH /api/projects/{id}`. La CLI también los aplica.
+
 ## Entorno de pruebas
 `python -m localharness sandbox [--reset]` crea `~/LocalHarness-sandbox` (tienda con fallos a propósito) y los agentes
 qwen-director, qwen-jefe (local), haiku-director, haiku-jefe, sonnet-trabajador (Claude con topes). Guía: `docs/PROBAR.md`.
@@ -72,16 +85,52 @@ qwen-director, qwen-jefe (local), haiku-director, haiku-jefe, sonnet-trabajador 
   consulta de solo lectura correcta en 28 s; plan con Director y jefe locales en 14 s; el jefe local detectó que
   el trabajador (falso) no hizo lo pedido y escaló a N2. Todo coste 0.
 
-## Pendiente inmediato (siguiente sesión)
-1. Recoger el feedback de Lucas de `docs/PROBAR.md` y arreglar lo que salga (prioridad).
-2. GUI de M5: elegir skills al crear tarea/agente, carpeta de memoria del proyecto, ver el evento `context`
-   y las skills elegidas por el Director en el detalle del plan. Endpoint `GET /api/skills` (aún no existe).
+## Sesión 2 — feedback de Lucas y lo que quedó a medias (EMPEZAR POR AQUÍ)
+Feedback tras probar la GUI: «la respuesta final se pone en un md que no puedo contestar». Pide:
+1. **Chat para mandar tareas** (como un chat): vincular la carpeta desde ahí, ver/describir los agentes y
+   **responder a las preguntas** del agente (sobre todo Claude). Mañana lo prueba con agentes locales.
+2. **Menú gráfico de modelos locales**: elegir la carpeta de modelos, detección automática de los GGUF y un botón
+   «Arrancar» por modelo que lance llama-server por detrás y deje los agentes conectados a él.
+
+**Backend HECHO (con pruebas, 51 en verde):**
+- Conversación en tareas sueltas: `POST /api/tasks/{id}/reply {message}`. Sigue en el mismo worktree/rama, el diff
+  cuenta desde la base original y el coste se acumula. Claude reanuda su sesión (`--resume session_id`); el
+  proveedor local recibe toda la conversación en el prompt (`orchestrator._conversation` + `transcript`). Tu
+  mensaje queda como evento `user`; cada respuesta del agente es un evento `result` (y `text` por párrafo).
+  Si el worktree ya no existe (tarea `done` limpiada) se crea otro. Cerrada si merged/rejected/discarded (409).
+- Vincular carpeta: `POST /api/projects` acepta `init_git: true` (git init + commit inicial, solo si se pide)
+  y quita comillas de la ruta pegada.
+- Agentes con `description` (en `config`, alta y PATCH): el Director la lee para repartir subtareas.
+- Modelos locales: ajustes `llama` {server, model_dirs, port, ctx, ngl} (vacíos = env/Arena). `GET /api/llama`
+  (exe, carpetas, modelos con tamaño y cuantización, estado off/loading/ready/failed/external + cola del log),
+  `POST /api/llama/start {path, ctx?, ngl?}` (un servidor a la vez, sin ventana; fija `local_base_url` a su
+  puerto), `POST /api/llama/stop`. Muere con el servidor. `llama.LlamaManager`, log en `data/llama-server.log`.
+- `POST /api/pick {kind: folder|file}`: abre el selector NATIVO de Windows (tkinter) en el PC y devuelve la ruta;
+  501 si no hay escritorio (en la web/Linux): entonces la GUI debe dejar escribir la ruta.
+
+**GUI PENDIENTE (lo siguiente):**
+- Vista **Chat** (`/chat`, sustituye a «Tareas sueltas»; `/tareas` → `/chat`, se mantiene `/tareas/:id` para el
+  diff completo): lista de conversaciones a la izquierda; burbujas (petición = `task.prompt`, eventos `user`,
+  `text`/`result` del agente con **markdown renderizado** — instalar `marked` + `dompurify`), herramientas como
+  líneas grises plegables; caja de escribir abajo: si la tarea terminó → `reply`; si no hay tarea → nueva
+  (proyecto + agente con su descripción visible). Botón «Vincular carpeta» (usa `/api/pick`, nombre = nombre de
+  la carpeta, casilla «inicializar git»). Al terminar, tarjeta con archivos cambiados y Aprobar/Integrar/Rechazar.
+  Modo «Equipo (Director)» que lanza un plan y abre `/planes/:id`.
+- Página **Modelos locales** (`/modelos`): carpeta de modelos y exe de llama-server con botón «Elegir…»
+  (`/api/pick`), tarjetas por GGUF (nombre, tamaño, cuantización) con Arrancar/Parar, estado con sondeo cada 2 s
+  (cargar tarda minutos), cola del log y botón «Crear agente local con este modelo» (rol director/jefe).
+- Ajustes → Agentes: campo «Descripción» (alta y edición). Tipos en `api.ts`: `config.description`.
+
+## Pendiente (después de lo anterior)
+1. Recoger el feedback de Lucas de `docs/PROBAR.md` y arreglar lo que salga.
+2. GUI de M5 (resto): elegir skills al crear una tarea suelta, ver el evento `context` y las skills elegidas por el
+   Director en el detalle del plan. (Skills por agente, memoria del proyecto y `GET /api/skills` ya están en Ajustes.)
 3. M6: limpieza de worktrees/ramas huérfanos al arrancar, rama de integración por proyecto, conflictos de merge
    (parar y avisar), checkpoints.
 4. M4: comparar revisor local vs Claude con el mismo diff; probar Qwen3.5-9B y Qwen-2.5-Coder-14B.
 5. llama-server avisa de CORS abierto: valorar `--api-key` (solo escucha en 127.0.0.1).
 6. Ruido de pruebas: IsolatedAsyncioTestCase imprime avisos «Executing <Task…> took» (modo debug); silenciar.
-7. Estética: sustituir la «blueprint» por la oficina simulada cuando Lucas decida el estilo.
+7. Estética: la oficina simulada cuando Lucas decida el estilo (de momento, el estilo cálido de la sesión 2).
 
 ## Hallazgos técnicos clave (no repetir)
 - La CLI hija va aislada: `--safe-mode --strict-mcp-config` (sin eso, 245k tokens por «ok»). `--bare` prohíbe OAuth.

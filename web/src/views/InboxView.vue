@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useRouter } from "vue-router";
-import BlueprintCard from "../components/BlueprintCard.vue";
+import Card from "../components/Card.vue";
 import { live } from "../api";
 
 const router = useRouter();
@@ -21,7 +21,7 @@ function open(i: (typeof live.inbox)[number]) {
 <template>
   <div class="page">
     <h2 class="title">Pendiente de ti</h2>
-    <BlueprintCard title="Decisiones N2">
+    <Card title="Decisiones N2">
       <p v-if="!live.inbox.length" class="muted">Nada pendiente. Lo de nivel N0/N1 lo resuelven solos los agentes.</p>
       <table v-else class="list">
         <thead><tr><th>Nivel</th><th>Qué</th><th>Título</th><th>Motivos</th></tr></thead>
@@ -34,7 +34,7 @@ function open(i: (typeof live.inbox)[number]) {
           </tr>
         </tbody>
       </table>
-    </BlueprintCard>
+    </Card>
   </div>
 </template>
 

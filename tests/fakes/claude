@@ -75,4 +75,4 @@ else:
         out({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Write", "input": {"file_path": name}}]}})
         with open(name, "w", encoding="utf-8") as f:
             f.write(text)
-    finish("Hecho")
+    finish("Hecho (resume)" if "--resume" in sys.argv else "Hecho")

@@ -130,6 +130,86 @@ class ApiTests(unittest.TestCase):
             self._setup(c)
             self.assertEqual(c.post("/api/projects", json={"name": "demo", "repo_path": str(self.repo)}).status_code, 409)
 
+    def test_conversation_reply(self):
+        with TestClient(self.app) as c:
+            pid, aid = self._setup(c)
+            t = c.post("/api/tasks", json={"project_id": pid, "agent_id": aid, "prompt": "crea hola.txt"}).json()
+            wait_status(c, t["id"], ("review", "failed"))
+            r = c.post(f"/api/tasks/{t['id']}/reply", json={"message": "ahora crea el archivo otro.txt"})
+            self.assertEqual(r.status_code, 200, r.text)
+            time.sleep(0.2)
+            t2 = wait_status(c, t["id"], ("review", "failed"))
+            self.assertEqual(t2["final"], "Hecho (resume)")  # Claude reanuda su sesión
+            self.assertAlmostEqual(t2["cost_usd"], 0.02)  # el coste se acumula
+            evs = c.get(f"/api/tasks/{t['id']}/events").json()
+            self.assertIn("ahora crea el archivo otro.txt", [e["text"] for e in evs if e["kind"] == "user"])
+            files = {f["path"] for f in c.get("/api/activity").json()["recent"][0]["files"]}
+            self.assertEqual(files, {"hola.txt", "otro.txt"})  # el diff cuenta desde la base original
+            c.post(f"/api/tasks/{t['id']}/reject")
+            self.assertEqual(c.post(f"/api/tasks/{t['id']}/reply", json={"message": "x"}).status_code, 409)
+
+    def test_link_folder_with_git_init(self):
+        with TestClient(self.app) as c:
+            folder = Path(self.tmp.name) / "sin_git"
+            folder.mkdir()
+            (folder / "a.txt").write_text("a", encoding="utf-8")
+            body = {"name": "nuevo", "repo_path": str(folder)}
+            self.assertEqual(c.post("/api/projects", json=body).status_code, 422)
+            r = c.post("/api/projects", json={**body, "init_git": True})
+            self.assertEqual(r.status_code, 201, r.text)
+
+    def test_llama_models(self):
+        with TestClient(self.app) as c:
+            d = Path(self.tmp.name) / "modelos" / "qwen"
+            d.mkdir(parents=True)
+            (d / "Qwen2.5-Coder-7B-Q8_0.gguf").write_bytes(b"GGUF")
+            (d / "mmproj-qwen.gguf").write_bytes(b"GGUF")  # proyector: no es un modelo
+            c.put("/api/settings", json={"llama": {"model_dirs": [str(d.parent)], "port": 18999,
+                                                   "server": str(Path(self.tmp.name) / "no-existe.exe")}})
+            info = c.get("/api/llama").json()
+            self.assertEqual([m["quant"] for m in info["models"]], ["Q8_0"])
+            self.assertEqual(info["status"]["state"], "off")
+            r = c.post("/api/llama/start", json={"path": info["models"][0]["path"]})
+            if info["server"] is None:  # sin llama-server en este equipo: error claro, nada lanzado
+                self.assertEqual(r.status_code, 409, r.text)
+            else:
+                c.post("/api/llama/stop")
+            self.assertEqual(c.post("/api/llama/start", json={"path": str(d / "x.txt")}).status_code, 422)
+            c.post("/api/settings/reset")
+
+    def test_settings_agents_and_activity(self):
+        with TestClient(self.app) as c:
+            s = c.get("/api/settings").json()
+            self.assertEqual(s["values"]["policy"]["max_files"], 8)
+            r = c.put("/api/settings", json={"policy": {"max_files": 2}, "task_timeout_min": 5})
+            self.assertEqual(r.status_code, 200, r.text)
+            v = r.json()["values"]
+            self.assertEqual(v["policy"]["max_files"], 2)
+            self.assertEqual(v["policy"]["max_lines"], 300)  # lo no enviado se conserva
+            self.assertEqual(c.app.state.runner.hier.policy.max_files, 2)
+            self.assertEqual(c.put("/api/settings", json={"nope": 1}).status_code, 422)
+            self.assertEqual(c.post("/api/settings/reset").json()["values"]["task_timeout_min"], 30)
+            self.assertIsInstance(c.get("/api/skills").json(), list)
+
+            pid, aid = self._setup(c)
+            a = c.patch(f"/api/agents/{aid}", json={"model": "haiku", "max_turns": None, "skills": ["tests-primero"]})
+            self.assertEqual(a.status_code, 200, a.text)
+            self.assertEqual(a.json()["model"], "haiku")
+            self.assertNotIn("max_turns", a.json()["config"])
+            self.assertEqual(a.json()["config"]["skills"], ["tests-primero"])
+            self.assertIn("binary", a.json()["config"])  # lo no enviado no se toca
+            p = c.patch(f"/api/projects/{pid}", json={"memory_dir": "  "}).json()
+            self.assertIsNone(p["memory_dir"])
+
+            t = c.post("/api/tasks", json={"project_id": pid, "agent_id": aid, "prompt": "crea hola.txt"}).json()
+            wait_status(c, t["id"], ("review", "failed"))
+            act = c.get("/api/activity").json()
+            self.assertEqual(act["recent"][0]["id"], t["id"])
+            self.assertTrue(act["recent"][0]["files"])
+            self.assertEqual(c.delete(f"/api/agents/{aid}").status_code, 409)  # tiene historial
+            other = c.post("/api/agents", json={"name": "libre"}).json()
+            self.assertEqual(c.delete(f"/api/agents/{other['id']}").status_code, 204)
+
 
 if __name__ == "__main__":
     unittest.main()

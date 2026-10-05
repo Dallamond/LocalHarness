@@ -36,6 +36,10 @@ MIGRATIONS = [
     ALTER TABLE tasks ADD COLUMN head_commit TEXT;
     ALTER TABLE tasks ADD COLUMN kind TEXT DEFAULT 'worker';  -- director | worker | reviewer
     """,
+    # Ajustes de la GUI (settings.py): clave → JSON
+    """
+    CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    """,
 ]
 
 
@@ -81,6 +85,39 @@ class Store:
 
     def list_agents(self) -> list[dict]:
         return [dict(r) for r in self.db.execute("SELECT * FROM agents ORDER BY id")]
+
+    def update_agent(self, agent_id: int, **f: Any) -> None:
+        f = {k: json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else v for k, v in f.items()}
+        keys = ", ".join(f"{k}=?" for k in f)
+        self.db.execute(f"UPDATE agents SET {keys} WHERE id=?", (*f.values(), agent_id))
+        self.db.commit()
+
+    def agent_in_use(self, agent_id: int) -> bool:
+        return bool(self.db.execute(
+            "SELECT 1 FROM tasks WHERE agent_id=? UNION SELECT 1 FROM plans WHERE director_agent_id=? "
+            "OR reviewer_agent_id=? LIMIT 1", (agent_id, agent_id, agent_id)).fetchone())
+
+    def delete_agent(self, agent_id: int) -> None:
+        self.db.execute("DELETE FROM agents WHERE id=?", (agent_id,))
+        self.db.commit()
+
+    def get_settings(self) -> dict:
+        return {r["key"]: json.loads(r["value"]) for r in self.db.execute("SELECT key, value FROM settings")}
+
+    def set_setting(self, key: str, value: Any) -> None:
+        self.db.execute("INSERT INTO settings(key,value) VALUES(?,?) "
+                        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                        (key, json.dumps(value, ensure_ascii=False)))
+        self.db.commit()
+
+    def clear_settings(self) -> None:
+        self.db.execute("DELETE FROM settings")
+        self.db.commit()
+
+    def last_event(self, tid: int, kinds: tuple[str, ...] = ("text", "tool", "status", "context")) -> dict | None:
+        marks = ",".join("?" * len(kinds))
+        return self._one(f"SELECT * FROM events WHERE task_id=? AND kind IN ({marks}) ORDER BY id DESC LIMIT 1",
+                         tid, *kinds)
 
     def get_project(self, pid: int) -> dict | None:
         return self._one("SELECT * FROM projects WHERE id=?", pid)

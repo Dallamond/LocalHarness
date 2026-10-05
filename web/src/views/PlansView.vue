@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watchEffect } from "vue";
 import { useRouter } from "vue-router";
-import BlueprintCard from "../components/BlueprintCard.vue";
+import Card from "../components/Card.vue";
 import StatusChip from "../components/StatusChip.vue";
 import { PLAN_TEXT, live, planChip, planList, post, projectName, usd, type Plan } from "../api";
 
@@ -42,9 +42,9 @@ async function launch() {
 <template>
   <div class="page">
     <h2 class="title">Planes</h2>
-    <BlueprintCard title="Nueva petición al Director">
+    <Card title="Nueva petición al Director">
       <p v-if="!live.projects.length || !live.agents.length" class="muted">
-        Primero registra un proyecto y agentes en <RouterLink to="/proyectos">Proyectos y agentes</RouterLink>.
+        Primero registra un proyecto y agentes en <RouterLink to="/ajustes">Ajustes</RouterLink>.
       </p>
       <form v-else class="new" @submit.prevent="launch">
         <div class="row">
@@ -79,9 +79,9 @@ async function launch() {
         </div>
         <p v-if="error" class="error">{{ error }}</p>
       </form>
-    </BlueprintCard>
+    </Card>
 
-    <BlueprintCard title="Historial">
+    <Card title="Historial">
       <table v-if="planList.length" class="list">
         <thead><tr><th>#</th><th>Estado</th><th>Nivel</th><th>Petición</th><th>Proyecto</th><th>Coste equiv.</th></tr></thead>
         <tbody>
@@ -96,7 +96,7 @@ async function launch() {
         </tbody>
       </table>
       <p v-else class="muted">Sin planes todavía.</p>
-    </BlueprintCard>
+    </Card>
   </div>
 </template>
 

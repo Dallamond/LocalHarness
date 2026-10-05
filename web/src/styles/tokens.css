@@ -1,68 +1,106 @@
-/* Tokens del estilo "blueprint sketch" (docs/GUI-DISENO.md §3). Ajustar al verlo. */
+/*
+ * Estilo provisional «taller»: cálido, redondeado y con aire, hasta que llegue la oficina simulada.
+ * Claro y oscuro; por defecto sigue al sistema (Ajustes → Apariencia lo fija con data-theme).
+ */
 :root {
-  --bg: #0a111c;
-  --grid-minor: rgba(110, 160, 255, 0.06);
-  --grid-major: rgba(110, 160, 255, 0.12);
-  --panel: #0f1828;
-  --panel-raised: #132036;
-  --line: #2a4a7a;
-  --line-strong: #5b8fd6;
-  --ink: #e8f0ff;
-  --ink-dim: #93a8c8;
-  --ink-faint: #6f87ab; /* AA sobre --panel para texto pequeño */
-  --accent: #6cb4ff;
+  --bg: #f4f1ec;
+  --panel: #fffdf9;
+  --panel-raised: #f9f6f0;
+  --line: #e6e0d6;
+  --line-strong: #cfc6b8;
+  --ink: #2b2723;
+  --ink-dim: #6b635a;
+  --ink-faint: #8f877d;
+  --data-ink: var(--ink);
 
-  /* Paleta de dispositivos: el índice se asigna por device_id en el servidor */
-  --dev-1: #4cc9f0;
-  --dev-2: #ff9f43;
-  --dev-3: #f472b6;
-  --dev-4: #a3e635;
-  --dev-5: #facc15;
-  --dev-6: #60a5fa;
-  --dev-cpu: #b794f6;
-  --dev-ram: #6ee7b7;
+  --accent: #2f7a5f;
+  --accent-ink: #ffffff;
+  --accent-weak: #e2f0ea;
+  --ok: #2f8a4e;
+  --ok-weak: #e3f2e7;
+  --warn: #b26a00;
+  --warn-weak: #fbf0dc;
+  --crit: #c2413b;
+  --crit-weak: #f9e4e2;
+  --info: #3d6fb6;
+  --info-weak: #e5edf8;
 
-  --warn: #ffe066;
-  --crit: #ff6b6b;
-  --ok: #6ee7b7;
+  /* colores de los avatares de agente (por rol) */
+  --role-director: #7a5ac8;
+  --role-jefe: #c0723a;
+  --role-trabajador: #2f7a5f;
+  --role-otro: #6b7a8f;
 
-  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --shadow: 0 1px 2px rgba(60, 45, 25, 0.05), 0 4px 16px rgba(60, 45, 25, 0.05);
+  --font-sans: "Figtree Variable", "Segoe UI", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
-  /* Datos vivos (cifras que cambian): monoespaciada con cifras tabulares, separada del texto fijo */
-  --font-data: var(--font-mono);
-  --data-ink: #f4f8ff;
+  --font-data: var(--font-sans);
 
-  --radius: 0; /* láminas con marcas de registro, no esquinas redondeadas */
-  --gap: 16px;
-  --nav-w: 200px;
-  --nav-w-collapsed: 56px;
-  --topbar-h: 48px;
-}
-
-/* --- Apariencia configurable (Ajustes → Apariencia) --- */
-:root {
+  --radius: 14px;
+  --radius-sm: 9px;
+  --gap: 18px;
+  --side-w: 220px;
   --zoom: 1;
-  --accent-soft: #2b4d6e;
 }
 
-/* Contraste alto: textos secundarios y líneas más claros, bordes más visibles */
-:root[data-contrast="alto"] {
-  --ink: #ffffff;
-  --ink-dim: #c9d7ee;
-  --ink-faint: #a9bcd9;
-  --line: #4672ad;
-  --line-strong: #8cb6f0;
-  --panel: #0c1524;
-  --grid-minor: rgba(110, 160, 255, 0.04);
-  --grid-major: rgba(110, 160, 255, 0.08);
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="claro"]) {
+    --bg: #1a1916;
+    --panel: #23211d;
+    --panel-raised: #2b2924;
+    --line: #36332d;
+    --line-strong: #4a463e;
+    --ink: #ede7dd;
+    --ink-dim: #b0a798;
+    --ink-faint: #8a8275;
+    --accent: #5cc29a;
+    --accent-ink: #10231b;
+    --accent-weak: #22382f;
+    --ok: #6fcf8f;
+    --ok-weak: #213528;
+    --warn: #f0b04a;
+    --warn-weak: #3a2f1c;
+    --crit: #ef7d75;
+    --crit-weak: #3d2422;
+    --info: #86aee8;
+    --info-weak: #232f40;
+    --role-director: #a88bf0;
+    --role-jefe: #e39a62;
+    --role-trabajador: #5cc29a;
+    --role-otro: #93a2b8;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.25), 0 6px 20px rgba(0, 0, 0, 0.18);
+  }
 }
 
-:root[data-grid="tenue"] {
-  --grid-minor: rgba(110, 160, 255, 0.025);
-  --grid-major: rgba(110, 160, 255, 0.06);
+:root[data-theme="oscuro"] {
+  --bg: #1a1916;
+  --panel: #23211d;
+  --panel-raised: #2b2924;
+  --line: #36332d;
+  --line-strong: #4a463e;
+  --ink: #ede7dd;
+  --ink-dim: #b0a798;
+  --ink-faint: #8a8275;
+  --accent: #5cc29a;
+  --accent-ink: #10231b;
+  --accent-weak: #22382f;
+  --ok: #6fcf8f;
+  --ok-weak: #213528;
+  --warn: #f0b04a;
+  --warn-weak: #3a2f1c;
+  --crit: #ef7d75;
+  --crit-weak: #3d2422;
+  --info: #86aee8;
+  --info-weak: #232f40;
+  --role-director: #a88bf0;
+  --role-jefe: #e39a62;
+  --role-trabajador: #5cc29a;
+  --role-otro: #93a2b8;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.25), 0 6px 20px rgba(0, 0, 0, 0.18);
 }
 
-:root[data-grid="off"] {
-  --grid-minor: transparent;
-  --grid-major: transparent;
+/* Densidad compacta: menos aire entre bloques */
+:root[data-density="compacta"] {
+  --gap: 12px;
+  --radius: 10px;
 }

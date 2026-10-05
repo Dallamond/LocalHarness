@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 from collections.abc import Callable
 
-from localharness import workspace
+from localharness import settings, workspace
 from localharness.actions import ActionError, now
 from localharness.adapters import ADAPTERS
 from localharness.context import load_skills
@@ -66,7 +66,7 @@ class PlanError(Exception):
 def director_prompt(request: str, agents: list[dict], skills: dict | None = None) -> str:
     catalog = "\n".join(f"- `{s.name}`: {s.description}" for s in (skills or {}).values()) or "(ninguna)"
     lines = "\n".join(f"- `{a['name']}`: proveedor {a['provider']}, modelo {a['model'] or 'por defecto'}, "
-                      f"rol {a['role'] or 'trabajador'}" for a in agents)
+                      f"rol {a['role'] or 'trabajador'}" + _desc(a) for a in agents)
     return f"""Eres el Director (planificador jefe) de un equipo de agentes de programación. NO modificas archivos:
 puedes leer el repositorio (directorio actual) para entenderlo y devolver un plan.
 
@@ -88,6 +88,11 @@ Reglas del plan:
   high (borra archivos, dependencias, migraciones, configuración/CI, secretos o cambios grandes).
 - `risk` global: el mayor de las subtareas o mayor si el conjunto lo justifica.
 - No incluyas pasos de git (commit/push/merge): de eso se encarga el sistema."""
+
+
+def _desc(agent: dict) -> str:
+    d = json.loads(agent.get("config") or "{}").get("description")
+    return f". {d}" if d else ""
 
 
 def reviewer_prompt(request: str, subtask: dict, diff: str, reasons: list[str]) -> str:
@@ -159,7 +164,7 @@ class Hierarchy:
                  worktree_root: str | None = None, policy: Policy | None = None):
         self.store, self.binaries, self.worktree_root = store, binaries, worktree_root
         self._on_event, self._on_plan = on_event, on_plan
-        self.policy = policy or Policy()
+        self.policy = policy or settings.policy(store)
 
     # --- utilidades
     def _emit(self, tid: int, ev: Event) -> None:

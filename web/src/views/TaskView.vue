@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from "vue";
-import BlueprintCard from "../components/BlueprintCard.vue";
+import Card from "../components/Card.vue";
 import StatusChip from "../components/StatusChip.vue";
 import {
   STATUS_TEXT, agentName, api, live, onTaskEvent, post, projectName, statusChip, usd,
@@ -130,7 +130,7 @@ const diffLines = computed(() => (review.value?.diff ?? "").split("\n"));
     </div>
     <p v-if="error" class="error">{{ error }}</p>
 
-    <BlueprintCard v-if="task" title="Decisión" :level="decided ? 'warn' : undefined">
+    <Card v-if="task" title="Decisión" :level="decided ? 'warn' : undefined">
       <dl class="meta mono">
         <div><dt class="label">Proyecto</dt><dd>{{ projectName(task.project_id) }}</dd></div>
         <div><dt class="label">Agente</dt><dd>{{ agentName(task.agent_id) }}</dd></div>
@@ -152,28 +152,28 @@ const diffLines = computed(() => (review.value?.diff ?? "").split("\n"));
         <span v-if="task.status === 'review'" class="muted">Revisa el diff y aprueba; integrar es un segundo paso.</span>
         <span v-if="task.status === 'merged'" class="muted">Integrada. El push lo haces tú cuando quieras.</span>
       </div>
-    </BlueprintCard>
+    </Card>
 
     <div class="cols">
-      <BlueprintCard title="Petición">
+      <Card title="Petición">
         <pre class="block">{{ task?.prompt }}</pre>
         <template v-if="task?.final">
           <h4 class="label sub">Respuesta final</h4>
           <pre class="block">{{ task.final }}</pre>
         </template>
-      </BlueprintCard>
+      </Card>
 
-      <BlueprintCard title="Ejecución">
+      <Card title="Ejecución">
         <div ref="logEl" class="log mono">
           <div v-for="(l, i) in lines" :key="i" class="ln" :class="l.cls">
             <span class="tag">{{ l.tag }}</span><span class="tx">{{ l.text }}</span>
           </div>
           <div v-if="!lines.length" class="muted">Sin eventos todavía.</div>
         </div>
-      </BlueprintCard>
+      </Card>
     </div>
 
-    <BlueprintCard title="Cambios">
+    <Card title="Cambios">
       <template v-if="review?.available">
         <pre class="block">{{ review.stat || "(sin cambios)" }}</pre>
         <pre v-if="review.diff" class="block diff"><span v-for="(l, i) in diffLines" :key="i" :class="diffClass(l)">{{ l }}
@@ -181,7 +181,7 @@ const diffLines = computed(() => (review.value?.diff ?? "").split("\n"));
       </template>
       <p v-else-if="task?.status === 'running'" class="muted">El diff aparece cuando el agente termina.</p>
       <p v-else class="muted">No hay worktree para esta tarea (integrada, rechazada o sin empezar).</p>
-    </BlueprintCard>
+    </Card>
   </div>
 </template>
 

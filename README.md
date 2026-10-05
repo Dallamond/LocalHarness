@@ -25,7 +25,8 @@ cd web && npm install && npm run build && cd ..   # una vez, y tras cambiar la w
 Desarrollo de la web con recarga: `cd web && npm run dev` (http://127.0.0.1:5174, /api va al 8095).
 
 - `localharness/api.py`       FastAPI + SSE: proyectos, agentes, tareas, eventos, diff, aprobar/rechazar/integrar/cancelar
-- `web/`                      Vue 3 + Vite, estética blueprint de Arena LLM (Tareas, Ejecución, Proyectos y agentes)
+- `web/`                      Vue 3 + Vite (Inicio, Pendiente de ti, Planes, Tareas, Ajustes)
+- `localharness/settings.py`  ajustes editables desde la GUI (tabla `settings`)
 - `localharness/cli.py`       órdenes de M1 (doctor, project, agent, run, tasks, show, merge, discard)
 - `localharness/adapters/`   un adaptador por CLI: construye el comando y traduce su JSONL a eventos comunes
 - `localharness/binaries.py` en Windows lanza el exe real del shim de npm (sin cmd.exe)

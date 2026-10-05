@@ -6,6 +6,7 @@ export interface Project {
   id: number;
   name: string;
   repo_path: string;
+  memory_dir: string | null;
 }
 
 export interface Agent {
@@ -14,7 +15,10 @@ export interface Agent {
   provider: string;
   model: string | null;
   role: string | null;
-  config: { max_turns?: number; max_budget_usd?: number; read_only?: boolean; tools?: string[] };
+  config: {
+    max_turns?: number; max_budget_usd?: number; read_only?: boolean; tools?: string[];
+    skills?: string[]; base_url?: string;
+  };
 }
 
 export type TaskStatus =
@@ -103,6 +107,37 @@ export interface Review {
   target: string | null;
 }
 
+/** Lo último que ha hecho una tarea en marcha (para el Inicio). */
+export interface Activity {
+  kind: string;
+  text: string;
+  data: Record<string, unknown>;
+  at: number;
+}
+
+/** Tarea terminada con los archivos que tocó (GET /api/activity). */
+export interface RecentTask extends PlanTask {
+  files: { path: string; added: number; deleted: number }[];
+}
+
+export interface Skill {
+  name: string;
+  description: string;
+  path: string;
+  chars: number;
+}
+
+export interface Settings {
+  policy: {
+    max_files: number; max_lines: number; max_auto_subtasks: number;
+    sensitive: string[]; dependency: string[]; config: string[];
+  };
+  task_timeout_min: number;
+  local_base_url: string;
+  context: { max_memory_chars: number; max_skill_chars: number; skill_dirs: string[] };
+  agent_defaults: { provider: string; model: string; role: string; max_turns: number | null; max_budget_usd: number | null };
+}
+
 export const live = reactive({
   connection: "connecting" as "connecting" | "open" | "closed",
   projects: [] as Project[],
@@ -111,6 +146,8 @@ export const live = reactive({
   plans: {} as Record<number, Plan>,
   inbox: [] as InboxItem[],
   limit: null as Limit | null,
+  activity: {} as Record<number, Activity>,
+  recent: [] as RecentTask[],
 });
 
 type Handler = (ev: TaskEvent) => void;
@@ -158,7 +195,16 @@ export async function refreshAll(): Promise<void> {
   live.tasks = Object.fromEntries(tasks.map((t) => [t.id, t]));
   live.plans = Object.fromEntries(plans.map((p) => [p.id, p]));
   live.limit = health.limit;
-  await refreshInbox();
+  await Promise.all([refreshInbox(), refreshActivity()]);
+}
+
+/** Qué está haciendo cada tarea en marcha y las últimas terminadas (con sus archivos). */
+export async function refreshActivity(): Promise<void> {
+  const a = await api<{ current: Record<string, TaskEvent & { ts: string }>; recent: RecentTask[] }>("/api/activity");
+  for (const [tid, ev] of Object.entries(a.current)) {
+    live.activity[Number(tid)] = { kind: ev.kind, text: ev.text, data: ev.data, at: parseTs(ev.ts) };
+  }
+  live.recent = a.recent;
 }
 
 let inboxTimer: ReturnType<typeof setTimeout> | null = null;
@@ -170,7 +216,10 @@ export async function refreshInbox(): Promise<void> {
 
 function scheduleInbox(): void {
   if (inboxTimer) clearTimeout(inboxTimer);
-  inboxTimer = setTimeout(() => refreshInbox().catch(() => {}), 300);
+  inboxTimer = setTimeout(() => {
+    refreshInbox().catch(() => {});
+    refreshActivity().catch(() => {});
+  }, 400);
 }
 
 export const taskList = computed(() => Object.values(live.tasks).sort((a, b) => b.id - a.id));
@@ -204,6 +253,9 @@ export function connect(url = "/api/events"): void {
   });
   source.addEventListener("task_event", (e) => {
     const ev = JSON.parse((e as MessageEvent).data) as TaskEvent;
+    if (["text", "tool", "status", "context"].includes(ev.kind)) {
+      live.activity[ev.task_id] = { kind: ev.kind, text: ev.text, data: ev.data ?? {}, at: Date.now() };
+    }
     eventHandlers.forEach((fn) => fn(ev));
   });
   source.addEventListener("limit", (e) => {
@@ -256,6 +308,90 @@ export function planChip(s: PlanStatus): "ok" | "warn" | "crit" | "pending" | "o
   if (s === "failed") return "crit";
   if (s === "planning" || s === "running" || s === "approved") return "pending";
   return "off";
+}
+
+/** SQLite guarda CURRENT_TIMESTAMP en UTC sin zona ("2026-10-05 19:32:42"). */
+export function parseTs(s: string | null | undefined): number {
+  if (!s) return NaN;
+  return Date.parse(/[zZ]|[+-]\d\d:\d\d$/.test(s) ? s : s.replace(" ", "T") + "Z");
+}
+
+export function ago(ms: number, now = Date.now()): string {
+  if (Number.isNaN(ms)) return "";
+  const s = Math.max(0, Math.round((now - ms) / 1000));
+  if (s < 45) return "ahora mismo";
+  const m = Math.round(s / 60);
+  if (m < 60) return `hace ${m} min`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `hace ${h} h`;
+  const d = Math.round(h / 24);
+  return d === 1 ? "ayer" : `hace ${d} días`;
+}
+
+export function duration(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `${m} min ${s % 60} s` : `${Math.floor(m / 60)} h ${m % 60} min`;
+}
+
+export const ROLE_TEXT: Record<string, string> = {
+  director: "Director",
+  jefe: "Jefe técnico",
+  trabajador: "Trabajador",
+};
+
+export function roleColor(a: Agent | undefined): string {
+  const r = a?.role ?? "";
+  return r === "director" || r === "jefe" || r === "trabajador" ? `var(--role-${r})` : "var(--role-otro)";
+}
+
+/** Frase corta de lo que está haciendo un agente a partir de su último evento. */
+export function describeActivity(a: Activity | undefined): string {
+  if (!a) return "arrancando…";
+  if (a.kind === "tool") {
+    const input = (a.data.input ?? {}) as Record<string, unknown>;
+    const target = String(input.file_path ?? input.pattern ?? input.command ?? input.path ?? "");
+    const short = target.split(/[\\/]/).slice(-2).join("/");
+    const verb: Record<string, string> = {
+      Read: "Leyendo", Edit: "Editando", Write: "Escribiendo", MultiEdit: "Editando",
+      Grep: "Buscando", Glob: "Buscando archivos", Bash: "Ejecutando",
+    };
+    return `${verb[a.text] ?? a.text} ${short}`.trim();
+  }
+  if (a.kind === "text") return a.text.replace(/\s+/g, " ").slice(0, 140);
+  if (a.kind === "context") return `Cargando contexto: ${a.text}`;
+  return "pensando…";
+}
+
+// --- apariencia (solo de este navegador)
+export interface Look {
+  theme: "auto" | "claro" | "oscuro";
+  density: "normal" | "compacta";
+  zoom: number;
+}
+
+function readLook(): Look {
+  try {
+    return { theme: "auto", density: "normal", zoom: 1, ...JSON.parse(localStorage.getItem("lh-look") ?? "{}") };
+  } catch {
+    return { theme: "auto", density: "normal", zoom: 1 };
+  }
+}
+
+export const look = reactive<Look>(readLook());
+
+export function applyLook(): void {
+  const r = document.documentElement;
+  if (look.theme === "auto") delete r.dataset.theme;
+  else r.dataset.theme = look.theme;
+  r.dataset.density = look.density;
+  r.style.setProperty("--zoom", String(look.zoom));
+  try {
+    localStorage.setItem("lh-look", JSON.stringify(look));
+  } catch {
+    /* modo privado: se aplica igual, solo no se recuerda */
+  }
 }
 
 export function pct(v: number | null | undefined): string {

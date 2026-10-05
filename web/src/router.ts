@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from "vue-router";
-import SetupView from "./views/SetupView.vue";
+import HomeView from "./views/HomeView.vue";
+import SettingsView from "./views/SettingsView.vue";
 import TasksView from "./views/TasksView.vue";
 import TaskView from "./views/TaskView.vue";
 import PlansView from "./views/PlansView.vue";
@@ -9,10 +10,12 @@ import InboxView from "./views/InboxView.vue";
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: "/", redirect: "/bandeja" },
+    { path: "/", redirect: "/inicio" },
+    { path: "/inicio", component: HomeView, meta: { title: "Inicio" } },
     { path: "/tareas", component: TasksView, meta: { title: "Tareas" } },
     { path: "/tareas/:id", component: TaskView, props: (r) => ({ id: Number(r.params.id) }), meta: { title: "Ejecución" } },
-    { path: "/proyectos", component: SetupView, meta: { title: "Proyectos y agentes" } },
+    { path: "/ajustes", component: SettingsView, meta: { title: "Ajustes" } },
+    { path: "/proyectos", redirect: { path: "/ajustes", query: { s: "proyectos" } } },
     { path: "/planes", component: PlansView, meta: { title: "Planes" } },
     { path: "/planes/:id", component: PlanView, props: (r) => ({ id: Number(r.params.id) }), meta: { title: "Plan" } },
     { path: "/bandeja", component: InboxView, meta: { title: "Pendiente de ti" } },

@@ -17,6 +17,7 @@ from pathlib import Path
 BUILTIN_SKILLS = Path(__file__).resolve().parent.parent / "skills"
 MAX_MEMORY_CHARS = 20_000
 MAX_SKILL_CHARS = 30_000
+EXTRA_SKILL_DIRS: list[str] = []  # Ajustes → Skills (settings.apply)
 
 
 @dataclass
@@ -51,7 +52,7 @@ def parse_skill(path: Path) -> Skill | None:
 
 
 def skill_dirs() -> list[Path]:
-    dirs = [BUILTIN_SKILLS]
+    dirs = [BUILTIN_SKILLS, *(Path(d) for d in EXTRA_SKILL_DIRS)]
     env = os.environ.get("LOCALHARNESS_SKILL_DIRS")
     if env:
         dirs += [Path(d) for d in env.split(os.pathsep) if d]
