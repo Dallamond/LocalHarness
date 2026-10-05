@@ -1,6 +1,6 @@
 # Estado y traspaso — leer primero al retomar (también desde Claude Code en la web)
 
-Última actualización: 05/10/2026. Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
+Última actualización: 05/10/2026 (fin de la sesión 1). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
 
 ## Dónde estamos
 | Hito | Estado |
@@ -12,6 +12,9 @@
 | M3 Jerarquía | ✅ Director + jefe técnico + N0/N1/N2 + bandeja; CLI y API. Probado real con Haiku (0,087 $) |
 | M4 Modelos locales | 🔄 proveedor `local` probado real con Qwen2.5-Coder 7B Q8 (Director y jefe, coste 0) |
 | GUI de M3 | ✅ Pendiente de ti, Planes, detalle de plan; probada en navegador con agentes locales |
+| M5 Skills y memoria | ✅ núcleo, CLI y pruebas (aceptación cubierta). Falta en la GUI |
+| M6 Flujo Git | ⏳ pendiente |
+| Pruebas de Lucas | ⏳ con `sandbox` + `docs/PROBAR.md`; esperar su feedback |
 
 ## Decisiones de Lucas (05/10/2026)
 - **Gastar lo mínimo del plan Pro de Claude** (iba por el 82 % semanal). Probar con CLIs falsas; ejecuciones reales
@@ -50,6 +53,18 @@ Trampas conocidas:
 - Un modelo local NO tiene herramientas: recibe el contexto del repo en el prompt (`repo_context` caracteres) y
   no se le asignan subtareas de escritura (`can_write=False`). Útil como Director o jefe técnico gratis.
 
+## M5 — skills y memoria (context.py)
+- Skills = carpetas con `SKILL.md` (frontmatter `name`/`description`). Catálogo: `skills/` del repo (tests-primero,
+  cambios-minimos, revision-de-diff) + `LOCALHARNESS_SKILL_DIRS` (p. ej. `D:\Lukaton1\.claude\skills\superpowers\skills`).
+- Se inyectan como texto antes de la tarea: skills del agente (`config.skills`, `agent add --skill`), de la tarea
+  (`run --skill`, columna `tasks.skills`) y las que elige el Director por subtarea (campo `skills` del plan; nombres
+  inventados se descartan). Memoria = `.md` de `projects.memory_dir` (`project memory <nombre> [ruta]`, por defecto
+  `data/memory/<proyecto>`), fuera del worktree → solo lectura. Evento `context` registra qué se inyectó.
+
+## Entorno de pruebas
+`python -m localharness sandbox [--reset]` crea `~/LocalHarness-sandbox` (tienda con fallos a propósito) y los agentes
+qwen-director, qwen-jefe (local), haiku-director, haiku-jefe, sonnet-trabajador (Claude con topes). Guía: `docs/PROBAR.md`.
+
 ## Pruebas reales hechas (05/10/2026)
 - M3 con Claude Haiku (Director, 2 trabajadores, jefe): plan correcto, ambas subtareas aprobadas por el jefe, 0,087 $.
   Destapó un fallo ya corregido: la salida de git se leía en cp1252 y el revisor veía tildes rotas.
@@ -57,15 +72,16 @@ Trampas conocidas:
   consulta de solo lectura correcta en 28 s; plan con Director y jefe locales en 14 s; el jefe local detectó que
   el trabajador (falso) no hizo lo pedido y escaló a N2. Todo coste 0.
 
-## Pendiente inmediato
-1. Plan cuyas subtareas no cambian nada: debería terminar `done`, no `ready` (no hay nada que integrar).
-   En el detalle de plan, ocultar «Ver diff» si la subtarea no tiene cambios.
-2. M4: medir calidad del revisor local frente a Claude con el mismo diff (criterio de aceptación de M4) y probar
-   Qwen3.5-9B / Qwen-2.5-Coder-14B. Reparto 3060/M40 cuando llegue la tarjeta.
-3. Las tareas sueltas antiguas sin cambios que quedaron en `review` siguen en la bandeja: descartarlas o migrarlas.
-4. llama-server avisa de CORS abierto: valorar `--api-key` (solo escucha en 127.0.0.1).
-5. M5 (skills y memoria Markdown inyectadas) y M6 (rama de integración, limpieza de worktrees huérfanos).
-6. Estética: sustituir la «blueprint» por la oficina simulada cuando Lucas decida el estilo.
+## Pendiente inmediato (siguiente sesión)
+1. Recoger el feedback de Lucas de `docs/PROBAR.md` y arreglar lo que salga (prioridad).
+2. GUI de M5: elegir skills al crear tarea/agente, carpeta de memoria del proyecto, ver el evento `context`
+   y las skills elegidas por el Director en el detalle del plan. Endpoint `GET /api/skills` (aún no existe).
+3. M6: limpieza de worktrees/ramas huérfanos al arrancar, rama de integración por proyecto, conflictos de merge
+   (parar y avisar), checkpoints.
+4. M4: comparar revisor local vs Claude con el mismo diff; probar Qwen3.5-9B y Qwen-2.5-Coder-14B.
+5. llama-server avisa de CORS abierto: valorar `--api-key` (solo escucha en 127.0.0.1).
+6. Ruido de pruebas: IsolatedAsyncioTestCase imprime avisos «Executing <Task…> took» (modo debug); silenciar.
+7. Estética: sustituir la «blueprint» por la oficina simulada cuando Lucas decida el estilo.
 
 ## Hallazgos técnicos clave (no repetir)
 - La CLI hija va aislada: `--safe-mode --strict-mcp-config` (sin eso, 245k tokens por «ok»). `--bare` prohíbe OAuth.
