@@ -1,0 +1,18 @@
+{
+  "fecha": "2026-10-05",
+  "entorno": "Windows 10 Pro, Python 3.12.10, git 2.52.0.windows.1",
+  "claude_version": "2.1.287 (Claude Code)",
+  "claude_ruta": "npm shim claude.CMD -> node_modules/@anthropic-ai/claude-code/bin/claude.exe (nativo)",
+  "claude_login": "claude.ai (Pro); apiKeySource=none en el evento init",
+  "codex": "no instalado: M0 de Codex pendiente",
+  "prompt_por_stdin": "funciona con `-p` sin argumento",
+  "limite_herramientas": "--tools es el límite duro: con --tools Read el init solo lista Read y no puede crear archivos (claude_limite_tools.jsonl)",
+  "aislamiento": {
+    "sin_aislar": "245.360 tokens de caché para responder 'ok' (MCP Canva/Vercel, plugins, hooks, CLAUDE.md del usuario); 1,96 $ equivalentes",
+    "con --safe-mode --strict-mcp-config": "≈4.600 tokens; 0,0136 $ equivalentes (144× menos)",
+    "--bare": "no sirve: prohíbe OAuth (la suscripción)"
+  },
+  "eventos_reales_claude": ["system/hook_started", "system/hook_response", "system/init", "assistant (text, tool_use, thinking)", "rate_limit_event", "result"],
+  "rate_limit_event": "trae utilización de ventanas de 5 h y 7 días: base del contador de uso",
+  "aceptacion_M1": "tarea real (sonnet, 6 turnos, tope 0,5 $) arregló un bug y creó un test en un repo de prueba: review en 8 s, 0,022 $ equivalentes, main intacto hasta `merge`"
+}

@@ -1,0 +1,8 @@
+#!/usr/bin/env python3
+import json, sys
+def out(o): print(json.dumps(o), flush=True)
+out({"type": "thread.started", "thread_id": "thr-1"})
+out({"type": "item.completed", "item": {"type": "command_execution", "command": "echo hi"}})
+open("codex.txt", "w").write("x\n")
+out({"type": "item.completed", "item": {"type": "agent_message", "text": "Listo"}})
+out({"type": "turn.completed", "usage": {"input_tokens": 10, "output_tokens": 5}})
