@@ -4,8 +4,11 @@ import { useRouter } from "vue-router";
 import BlueprintCard from "../components/BlueprintCard.vue";
 import StatusChip from "../components/StatusChip.vue";
 import {
-  STATUS_TEXT, agentName, live, post, projectName, statusChip, taskList, usd, type Task,
+  STATUS_TEXT, agentName, live, post, projectName, statusChip, taskList as allTasks, usd, type Task,
 } from "../api";
+
+// las subtareas de los planes se ven en su plan
+const taskList = computed(() => allTasks.value.filter((t) => t.plan_id == null));
 
 const router = useRouter();
 const form = reactive({ project_id: 0, agent_id: 0, title: "", prompt: "" });

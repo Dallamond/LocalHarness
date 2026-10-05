@@ -18,7 +18,9 @@ const usage = computed(() => {
   <header class="top">
     <h1 class="brand">Local<span>Harness</span></h1>
     <nav class="nav">
-      <RouterLink to="/tareas">Tareas</RouterLink>
+      <RouterLink to="/bandeja">Pendiente de ti<span v-if="pendingForYou.length" class="badge">{{ pendingForYou.length }}</span></RouterLink>
+      <RouterLink to="/planes">Planes</RouterLink>
+      <RouterLink to="/tareas">Tareas sueltas</RouterLink>
       <RouterLink to="/proyectos">Proyectos y agentes</RouterLink>
     </nav>
     <div class="row">
@@ -71,6 +73,14 @@ const usage = computed(() => {
   font-size: 13px;
   padding: 4px 0;
   border-bottom: 2px solid transparent;
+}
+.badge {
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  font-family: var(--font-mono);
+  font-size: 11px;
 }
 .nav a.router-link-active {
   color: var(--ink);
