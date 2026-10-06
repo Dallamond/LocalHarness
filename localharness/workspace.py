@@ -14,6 +14,38 @@ class GitError(Exception):
     pass
 
 
+class MergeConflict(GitError):
+    def __init__(self, branch: str, target: str, files: list[str]):
+        self.branch, self.target, self.files = branch, target, files
+        shown = ", ".join(files[:8]) + (f" y {len(files) - 8} más" if len(files) > 8 else "")
+        super().__init__(f"Conflicto al integrar {branch} en {target}: {shown}. No se ha tocado tu rama. "
+                         "Pide al agente que rehaga el cambio sobre la versión actual, o resuélvelo a mano.")
+
+
+def conflicts(repo: str | Path, target: str, branch: str) -> list[str]:
+    """Archivos que darían conflicto al integrar `branch` en `target`, sin tocar el árbol de trabajo
+    (`git merge-tree --write-tree`, git ≥ 2.38). Vacío si no hay conflicto o si git es antiguo."""
+    p = subprocess.run(["git", "-c", "core.quotepath=off", "merge-tree", "--write-tree", "--name-only",
+                        "--no-messages", target, branch], cwd=repo, capture_output=True, encoding="utf-8",
+                       errors="replace")
+    if p.returncode != 1:  # 0 = limpio; otro = error (git antiguo): el merge real lo detectará y abortará
+        return []
+    return [f for f in p.stdout.splitlines()[1:] if f.strip()]
+
+
+def localharness_branches(repo: str | Path) -> dict[str, str | None]:
+    """Ramas `localharness/*` del repo → ruta de su worktree (None si no tiene)."""
+    branches = {b.strip(): None for b in git(repo, "branch", "--list", "--format=%(refname:short)",
+                                             "localharness/*").splitlines() if b.strip()}
+    path = None
+    for line in git(repo, "worktree", "list", "--porcelain").splitlines():
+        if line.startswith("worktree "):
+            path = line[9:]
+        elif line.startswith("branch refs/heads/localharness/"):
+            branches[line[18:]] = path
+    return branches
+
+
 def git(cwd: str | Path, *args: str) -> str:
     # UTF-8 explícito: en Windows text=True decodifica en cp1252 y rompe las tildes de los diffs
     p = subprocess.run(["git", "-c", "core.quotepath=off", *args], cwd=cwd, capture_output=True,
@@ -66,12 +98,31 @@ class Workspace:
         return git(self.path, "rev-parse", "HEAD").strip()
 
     def merge(self, into: str | None = None) -> str:
-        """Integra la rama de la tarea (solo tras aprobación explícita). Nunca hace push."""
+        """Integra la rama de la tarea (solo tras aprobación explícita). Nunca hace push.
+        Con conflictos NO deja el repo a medias: se detectan antes (merge-tree) y, si aun así el merge falla,
+        se aborta y se vuelve a la rama en la que estabas. Lanza MergeConflict con los archivos."""
         if git(self.repo, "status", "--porcelain", "--untracked-files=no").strip():
             raise GitError("El repo principal tiene cambios sin confirmar: no se integra nada encima")
-        if into:
+        prev = git(self.repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
+        target = into or prev
+        files = conflicts(self.repo, target, self.branch)
+        if files:
+            raise MergeConflict(self.branch, target, files)
+        if into and into != prev:
             git(self.repo, "checkout", "-q", into)
-        return git(self.repo, "merge", "--no-ff", "-m", f"localharness: {self.branch}", self.branch)
+        try:
+            return git(self.repo, "merge", "--no-ff", "-m", f"localharness: {self.branch}", self.branch)
+        except GitError:
+            files = [f for f in git(self.repo, "diff", "--name-only", "--diff-filter=U").splitlines() if f]
+            try:
+                git(self.repo, "merge", "--abort")
+            except GitError:
+                pass
+            if into and into != prev:
+                git(self.repo, "checkout", "-q", prev)
+            if files:
+                raise MergeConflict(self.branch, target, files) from None
+            raise
 
     def remove(self) -> None:
         git(self.repo, "worktree", "remove", "--force", str(self.path))

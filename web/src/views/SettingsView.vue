@@ -20,6 +20,34 @@ const SECTIONS = [
   { id: "apariencia", text: "Apariencia" },
 ] as const;
 const section = computed(() => (route.query.s as string) || "agentes");
+
+// --- mantenimiento (M6): worktrees y ramas de tareas/planes ya cerrados
+interface CleanItem { project: string; branch: string; worktree: string | null; status?: string }
+interface CleanReport { removed: CleanItem[]; kept: CleanItem[]; unknown: CleanItem[]; errors: string[] }
+const cleanRep = ref<CleanReport | null>(null);
+const cleanMsg = ref("");
+const cleaning = ref(false);
+async function loadClean() {
+  try {
+    cleanRep.value = await api<CleanReport>("/api/maintenance");
+  } catch {
+    cleanRep.value = null;
+  }
+}
+async function runClean(dry: boolean) {
+  cleaning.value = true;
+  cleanMsg.value = "";
+  try {
+    cleanRep.value = await post<CleanReport>(`/api/maintenance/cleanup?dry_run=${dry}`);
+    const n = cleanRep.value.removed.length;
+    cleanMsg.value = dry ? `Se borrarían ${n}.` : n ? `Borrados ${n}.` : "Nada que limpiar.";
+  } catch (e) {
+    cleanMsg.value = (e as Error).message;
+  } finally {
+    cleaning.value = false;
+  }
+}
+watch(section, (v) => v === "ejecucion" && loadClean(), { immediate: true });
 const go = (id: string) => router.replace({ query: { s: id } });
 
 // --- ajustes del servidor: se editan en un borrador y se guardan juntos
@@ -469,6 +497,32 @@ watch(look, applyLook, { deep: true });
         </label>
       </div>
     </Card>
+    <Card
+      v-if="section === 'ejecucion'" title="Mantenimiento"
+      subtitle="Al arrancar se borran los worktrees y ramas de tareas y planes ya cerrados (integrados, rechazados o sin cambios)."
+    >
+      <template v-if="cleanRep">
+        <p v-if="cleanRep.removed.length" class="small">
+          {{ cleanMsg.startsWith("Se borrarían") ? "Se borrarían" : "Borrados" }}:
+          <code v-for="i in cleanRep.removed" :key="i.branch" class="chipcode">{{ i.branch }}</code>
+        </p>
+        <p v-if="cleanRep.kept.length" class="small">
+          Se conservan (tienen trabajo):
+          <code v-for="i in cleanRep.kept" :key="i.branch" class="chipcode">{{ i.branch }} · {{ i.status }}</code>
+        </p>
+        <p v-if="cleanRep.unknown.length" class="small muted">
+          Ramas que no son de esta base de datos (no se tocan):
+          <code v-for="i in cleanRep.unknown" :key="i.branch" class="chipcode">{{ i.project }}: {{ i.branch }}</code>
+        </p>
+        <p v-for="e in cleanRep.errors" :key="e" class="error">{{ e }}</p>
+        <p v-if="!cleanRep.removed.length && !cleanRep.kept.length && !cleanRep.unknown.length" class="muted small">Todo limpio.</p>
+      </template>
+      <div class="row">
+        <button class="btn btn--small" :disabled="cleaning" @click="runClean(true)">Ver qué borraría</button>
+        <button class="btn btn--small btn--primary" :disabled="cleaning" @click="runClean(false)">Limpiar ahora</button>
+        <span v-if="cleanMsg" class="small muted">{{ cleanMsg }}</span>
+      </div>
+    </Card>
 
     <!-- SKILLS -->
     <template v-else-if="section === 'skills' && draft">
@@ -540,6 +594,14 @@ watch(look, applyLook, { deep: true });
 </template>
 
 <style scoped>
+.chipcode {
+  display: inline-block;
+  margin: 2px 4px 2px 0;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: var(--panel-raised);
+  overflow-wrap: anywhere;
+}
 .tabs {
   display: flex;
   flex-wrap: wrap;

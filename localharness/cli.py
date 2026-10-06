@@ -98,6 +98,23 @@ def cmd_skills(args, store: Store | None = None) -> int:
     return 0
 
 
+def cmd_cleanup(args, store: Store) -> int:
+    from localharness.maintenance import cleanup
+    r = cleanup(store, dry_run=args.dry_run)
+    verb = "se borraría" if args.dry_run else "borrado"
+    for i in r["removed"]:
+        print(f"  {verb}: {i['project']} {i['branch']} ({i['status']})")
+    for i in r["kept"]:
+        print(f"  se conserva: {i['project']} {i['branch']} ({i['status']})")
+    for i in r["unknown"]:
+        print(f"  desconocido (no se toca): {i['project']} {i['branch']}")
+    for e in r["errors"]:
+        print(f"  error: {e}")
+    if not any(r.values()):
+        print("Nada que limpiar.")
+    return 1 if r["errors"] else 0
+
+
 def cmd_agent(args, store: Store) -> int:
     if args.action == "add":
         if args.provider not in ADAPTERS:
@@ -421,6 +438,10 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("sandbox", help="crea un repo de pruebas con fallos y agentes ya configurados")
     p.add_argument("path", nargs="?"); p.add_argument("--reset", action="store_true")
     p.set_defaults(fn=cmd_sandbox)
+
+    p = sub.add_parser("cleanup", help="M6: borra worktrees y ramas de tareas/planes ya cerrados")
+    p.add_argument("--dry-run", action="store_true", help="solo dice qué borraría")
+    p.set_defaults(fn=cmd_cleanup)
 
     sub.add_parser("tasks", help="lista tareas").set_defaults(fn=cmd_tasks)
     p = sub.add_parser("show", help="detalle de una tarea"); p.add_argument("id", type=int)

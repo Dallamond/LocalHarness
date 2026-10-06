@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from localharness import actions, llama, settings, workspace
+from localharness import actions, llama, maintenance, settings, workspace
 from localharness.adapters import ADAPTERS
 from localharness.context import load_skills
 from localharness.events import Event
@@ -227,6 +227,11 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         log = Path(db_path).parent / "llama-server.log" if str(db_path) != ":memory:" else Path(
             tempfile.gettempdir()) / "localharness-llama-server.log"
         app.state.llama = llama.LlamaManager(log)
+        # M6: restos de tareas y planes cerrados (worktrees y ramas) se limpian al arrancar
+        try:
+            app.state.cleanup = await asyncio.to_thread(maintenance.cleanup, store)
+        except Exception as e:  # noqa: BLE001 — una limpieza fallida no impide arrancar
+            app.state.cleanup = {"removed": [], "kept": [], "unknown": [], "errors": [str(e)]}
         yield
         await asyncio.to_thread(app.state.llama.stop)  # el llama-server lanzado desde la GUI muere con ella
         await app.state.runner.shutdown()
@@ -337,6 +342,19 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
             raise HTTPException(404, f"No existe el proyecto #{pid}")
         store.set_project_memory(pid, (body.memory_dir or "").strip() or None)
         return store.get_project(pid)
+
+    # --- mantenimiento (M6)
+    @app.get("/api/maintenance")
+    async def maintenance_report(request: Request) -> dict:
+        """Lo que se limpió al arrancar y lo que se conserva (ramas con trabajo de tareas fallidas/canceladas)."""
+        return request.app.state.cleanup
+
+    @app.post("/api/maintenance/cleanup")
+    async def maintenance_cleanup(request: Request, dry_run: bool = False) -> dict:
+        if request.app.state.runner.active or request.app.state.runner.plans:
+            raise HTTPException(409, "Hay tareas o planes en marcha: espera a que terminen")
+        request.app.state.cleanup = await asyncio.to_thread(maintenance.cleanup, st(request), dry_run)
+        return request.app.state.cleanup
 
     # --- ajustes y skills
     @app.get("/api/settings")
