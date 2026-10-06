@@ -130,7 +130,17 @@ pruebas (71 en verde) y GUI compilada; nada probado aún por Lucas en el navegad
   Uno lanzado a mano (`llama serve`) sigue sin clave.
 - Pruebas sin ruido de asyncio (`tests/__init__.py`).
 
-BENCH_PLACEHOLDER
+**Prueba real de modelos locales como jefe técnico + sonda de herramientas (06/10/2026, coste 0, 3060)**
+Mismo diff con un fallo claro (quita `* cantidad` y cambia `/100`) y otro correcto; y una petición con `tools`.
+| Modelo | Carga | Diff con fallo | Diff correcto | tok/s | `tool_calls` nativos |
+|---|---|---|---|---|---|
+| Qwen2.5-Coder 7B Q8 | 64 s | request_changes (motivo vago) · 6 s | approve · 2 s | ~32 | ❌ escribe el JSON como texto |
+| Qwen3.5 9B Q4 | 157 s | request_changes, cita los dos fallos · 43 s | approve · 29 s | ~43 | ✅ `read_file {"path":"README.md"}` |
+| Qwen2.5-Coder 14B Q4 | 71 s | request_changes, cita el fallo · 6 s | approve · 3 s | ~25 | ❌ escribe el JSON como texto |
+Conclusiones: los tres aciertan el veredicto; Qwen3.5-9B razona mejor pero es ~7× más lento (piensa). Para la
+tarea 8 (agentes locales autónomos): con el llama-server actual y `--jinja`, **solo Qwen3.5-9B devuelve `tool_calls`
+de verdad**; los Qwen2.5-Coder responden la llamada como texto JSON (se podría parsear como alternativa).
+Script: rehacer con `LlamaManager` + `reviewer_prompt` + `REVIEW_SCHEMA` y `tools` en /v1/chat/completions.
 
 **Queda (necesita a Lucas)**
 7. **Repasar roles y skills** («creo que se puede optimizar mucho; tendremos que ver cómo lo acabamos
