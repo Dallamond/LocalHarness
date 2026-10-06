@@ -17,7 +17,8 @@ falta y lo invoca. Se empieza con **pocas skills y pocos roles**; cuando funcion
 | 7 | **Subagentes en bucle, siempre trabajando**: cola de tareas por agente; cuando uno acaba, coge la siguiente del plan o de la cola, con topes duros (turnos, tiempo, gasto, ventana de 5 h) y parada por el jefe técnico o por Lucas | ⏳ |
 | 8 | **Modelos locales con herramientas** (bucle de agente propio con tool calling, confinado al worktree; hoy solo Qwen3.5-9B devuelve `tool_calls`) que use las mismas herramientas MCP que Claude | ⏳ (tarea 8 de ESTADO) |
 | 9 | **Atlas «Analizar proyecto»**: perfil del repo + propuesta de equipo y tareas que Lucas aprueba pieza a pieza | ⏳ |
-| 10 | **Oficina 3D** del prototipo `docs/prototipos/localharness-gui-prototipo-v2_1.html` mostrando el equipo y los objetivos 3 y 4 | ⏳ |
+| 10 | **Oficina 3D** del prototipo `docs/prototipos/localharness-gui-prototipo-v2_1.html` mostrando el equipo y los objetivos 3 y 4. Va DESPUÉS del modelo nuevo de organización (manual + catálogo + roles) | ⏳ |
+| 10a | **Antes de programar la oficina: sesión de diseño con Lucas** — todas las funciones, cómo funciona todo y cómo se representa cada cosa de forma gráfica, sencilla y entendible. Resultado: `docs/DISENO-OFICINA.md` aprobado por Lucas | 🔄 empezada |
 
 ## Notas de diseño
 - **Búsqueda**: si DuckDuckGo HTML falla mucho (bloqueos, cambios de HTML), alternativas: SearXNG en local con
