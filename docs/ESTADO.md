@@ -1,8 +1,52 @@
 # Estado y traspaso — leer primero al retomar (también desde Claude Code en la web)
 
-Última actualización: 06/10/2026, mediodía (sesión 3 + delegación en Qwen + rumbo nuevo: oficina 3D y Atlas). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
+Última actualización: 06/10/2026, noche (sesión 4: rumbo nuevo — manual del Director, roles, agente local con herramientas, plan editable, pensamiento). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
 
-## ▶ RUMBO NUEVO (06/10/2026, tarde) — LEER PRIMERO `docs/OBJETIVOS.md`
+## ▶ SIGUIENTE SESIÓN — EMPEZAR AQUÍ (06/10/2026, noche)
+
+Rama de trabajo: `claude/hopeful-euler-p8m838` (sin fusionar en `main`; Lucas la prueba en local y decide el PR).
+Rumbo y lista de objetivos: **`docs/OBJETIVOS.md`**. Diseño acordado (cómo funciona todo y cómo se verá):
+**`docs/DISENO-OFICINA.md`**. Guía completa de funciones, API, eventos y config: **`docs/GUIA.md`**.
+
+### 1. Lo primero: recoger el resultado de las pruebas de Lucas en su PC
+Instalar: `git checkout claude/hopeful-euler-p8m838 && git pull`, `pip install -e .[server]`,
+`cd web && npm install && npm run build`, `python -m localharness serve`. Lista de comprobación:
+- [ ] **Plan editable**: Planes → nuevo plan (Director de Claude, p. ej. Haiku) → editar un paso, «Pedir al
+      Director que lo rehaga», «Aprobar todo y ejecutar».
+- [ ] **Agente local con herramientas** (`qwen-agente` del sandbox, o el rol `programador-local`/`explorador`) con
+      **Qwen3.5-9B**: que use herramientas (leer, buscar_web, escribir, ejecutar tests). Si no: Ajustes → agente →
+      Modo de herramientas = json.
+- [ ] **Búsqueda web delegada**: agente de Claude con «Puede delegar en el modelo local» + pregunta que necesite
+      internet → en el chat «🦙 Modelo local investigó en la web…». (DuckDuckGo HTML: si bloquea, plan B SearXNG.)
+- [ ] **Pensamiento**: conversación con «profundo» (¿la CLI acepta `--effort`?) y Qwen3 con «apagado» (¿deja de razonar?).
+- [ ] **Ver pensar**: Inicio → tarjeta del agente con «💭 pensando ahora» mientras Qwen razona.
+- [ ] **Roles**: Ajustes → Agentes muestra explorador, programador-local, programador y revisor («rol · roles/x.md»).
+
+### 2. Qué se hizo en esta sesión (todo con pruebas: 111, CLIs y llama-server falsos)
+| Objetivo | Qué hay | Dónde |
+|---|---|---|
+| 1 Manual del Director | el «algoritmo» del Director en un archivo editable, inyectado en su prompt | `manual/director.md`, `hierarchy.director_manual` |
+| 2 Búsqueda web | `local_research` en el MCP local: Qwen busca (DuckDuckGo), lee páginas y responde con fuentes | `mcp_local.py` |
+| 3 Plan editable | `plans.always_review` (por defecto sí); editar/quitar/reordenar pasos, rehacer uno con el Director (reanuda su sesión), aprobar todo | `hierarchy.edit_plan/redo_step`, `PUT /api/plans/{id}`, `POST /api/plans/{id}/redo`, `PlanView.vue` |
+| 4 Ver a los subagentes | eventos `thinking` (Claude y locales) y `thinking_live` (efímero); 💭 en la tarjeta del Inicio, plegado en el chat | `adapters/claude.py`, `adapters/local.py`, `HomeView.vue` |
+| 5 Roles | `roles/*.md` → agentes sincronizados al arrancar y al planificar (`config.from_role`; el archivo manda) | `roles.py`, `roles/`, `GET /api/roles` |
+| 8 Agente local | proveedor `local_agent`: bucle propio con leer, listar, buscar, escribir, ejecutar (lista blanca, sin shell), buscar_web, leer_url, preguntar_director (dentro de un plan, máx. 3), avisar_progreso, terminar; modo `json` de reserva; config desde Ajustes | `adapters/local_agent.py` |
+| §5 Pensamiento | apagado/normal/profundo por agente, rol, paso y conversación. Claude `--effort low/high` (+`MAX_THINKING_TOKENS=0`), locales `enable_thinking` | `adapters/*`, `tasks.thinking` |
+| Docs | README reescrito, `docs/GUIA.md` nueva (subagente), incoherencias corregidas | |
+
+Avisos: `ejecutar` NO aísla la red; `--effort` y `enable_thinking` están verificados en documentación, no en el PC.
+Las pruebas apagan los roles con `LOCALHARNESS_ROLES_DIR=""` (`tests/__init__.py`).
+
+### 3. Qué toca después (en orden propuesto)
+1. Arreglar lo que salga de la lista de comprobación de arriba.
+2. **Bucle continuo** (objetivo 7): cola por rol; al terminar, el agente coge la siguiente tarea; topes de tiempo,
+   gasto y ventana de 5 h; botón Parar. Diseño en DISENO-OFICINA §6.
+3. **Límite de tiempo por paso en la GUI** (la API ya acepta `timeout_s` por agente; falta por paso/conversación).
+4. Pendientes del diseño: diario de la misión, `ask_human`, interrumpida → Reanudar, varias misiones por proyecto
+   (hoy: una tarea/plan por repo a la vez), métricas del resumen mensual.
+5. **Atlas «Analizar proyecto»** (objetivo 9) y después la **oficina 3D** (objetivo 10), ya con todo lo anterior.
+
+### Detalle de lo hecho (notas técnicas)
 Lucas cambia el enfoque: Claude con un **manual** (`manual/director.md`, editable) y un **catálogo** decide el equipo,
 en vez de crear agentes a mano. Hecho hoy: manual v1 inyectado en el Director y `local_research` (búsqueda web
 DuckDuckGo para el modelo local, MCP). Objetivos nuevos de Lucas: plan editable/aprobable en el Inicio, subagentes
@@ -33,6 +77,7 @@ toca). `GET /api/roles`. Las pruebas los apagan con `LOCALHARNESS_ROLES_DIR=""` 
 lo cambias al editar) y por conversación (selector en el chat). **Por verificar en tu PC:** que tu CLI acepta
 `--effort` y que Qwen3 obedece `enable_thinking`.
 Siguiente: bucle continuo (objetivo 7) y límite de tiempo por paso en la GUI.
+
 
 ## SESIÓN ANTERIOR (06/10/2026, mediodía)
 
