@@ -63,6 +63,26 @@ elif schema and "verdict" in schema.get("properties", {}):
     v = ({"verdict": "escalate", "risk": "medium", "reason": "contenido dudoso"} if "ESCALA" in prompt.split("DIFF:")[-1]
          else {"verdict": "approve", "risk": "low", "reason": "correcto"})
     finish(json.dumps(v), v, cost=0.002)
+elif "--mcp-config" in sys.argv and "DELEGA" in prompt:
+    # delegar: lanza el servidor MCP del archivo como haría el real y le encarga escribir un archivo
+    import subprocess
+    cfg = json.load(open(sys.argv[sys.argv.index("--mcp-config") + 1], encoding="utf-8"))["mcpServers"]["local"]
+    srv = subprocess.Popen([cfg["command"], *cfg["args"]], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                           env={**os.environ, **cfg.get("env", {})})
+
+    def rpc(i, method, params):
+        srv.stdin.write((json.dumps({"jsonrpc": "2.0", "id": i, "method": method, "params": params}) + "\n").encode())
+        srv.stdin.flush()
+        return json.loads(srv.stdout.readline())
+
+    rpc(1, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "falso"}})
+    names = [t["name"] for t in rpc(2, "tools/list", {})["result"]["tools"]]
+    args = {"path": "delegado.txt", "instructions": "un saludo"}
+    out({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "mcp__local__local_write_file",
+                                                       "input": args}]}})
+    res = rpc(3, "tools/call", {"name": "local_write_file", "arguments": args})["result"]
+    srv.stdin.close(); srv.wait(timeout=10)
+    finish(f"Herramientas MCP: {','.join(names)}. {res['content'][0]['text'][:80]}")
 else:
     out({"type": "assistant", "message": {"content": [{"type": "text", "text": "Voy a trabajar"}]}})
     if "BORRA" in prompt and os.path.exists("README.md"):

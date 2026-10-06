@@ -67,6 +67,7 @@ class AgentIn(BaseModel):
     base_url: str | None = None  # solo proveedor local
     description: str | None = None  # en qué es bueno: el Director lo lee para repartir subtareas
     subagents: bool = False  # solo claude: puede lanzar subagentes (herramienta Agent; gasta más)
+    delegate_local: bool = False  # solo claude: puede encargar trabajo al modelo local (MCP local_ask/local_write_file)
     temperature: float | None = Field(default=None, ge=0, le=2)  # solo local
     max_tokens: int | None = Field(default=None, ge=64, le=131_072)  # solo local
     repo_context: int | None = Field(default=None, ge=0, le=2_000_000)  # solo local: caracteres del repo
@@ -83,13 +84,14 @@ class AgentPatch(BaseModel):
     base_url: str | None = None
     description: str | None = None
     subagents: bool | None = None
+    delegate_local: bool | None = None
     temperature: float | None = Field(default=None, ge=0, le=2)
     max_tokens: int | None = Field(default=None, ge=64, le=131_072)
     repo_context: int | None = Field(default=None, ge=0, le=2_000_000)
 
 
 AGENT_CFG = ("max_turns", "max_budget_usd", "read_only", "skills", "base_url", "description", "subagents",
-             "temperature", "max_tokens", "repo_context")
+             "delegate_local", "temperature", "max_tokens", "repo_context")
 
 
 class ProjectPatch(BaseModel):
@@ -301,7 +303,8 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
                                  "read_only": body.read_only or None, "tools": body.tools,
                                  "skills": body.skills or None, "base_url": body.base_url or None,
                                  "description": (body.description or "").strip() or None,
-                                 "subagents": body.subagents or None, "temperature": body.temperature,
+                                 "subagents": body.subagents or None, "delegate_local": body.delegate_local or None,
+                                 "temperature": body.temperature,
                                  "max_tokens": body.max_tokens, "repo_context": body.repo_context}.items()
                if v is not None}
         a = st(request).add_agent(body.name, body.provider, model=body.model, role=body.role, config=cfg)

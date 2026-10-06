@@ -23,7 +23,7 @@ async def run(adapter: Adapter, spec: RunSpec, on_event: Callable[[Event], None]
             *cmd, cwd=spec.cwd,
             stdin=asyncio.subprocess.PIPE if stdin_text is not None else asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            env={**{k: v for k, v in os.environ.items() if k not in adapter.env_remove}, **(env or {})},
+            env={**{k: v for k, v in os.environ.items() if k not in adapter.env_remove}, **spec.env, **(env or {})},
             limit=16 * 1024 * 1024,  # líneas JSON largas (diffs, salidas de herramientas)
         )
     except (FileNotFoundError, PermissionError, OSError) as e:

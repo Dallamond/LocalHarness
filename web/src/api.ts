@@ -17,7 +17,7 @@ export interface Agent {
   role: string | null;
   config: {
     max_turns?: number; max_budget_usd?: number; read_only?: boolean; tools?: string[];
-    skills?: string[]; base_url?: string; description?: string; subagents?: boolean;
+    skills?: string[]; base_url?: string; description?: string; subagents?: boolean; delegate_local?: boolean;
     temperature?: number; max_tokens?: number; repo_context?: number;
   };
 }
@@ -426,6 +426,8 @@ export function describeActivity(a: Activity | undefined): string {
     const input = (a.data.input ?? {}) as Record<string, unknown>;
     const target = String(input.file_path ?? input.pattern ?? input.command ?? input.path ?? "");
     const short = target.split(/[\\/]/).slice(-2).join("/");
+    if (a.text === "mcp__local__local_ask") return `Encargando al modelo local: ${String(input.task ?? "").slice(0, 110)}`;
+    if (a.text === "mcp__local__local_write_file") return `El modelo local escribe ${String(input.path ?? "")}`;
     const verb: Record<string, string> = {
       Read: "Leyendo", Edit: "Editando", Write: "Escribiendo", MultiEdit: "Editando",
       Grep: "Buscando", Glob: "Buscando archivos", Bash: "Ejecutando",

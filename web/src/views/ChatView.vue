@@ -34,7 +34,8 @@ type Msg =
   | { type: "user"; text: string }
   | { type: "agent"; text: string }
   | { type: "tools"; items: { name: string; target: string }[] }
-  | { type: "note"; text: string; tone: "ok" | "warn" | "crit" | "dim" };
+  | { type: "note"; text: string; tone: "ok" | "warn" | "crit" | "dim" }
+  | { type: "delegate"; ok: boolean; what: string; tool: string; detail: string };
 
 const TERMINAL = new Set(["review", "done", "failed", "timeout", "cancelled", "interrupted", "merged", "rejected"]);
 
@@ -63,6 +64,20 @@ const messages = computed<Msg[]>(() => {
       out.push({ type: "note", text: e.text, tone: "crit" });
     } else if (e.kind === "warning") {
       out.push({ type: "note", text: e.text, tone: "warn" });
+    } else if (e.kind === "delegate") {
+      const d = e.data as Record<string, unknown>;
+      const toks = Number(d.completion_tokens ?? 0);
+      out.push({
+        type: "delegate", ok: !!d.ok, tool: String(d.tool ?? ""),
+        what: String(d.path ?? d.task ?? ""),
+        detail: d.ok
+          ? [d.model, toks ? `${toks} tokens` : null, d.tps ? `${d.tps} tok/s` : null, d.seconds ? `${d.seconds} s` : null]
+              .filter(Boolean).join(" · ")
+          : String(d.error ?? "falló"),
+      });
+    } else if (e.kind === "delegate_summary") {
+      const d = e.data as Record<string, unknown>;
+      out.push({ type: "note", text: `🦙 ${e.text} · ${d.local_tokens ?? 0} tokens hechos gratis en local`, tone: "ok" });
     } else if (e.kind === "context") {
       out.push({ type: "note", text: `Contexto cargado: ${e.text}`, tone: "dim" });
     } else if (e.kind === "status" && TERMINAL.has(e.text)) {
@@ -292,6 +307,11 @@ const placeholder = computed(() => {
               <ul v-if="openTools[i]">
                 <li v-for="(x, j) in m.items" :key="j"><strong>{{ x.name }}</strong> <code>{{ x.target }}</code></li>
               </ul>
+            </div>
+            <div v-else-if="m.type === 'delegate'" class="deleg" :class="{ 'deleg--bad': !m.ok }">
+              <span class="deleg__who">🦙 Modelo local</span>
+              <span>{{ m.tool === "local_write_file" ? "escribió" : "respondió a" }} <strong>{{ m.what }}</strong></span>
+              <span class="muted small">{{ m.detail }}</span>
             </div>
             <p v-else class="note" :class="`note--${m.tone}`">{{ m.text }}</p>
           </template>
@@ -579,6 +599,26 @@ const placeholder = computed(() => {
   white-space: pre-wrap;
   text-align: left;
   border-radius: var(--radius-sm);
+}
+.deleg {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin-left: 38px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--ok) 8%, var(--panel));
+  border-left: 3px solid var(--ok);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.deleg--bad {
+  background: var(--warn-weak);
+  border-left-color: var(--warn);
+}
+.deleg__who {
+  font-weight: 700;
 }
 .skillpick {
   display: grid;

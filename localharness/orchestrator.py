@@ -2,10 +2,13 @@
 
 import asyncio
 import json
+import shutil
+import sys
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-from localharness import llama, settings, workspace
+from localharness import llama, mcp_local, settings, workspace
 from localharness.adapters import get_adapter
 from localharness.adapters.base import RunSpec
 from localharness.adapters.claude import SUBAGENT_TOOL
@@ -16,6 +19,25 @@ from localharness.runner import run
 from localharness.store import Store
 
 EPHEMERAL = ("speed",)  # en vivo para la GUI, no se guardan (llegan cada ~1,5 s)
+
+DELEGATE_TOOLS = {"local_ask": "mcp__local__local_ask", "local_write_file": "mcp__local__local_write_file"}
+DELEGATE_GUIDE = """
+DELEGACIÓN EN EL MODELO LOCAL (ahorra tu cuota; úsala siempre que encaje):
+Tienes un modelo local GRATUITO con las herramientas `local_ask` y `local_write_file`.
+- Resumir, explicar o entender archivos: `local_ask` con las rutas en `files` (NO los leas tú antes).
+- Comparar opciones, pensar alternativas, buscar fallos en un archivo, redactar texto: `local_ask`.
+- Escribir código nuevo o reescribir un archivo entero: `local_write_file` con instrucciones precisas
+  (qué debe contener, funciones y firmas, estilo, casos límite). Para cambios de pocas líneas usa Edit tú.
+Tú decides, planificas y verificas: es un modelo pequeño. Revisa lo que escriba (Read de las partes clave) y
+corrige con Edit si hace falta. Si responde que no hay modelo local, hazlo tú."""
+
+
+def delegate_guide(write: bool) -> str:
+    if write:
+        return DELEGATE_GUIDE
+    # solo lectura (Director, jefe técnico): únicamente `local_ask`
+    lines = [ln for ln in DELEGATE_GUIDE.split("\n") if "local_write_file` con" not in ln and "(qué debe contener" not in ln]
+    return "\n".join(lines).replace("las herramientas `local_ask` y `local_write_file`", "la herramienta `local_ask`")
 
 
 async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] | None = None,
@@ -81,11 +103,17 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
     missing = [n for n in wanted if n not in catalog]
 
     ro = bool(cfg.get("read_only")) if read_only is None else read_only
+    deleg = (_delegation(store, ws.path, write=not ro)
+             if cfg.get("delegate_local") and agent["provider"] == "claude" else None)
+    if deleg and not resume:
+        prompt += "\n" + delegate_guide(write=not ro)
     spec = RunSpec(prompt=prompt, cwd=str(ws.path), model=agent["model"],
                    max_turns=cfg.get("max_turns"), max_budget_usd=cfg.get("max_budget_usd"),
                    read_only=ro, allowed_tools=cfg.get("tools"), json_schema=json_schema,
                    extra_tools=[SUBAGENT_TOOL] if cfg.get("subagents") and agent["provider"] == "claude" else [],
-                   session_id=task["session_id"] if resume else None)
+                   session_id=task["session_id"] if resume else None,
+                   mcp_config=deleg["config"] if deleg else None, mcp_tools=deleg["tools"] if deleg else [],
+                   env=deleg["env"] if deleg else {})
     if followup is not None:
         sink(Event("user", text=followup))
     sink(Event("status", text="running"))
@@ -94,6 +122,7 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
         sink(Event("context", text=", ".join(names), data=injected))
     if missing:
         sink(Event("warning", text=f"Skills no encontradas: {', '.join(missing)}"))
+    watcher = asyncio.create_task(_watch_delegations(deleg, sink)) if deleg else None
     try:
         res = await run(adapter, spec, sink, timeout_s=cfg.get("timeout_s") or timeout_s or settings.task_timeout_s(store))
     except asyncio.CancelledError:
@@ -101,6 +130,12 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
         store.update_task(task_id, status="cancelled", finished_at=_now())
         sink(Event("status", text="cancelled"))
         raise
+    finally:
+        if watcher:
+            watcher.cancel()
+            await asyncio.gather(watcher, return_exceptions=True)
+            _flush_delegations(deleg, sink)
+            shutil.rmtree(deleg["dir"], ignore_errors=True)
     ws.checkpoint(f"localharness: {task['title']}")
     head = ws.head()
     changes = ws.changes(base, head)
@@ -110,6 +145,51 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
     sink(Event("status", text=status))
     return {**res, "status": status, "diff": ws.diff_range(base, head), "changes": changes,
             "stat": git_stat(ws, base, head)}
+
+
+def _delegation(store: Store, root: Path, write: bool) -> dict:
+    """Archivo de MCP para que Claude encargue trabajo al llama-server (localharness.mcp_local). Va en una
+    carpeta temporal (lleva la clave del llama-server) que se borra al terminar la tarea."""
+    d = Path(tempfile.mkdtemp(prefix="lh-mcp-"))
+    log = d / "encargos.jsonl"
+    env = {"LH_LOCAL_URL": settings.load(store)["local_base_url"], "LH_LOCAL_KEY": llama.API_KEY or "",
+           "LH_ROOT": str(root), "LH_LOG": str(log), "LH_WRITE": "1" if write else "0", "PYTHONIOENCODING": "utf-8"}
+    cfg = {"mcpServers": {"local": {"type": "stdio", "command": sys.executable,
+                                     # por ruta: la CLI lo lanza desde el worktree, donde el paquete no está en el path
+                                     "args": [str(Path(mcp_local.__file__).resolve())], "env": env}}}
+    path = d / "mcp.json"
+    path.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
+    tools = [DELEGATE_TOOLS["local_ask"]] + ([DELEGATE_TOOLS["local_write_file"]] if write else [])
+    # los encargos al modelo local pueden tardar minutos: el tope por defecto de la CLI para una herramienta MCP es corto
+    return {"dir": d, "config": str(path), "log": log, "tools": tools, "seen": 0,
+            "env": {"MCP_TOOL_TIMEOUT": "900000", "MCP_TIMEOUT": "30000"}}
+
+
+async def _watch_delegations(deleg: dict, sink: Callable[[Event], None], every: float = 1.0) -> None:
+    """Mientras trabaja Claude: cada encargo terminado del modelo local aparece como evento `delegate`."""
+    while True:
+        await asyncio.sleep(every)
+        _emit_new(deleg, sink)
+
+
+def _flush_delegations(deleg: dict, sink: Callable[[Event], None]) -> None:
+    from localharness.mcp_local import read_log
+    _emit_new(deleg, sink)  # los que terminaron después del último vistazo
+    entries = read_log(deleg["log"])
+    if entries:
+        tokens = sum((e.get("completion_tokens") or 0) + (e.get("prompt_tokens") or 0) for e in entries)
+        ok = sum(1 for e in entries if e.get("ok"))
+        sink(Event("delegate_summary", text=f"{ok} de {len(entries)} encargos al modelo local",
+                   data={"calls": len(entries), "ok": ok, "local_tokens": tokens}))
+
+
+def _emit_new(deleg: dict, sink: Callable[[Event], None]) -> None:
+    from localharness.mcp_local import read_log
+    entries = read_log(deleg["log"])
+    for e in entries[deleg["seen"]:]:
+        what = e.get("path") or e.get("task") or ""
+        sink(Event("delegate", text=f"{e.get('tool')}: {what}"[:300], data=e))
+    deleg["seen"] = len(entries)
 
 
 def _conversation(store: Store, task: dict) -> list[tuple[str, str]]:

@@ -169,13 +169,14 @@ interface AgentForm {
   base_url: string;
   description: string;
   subagents: boolean;
+  delegate_local: boolean;
   temperature: number | null;
   max_tokens: number | null;
   repo_context: number | null;
 }
 const blank = (): AgentForm => ({
   name: "", provider: "claude", model: "", role: "trabajador", max_turns: null, max_budget_usd: null,
-  read_only: false, skills: [], base_url: "", description: "", subagents: false, temperature: null,
+  read_only: false, skills: [], base_url: "", description: "", subagents: false, delegate_local: false, temperature: null,
   max_tokens: null, repo_context: null,
 });
 
@@ -185,7 +186,7 @@ function providerFields(f: AgentForm, provider: string) {
   return provider === "local"
     ? { base_url: f.base_url || null, temperature: num(f.temperature), max_tokens: num(f.max_tokens),
         repo_context: num(f.repo_context) }
-    : provider === "claude" ? { subagents: f.subagents } : {};
+    : provider === "claude" ? { subagents: f.subagents, delegate_local: f.delegate_local } : {};
 }
 const newAgent = reactive<AgentForm>(blank());
 const showNew = ref(false);
@@ -201,7 +202,7 @@ function resetNewAgent() {
 async function addAgent() {
   agError.value = "";
   try {
-    const { subagents, temperature, max_tokens, repo_context, base_url, ...common } = newAgent;
+    const { subagents, delegate_local, temperature, max_tokens, repo_context, base_url, ...common } = newAgent;
     await post<Agent>("/api/agents", {
       ...common, model: newAgent.model || null, role: newAgent.role || null,
       ...providerFields(newAgent, newAgent.provider),
@@ -220,7 +221,7 @@ function startEdit(a: Agent) {
     name: a.name, provider: a.provider, model: a.model ?? "", role: a.role ?? "",
     max_turns: a.config.max_turns ?? null, max_budget_usd: a.config.max_budget_usd ?? null,
     read_only: !!a.config.read_only, skills: [...(a.config.skills ?? [])], base_url: a.config.base_url ?? "",
-    description: a.config.description ?? "", subagents: !!a.config.subagents,
+    description: a.config.description ?? "", subagents: !!a.config.subagents, delegate_local: !!a.config.delegate_local,
     temperature: a.config.temperature ?? null, max_tokens: a.config.max_tokens ?? null,
     repo_context: a.config.repo_context ?? null,
   });
@@ -263,6 +264,7 @@ function limits(a: Agent): string {
     c.max_budget_usd ? `máx. ${c.max_budget_usd} $` : null,
     c.read_only ? "solo lectura" : null,
     c.subagents ? "puede crear subagentes" : null,
+    c.delegate_local ? "delega en el modelo local" : null,
     c.temperature !== undefined ? `temp. ${c.temperature}` : null,
     c.max_tokens ? `${c.max_tokens} tokens máx.` : null,
     c.repo_context !== undefined ? (c.repo_context ? `${Math.round(c.repo_context / 1000)}k car. de repo` : "sin contexto del repo") : null,
@@ -336,6 +338,9 @@ watch(look, applyLook, { deep: true });
           <label v-if="newAgent.provider === 'claude'" class="check wide" title="Añade la herramienta Agent: puede repartir trabajo en subagentes. Gasta bastante más plan.">
             <input v-model="newAgent.subagents" type="checkbox" /> Puede crear subagentes <span class="muted small">(gasta bastante más plan)</span>
           </label>
+          <label v-if="newAgent.provider === 'claude'" class="check wide" title="Le da herramientas para encargar al modelo arrancado en llama-server resumir, pensar, comparar y escribir archivos. Lo que haga el modelo local no gasta plan.">
+            <input v-model="newAgent.delegate_local" type="checkbox" /> Puede delegar en el modelo local <span class="muted small">(ahorra plan: resumir, comparar, generar código)</span>
+          </label>
           <label class="check"><input v-model="newAgent.read_only" type="checkbox" /> Solo lectura</label>
           <div class="row wide"><button class="btn btn--primary">Crear agente</button></div>
         </form>
@@ -396,6 +401,9 @@ watch(look, applyLook, { deep: true });
               </template>
               <label v-if="a.provider === 'claude'" class="check wide" title="Añade la herramienta Agent: puede repartir trabajo en subagentes. Gasta bastante más plan.">
                 <input v-model="edit.subagents" type="checkbox" /> Puede crear subagentes <span class="muted small">(gasta bastante más plan)</span>
+              </label>
+              <label v-if="a.provider === 'claude'" class="check wide" title="Le da herramientas para encargar al modelo arrancado en llama-server resumir, pensar, comparar y escribir archivos. Lo que haga el modelo local no gasta plan.">
+                <input v-model="edit.delegate_local" type="checkbox" /> Puede delegar en el modelo local <span class="muted small">(ahorra plan: resumir, comparar, generar código)</span>
               </label>
               <label class="check"><input v-model="edit.read_only" type="checkbox" /> Solo lectura</label>
               <div class="row wide"><button class="btn btn--primary">Guardar agente</button></div>

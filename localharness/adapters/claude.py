@@ -61,9 +61,12 @@ class ClaudeAdapter(Adapter):
         if spec.json_schema:  # la CLI añade su herramienta StructuredOutput (gasta 1 turno)
             cmd += ["--json-schema", json.dumps(spec.json_schema, ensure_ascii=False, separators=(",", ":"))]
         tools = [*(spec.allowed_tools or (READ_TOOLS if spec.read_only else WRITE_TOOLS)), *spec.extra_tools]
+        if spec.mcp_config:  # con --strict-mcp-config solo se cargan los servidores de este archivo
+            cmd += ["--mcp-config", spec.mcp_config]
         # --tools limita lo disponible (verificado); --allowedTools auto-aprueba patrones como Bash(git status).
+        # Las herramientas MCP no son «built-in»: van solo en --allowedTools.
         cmd += ["--permission-mode", "bypassPermissions",
-                "--tools", ",".join(_names(tools)), "--allowedTools", ",".join(tools)]
+                "--tools", ",".join(_names(tools)), "--allowedTools", ",".join([*tools, *spec.mcp_tools])]
         return cmd + spec.extra_args
 
     def parse_line(self, obj: dict) -> list[Event]:

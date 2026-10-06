@@ -23,6 +23,9 @@ class RunSpec:
     read_only: bool = False          # planificar/revisar sin tocar archivos
     allowed_tools: list[str] | None = None   # Claude: lista blanca; None = valores por defecto
     extra_tools: list[str] = field(default_factory=list)  # Claude: añadidas a la lista (p. ej. Agent = subagentes)
+    mcp_config: str | None = None    # Claude: archivo JSON de servidores MCP (p. ej. delegar en el modelo local)
+    mcp_tools: list[str] = field(default_factory=list)    # sus herramientas (mcp__servidor__nombre), auto-aprobadas
+    env: dict[str, str] = field(default_factory=dict)     # variables extra para el proceso hijo
     max_budget_usd: float | None = None      # Claude: tope de gasto por tarea
     approval_policy: str = "never"           # Codex: nadie contesta preguntas en modo automático
     session_id: str | None = None    # para reanudar
