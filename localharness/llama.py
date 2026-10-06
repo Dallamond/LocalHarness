@@ -169,7 +169,9 @@ class LlamaManager:
         if not model or seconds <= 0:
             return
         times = self.load_times()
-        times[model] = round(seconds, 1)
+        # se guarda la carga más lenta (en frío, desde el disco): con el modelo en caché la barra acaba antes,
+        # mejor que quedarse clavada en el 95 % la próxima vez que cargue en frío
+        times[model] = round(max(seconds, times.get(model) or 0), 1)
         try:
             self.times_path.write_text(json.dumps(times, ensure_ascii=False, indent=1), encoding="utf-8")
         except OSError:

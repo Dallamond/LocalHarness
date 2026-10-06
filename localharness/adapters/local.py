@@ -111,7 +111,8 @@ class LocalAdapter(Adapter):
                             delta = choice.get("delta") or {}
                             if delta.get("reasoning_content") or delta.get("content"):
                                 tokens += 1  # llama-server manda un token por trozo
-                                t_first = t_first or time.monotonic()
+                                if t_first is None:  # la velocidad cuenta desde el primer token, no desde el prompt
+                                    t_first = last_tick = time.monotonic()
                                 phase = "pensando" if delta.get("reasoning_content") else "escribiendo"
                             if delta.get("reasoning_content"):
                                 reasoning.append(delta["reasoning_content"])
@@ -144,9 +145,14 @@ class LocalAdapter(Adapter):
             else:
                 on_event(Event("text", text=json.dumps(structured, ensure_ascii=False)))
         tps = timings.get("predicted_per_second") or (_rate(tokens, time.monotonic() - t_first) if t_first else None)
+        tps = round(tps, 1) if tps else None
         on_event(Event("usage", data={"cost_usd": 0.0, "turns": 1, "usage": usage, "local": True, "model": model,
                                       "tps": tps, "tokens": tokens or None, "finish_reason": finish,
                                       "reasoning_chars": len("".join(reasoning)) or None}))
+        if not text and reasoning:  # los modelos que razonan (DeepSeek-R1, Qwen3…) pueden gastarlo todo pensando
+            on_event(Event("error", text=f"El modelo se quedó pensando ({tokens} tokens) y no llegó a responder. "
+                                         "Sube «Tokens de respuesta» del agente en Ajustes o usa un modelo sin razonamiento."))
+            return _out("failed", time.monotonic() - t0, text)
         if finish == "length":
             on_event(Event("warning", text="Respuesta cortada por max_tokens"))
         if spec.json_schema and structured is None:

@@ -62,6 +62,7 @@ class LoadProgressTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             m = llama.LlamaManager(Path(tmp) / "llama-server.log")
             m._remember_load_time("D:/m/q.gguf", 64.2)
+            m._remember_load_time("D:/m/q.gguf", 4.6)  # carga en caché: no pisa la de en frío
             self.assertEqual(llama.LlamaManager(Path(tmp) / "llama-server.log").load_times(), {"D:/m/q.gguf": 64.2})
 
 
@@ -154,6 +155,13 @@ class LocalModelNameAndSpeedTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(speed[-1].data["tokens"], 5)
         usage = next(e for e in evs if e.kind == "usage")
         self.assertEqual(usage.data["tokens"], 5)
+
+    async def test_only_thinking_is_a_failure(self):
+        evs = []  # visto con Qwen3.5-4B real: gastó los 400 tokens pensando y la respuesta llegó vacía
+        a = LocalAdapter(transport=fake_llama([("reasoning_content", "hmm")] * 4, "m", []), repo_context=0)
+        res = await run(a, RunSpec(prompt="x", cwd="."), evs.append)
+        self.assertEqual(res["status"], "failed")
+        self.assertTrue(any(e.kind == "error" and "pensando" in e.text for e in evs))
 
 
 try:

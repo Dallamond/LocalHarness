@@ -6,7 +6,8 @@ import Card from "../components/Card.vue";
 import StatusChip from "../components/StatusChip.vue";
 import {
   PLAN_TEXT, ROLE_TEXT, STATUS_TEXT, agentName, ago, describeActivity, duration, live, parseTs, planChip, planList,
-  projectName, refreshActivity, statusChip, usd, type Agent, type RecentTask, type Task,
+  post, projectName, refreshActivity, refreshAll, speedText, statusChip, usd,
+  type Agent, type InboxItem, type RecentTask, type Task,
 } from "../api";
 
 const router = useRouter();
@@ -80,9 +81,78 @@ const INBOX_TEXT: Record<string, string> = {
   task_review: "Revisar tarea",
 };
 
-function openInbox(i: (typeof live.inbox)[number]) {
+function openInbox(i: InboxItem) {
   router.push(i.type === "task_review" ? `/chat/${i.task_id}` : `/planes/${i.plan_id}`);
 }
+
+// --- decidir sin salir del Inicio
+interface Choice {
+  label: string;
+  tone: "ok" | "primary" | "danger";
+  run: () => Promise<unknown>;
+  confirm?: string;
+}
+
+function choices(i: InboxItem): Choice[] {
+  const t = i.task_id ? live.tasks[i.task_id] : undefined;
+  const merge = (path: string) => post(path, { confirm: true });
+  switch (i.type) {
+    case "task_review":
+      return [
+        t?.status === "approved"
+          ? { label: "Integrar", tone: "primary", run: () => merge(`/api/tasks/${i.task_id}/merge`),
+              confirm: `¿Integrar «${i.title}» en tu rama actual?
+
+Merge local; nunca se hace push.` }
+          : { label: "Aprobar e integrar", tone: "ok",
+              run: async () => { await post(`/api/tasks/${i.task_id}/approve`); await merge(`/api/tasks/${i.task_id}/merge`); },
+              confirm: `¿Aprobar e integrar «${i.title}» en tu rama actual?
+
+Merge local; nunca se hace push.` },
+        { label: "Descartar", tone: "danger", run: () => post(`/api/tasks/${i.task_id}/reject`),
+          confirm: `¿Descartar «${i.title}»? Se borran su worktree y su rama.` },
+      ];
+    case "plan_approval":
+      return [
+        { label: "Aprobar plan", tone: "ok", run: () => post(`/api/plans/${i.plan_id}/approve`) },
+        { label: "Rechazar", tone: "danger", run: () => post(`/api/plans/${i.plan_id}/reject`),
+          confirm: "¿Rechazar el plan? No se ejecutará ninguna subtarea." },
+      ];
+    case "plan_merge":
+      return [
+        { label: "Integrar", tone: "primary", run: () => merge(`/api/plans/${i.plan_id}/merge`),
+          confirm: `¿Integrar la rama del plan #${i.plan_id} en tu rama actual?
+
+Merge local; nunca se hace push.` },
+        { label: "Rechazar", tone: "danger", run: () => post(`/api/plans/${i.plan_id}/reject`),
+          confirm: "¿Rechazar el plan? Se borra su rama con todo lo hecho." },
+      ];
+    case "task_decision":
+      return [
+        { label: "Aprobar y seguir", tone: "ok", run: () => post(`/api/tasks/${i.task_id}/decide`, { approve: true }) },
+        { label: "Rechazar", tone: "danger", run: () => post(`/api/tasks/${i.task_id}/decide`, { approve: false }),
+          confirm: "¿Rechazar esta subtarea? Se deshace su commit y el plan sigue con la siguiente." },
+      ];
+  }
+  return [];
+}
+
+const acting = ref<string | null>(null);
+const actError = ref("");
+async function decide(i: InboxItem, c: Choice) {
+  if (c.confirm && !window.confirm(c.confirm)) return;
+  acting.value = `${i.type}-${i.plan_id ?? ""}-${i.task_id ?? ""}`;
+  actError.value = "";
+  try {
+    await c.run();
+  } catch (e) {
+    actError.value = (e as Error).message;
+  } finally {
+    acting.value = null;
+    await refreshAll().catch(() => {});
+  }
+}
+const keyOf = (i: InboxItem) => `${i.type}-${i.plan_id ?? ""}-${i.task_id ?? ""}`;
 </script>
 
 <template>
@@ -106,14 +176,22 @@ function openInbox(i: (typeof live.inbox)[number]) {
     </div>
 
     <Card v-if="live.inbox.length" title="Te toca a ti" subtitle="Lo de nivel N0/N1 lo resuelven solos los agentes; esto no." level="warn">
+      <p v-if="actError" class="error">{{ actError }}</p>
       <ul class="todo">
-        <li v-for="(i, n) in live.inbox" :key="n">
-          <button class="todo__btn" @click="openInbox(i)">
+        <li v-for="i in live.inbox" :key="keyOf(i)" class="todo__item">
+          <button class="todo__btn" :title="'Abrir ' + (i.type === 'task_review' ? 'la conversación' : 'el plan')" @click="openInbox(i)">
             <span class="todo__what">{{ INBOX_TEXT[i.type] ?? i.type }}</span>
             <span class="todo__title">{{ i.title }}</span>
             <span class="muted small">{{ i.reasons[0] }}</span>
             <span class="todo__go" aria-hidden="true">→</span>
           </button>
+          <div class="todo__acts">
+            <button
+              v-for="c in choices(i)" :key="c.label" class="btn btn--small" :class="`btn--${c.tone}`"
+              :disabled="acting === keyOf(i)" @click="decide(i, c)"
+            >{{ c.label }}</button>
+            <button class="btn btn--small btn--ghost" @click="openInbox(i)">{{ i.type === "task_review" ? "Ver cambios" : "Ver diff" }}</button>
+          </div>
         </li>
       </ul>
     </Card>
@@ -130,7 +208,8 @@ function openInbox(i: (typeof live.inbox)[number]) {
             <div class="member__who">
               <strong>{{ m.agent.name }}</strong>
               <span class="muted small">{{ ROLE_TEXT[m.agent.role ?? ""] ?? m.agent.role ?? "sin rol" }} ·
-                {{ m.agent.provider }}{{ m.agent.model ? ` ${m.agent.model}` : "" }}</span>
+                <template v-if="m.agent.provider === 'local'">local · usa {{ live.local.model ?? "(nada arrancado)" }}</template>
+                <template v-else>{{ m.agent.provider }}{{ m.agent.model ? ` ${m.agent.model}` : "" }}</template></span>
             </div>
           </div>
           <template v-if="m.current">
@@ -138,6 +217,7 @@ function openInbox(i: (typeof live.inbox)[number]) {
               {{ KIND[m.current.kind ?? "worker"] }}: {{ m.current.title }}
             </RouterLink>
             <p class="member__doing">{{ describeActivity(live.activity[m.current.id]) }}</p>
+            <p v-if="live.speed[m.current.id]" class="member__speed small">⚡ {{ speedText(live.speed[m.current.id]) }}</p>
             <p class="member__meta small muted">
               {{ projectName(m.current.project_id) }}
               <template v-if="m.current.plan_id"> · <RouterLink :to="`/planes/${m.current.plan_id}`">plan #{{ m.current.plan_id }}</RouterLink></template>
@@ -303,6 +383,11 @@ a.stat:hover {
   color: var(--ink-dim);
   overflow-wrap: anywhere;
 }
+.member__speed {
+  margin: 0;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
 .member__idle {
   margin: 0;
   color: var(--ink-faint);
@@ -420,6 +505,19 @@ a.stat:hover {
   line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+.todo__item {
+  display: grid;
+  gap: 6px;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-raised);
+}
+.todo__acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 8px 6px;
 }
 .todo__btn {
   display: grid;

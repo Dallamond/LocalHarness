@@ -6,7 +6,7 @@ import Markdown from "../components/Markdown.vue";
 import StatusChip from "../components/StatusChip.vue";
 import {
   ROLE_TEXT, STATUS_TEXT, agentName, ago, api, live, onTaskEvent, parseTs, pickPath, post, projectName,
-  refreshAll, statusChip, taskList, usd,
+  refreshAll, speedText, statusChip, taskList, usd,
   type Plan, type Project, type Review, type Task, type TaskEvent,
 } from "../api";
 
@@ -17,6 +17,9 @@ const router = useRouter();
 const conversations = computed(() => taskList.value.filter((t) => t.plan_id == null));
 const task = computed<Task | undefined>(() => (props.id ? live.tasks[props.id] : undefined));
 const agent = computed(() => live.agents.find((a) => a.id === task.value?.agent_id));
+// un agente local responde con el modelo ARRANCADO en llama-server, se llame como se llame
+const localModel = computed(() => (agent.value?.provider === "local" ? live.local.model : null));
+const speed = computed(() => (task.value ? live.speed[task.value.id] : undefined));
 
 const CLOSED = ["merged", "rejected", "discarded"];
 const busy = computed(() => !!task.value && ["running", "pending"].includes(task.value.status));
@@ -249,7 +252,8 @@ const placeholder = computed(() => {
         <AgentAvatar :agent="agent" :busy="busy" :size="34" />
         <div class="room__who">
           <strong>{{ task.title }}</strong>
-          <span class="muted small">{{ agentName(task.agent_id) }} · {{ projectName(task.project_id) }} · {{ usd(task.cost_usd) }}</span>
+          <span class="muted small">{{ agentName(task.agent_id) }}<template v-if="agent?.provider === 'local'"> · usa
+            <strong>{{ localModel ?? "ningún modelo arrancado" }}</strong></template> · {{ projectName(task.project_id) }} · {{ usd(task.cost_usd) }}</span>
         </div>
         <StatusChip :state="statusChip(task.status)" :text="STATUS_TEXT[task.status] ?? task.status" />
         <RouterLink :to="`/tareas/${task.id}`" class="btn btn--small btn--ghost">Detalle y diff</RouterLink>
@@ -283,7 +287,10 @@ const placeholder = computed(() => {
           </template>
           <div v-if="busy" class="from">
             <AgentAvatar :agent="agent" :busy="true" :size="28" />
-            <div class="bubble bubble--agent typing"><span /><span /><span /></div>
+            <div class="bubble bubble--agent typing">
+              <span class="dots"><span /><span /><span /></span>
+              <span v-if="speed" class="speed small">{{ speedText(speed) }}</span>
+            </div>
           </div>
 
           <!-- cambios -->
@@ -553,20 +560,29 @@ const placeholder = computed(() => {
 }
 .typing {
   display: flex;
-  gap: 4px;
-  padding: 14px;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
 }
-.typing span {
+.dots {
+  display: flex;
+  gap: 4px;
+}
+.speed {
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+.dots span {
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: var(--ink-faint);
   animation: blink 1.2s infinite;
 }
-.typing span:nth-child(2) {
+.dots span:nth-child(2) {
   animation-delay: 0.2s;
 }
-.typing span:nth-child(3) {
+.dots span:nth-child(3) {
   animation-delay: 0.4s;
 }
 @keyframes blink {

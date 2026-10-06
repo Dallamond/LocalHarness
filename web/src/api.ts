@@ -17,7 +17,8 @@ export interface Agent {
   role: string | null;
   config: {
     max_turns?: number; max_budget_usd?: number; read_only?: boolean; tools?: string[];
-    skills?: string[]; base_url?: string; description?: string;
+    skills?: string[]; base_url?: string; description?: string; subagents?: boolean;
+    temperature?: number; max_tokens?: number; repo_context?: number;
   };
 }
 
@@ -135,8 +136,28 @@ export interface Settings {
   task_timeout_min: number;
   local_base_url: string;
   context: { max_memory_chars: number; max_skill_chars: number; skill_dirs: string[] };
-  llama: { server: string; model_dirs: string[]; port: number; ctx: number; ngl: number };
+  llama: {
+    server: string; model_dirs: string[]; port: number; ctx: number; ngl: number;
+    per_model: Record<string, ModelLaunch>;
+  };
   agent_defaults: { provider: string; model: string; role: string; max_turns: number | null; max_budget_usd: number | null };
+}
+
+/** Arranque propio de un GGUF (vacío = valores generales). */
+export interface ModelLaunch {
+  ctx?: number | null;
+  ngl?: number | null;
+  extra?: string;
+}
+
+/** Velocidad de un modelo local: en vivo (evento speed) o la última medida. */
+export interface Speed {
+  tps: number | null;
+  tokens?: number;
+  phase?: string;
+  model?: string | null;
+  at: number;
+  final?: boolean;
 }
 
 export interface LocalModel {
@@ -156,6 +177,8 @@ export interface LlamaStatus {
   started_at: number | null;
   exit_code: number | null;
   log: string;
+  log_lines: string[];
+  progress?: { pct: number | null; stage: string; source?: string | null; eta_s?: number } | null;
 }
 
 export interface LlamaInfo {
@@ -164,6 +187,8 @@ export interface LlamaInfo {
   models: LocalModel[];
   status: LlamaStatus;
   config: Settings["llama"];
+  speed: Speed | null;
+  load_times: Record<string, number>;
 }
 
 /** Selector nativo del PC (el servidor es local). null si se cancela; lanza error si no hay escritorio. */
@@ -181,6 +206,9 @@ export const live = reactive({
   limit: null as Limit | null,
   activity: {} as Record<number, Activity>,
   recent: [] as RecentTask[],
+  speed: {} as Record<number, Speed>,          // tokens/s en vivo por tarea (modelos locales)
+  local: { state: "off", model: null } as { state: string; model: string | null }, // el modelo ARRANCADO
+  lastSpeed: null as Speed | null,
 });
 
 type Handler = (ev: TaskEvent) => void;
@@ -221,13 +249,15 @@ export async function refreshAll(): Promise<void> {
     api<Agent[]>("/api/agents"),
     api<Task[]>("/api/tasks"),
     api<Plan[]>("/api/plans"),
-    api<{ limit: Limit | null }>("/api/health"),
+    api<{ limit: Limit | null; local: typeof live.local; speed: Speed | null }>("/api/health"),
   ]);
   live.projects = projects;
   live.agents = agents;
   live.tasks = Object.fromEntries(tasks.map((t) => [t.id, t]));
   live.plans = Object.fromEntries(plans.map((p) => [p.id, p]));
   live.limit = health.limit;
+  live.local = health.local ?? live.local;
+  live.lastSpeed = health.speed ? { ...health.speed, at: health.speed.at * 1000 } : null;
   await Promise.all([refreshInbox(), refreshActivity()]);
 }
 
@@ -289,6 +319,15 @@ export function connect(url = "/api/events"): void {
     if (["text", "tool", "status", "context"].includes(ev.kind)) {
       live.activity[ev.task_id] = { kind: ev.kind, text: ev.text, data: ev.data ?? {}, at: Date.now() };
     }
+    if (ev.kind === "speed" || (ev.kind === "usage" && ev.data?.local && ev.data?.tps)) {
+      const sp = { ...(ev.data as unknown as Speed), at: Date.now(), final: ev.kind === "usage" };
+      if (ev.kind === "speed") live.speed[ev.task_id] = sp;
+      live.lastSpeed = sp;
+    }
+    if (ev.kind === "session" && ev.data?.base_url && ev.data?.model) {
+      live.local = { state: "ready", model: String(ev.data.model) };
+    }
+    if (ev.kind === "status" && ev.text !== "running") delete live.speed[ev.task_id];
     eventHandlers.forEach((fn) => fn(ev));
   });
   source.addEventListener("limit", (e) => {
@@ -433,4 +472,14 @@ export function pct(v: number | null | undefined): string {
 
 export function usd(v: number | null | undefined): string {
   return v === null || v === undefined ? "—" : `${v.toFixed(v < 0.1 ? 4 : 2)} $`;
+}
+
+export function tps(v: number | null | undefined): string {
+  return v === null || v === undefined ? "—" : `${v.toFixed(v < 10 ? 1 : 0)} tok/s`;
+}
+
+/** Frase de velocidad para la burbuja «escribiendo…» y las tarjetas: «pensando · 42 tok/s · 310 tokens». */
+export function speedText(sp: Speed | undefined): string {
+  if (!sp) return "";
+  return [sp.phase, tps(sp.tps), sp.tokens ? `${sp.tokens} tokens` : null].filter(Boolean).join(" · ");
 }

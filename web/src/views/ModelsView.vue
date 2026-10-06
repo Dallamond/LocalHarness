@@ -2,7 +2,9 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import Card from "../components/Card.vue";
 import StatusChip from "../components/StatusChip.vue";
-import { api, duration, live, pickPath, post, refreshAll, type LlamaInfo, type LocalModel } from "../api";
+import {
+  ROLE_TEXT, ago, api, duration, live, pickPath, post, refreshAll, tps, type LlamaInfo, type LocalModel, type ModelLaunch,
+} from "../api";
 
 const info = ref<LlamaInfo | null>(null);
 const error = ref("");
@@ -12,7 +14,9 @@ const showLog = ref(false);
 const now = ref(Date.now());
 
 // configuración editable (se guarda en Ajustes → llama)
-const cfg = reactive({ server: "", model_dirs: [] as string[], port: 8080, ctx: 16384, ngl: 99 });
+const cfg = reactive({
+  server: "", model_dirs: [] as string[], port: 8080, ctx: 16384, ngl: 99, per_model: {} as Record<string, ModelLaunch>,
+});
 const newDir = ref("");
 
 async function load(withCfg = false) {
@@ -51,6 +55,41 @@ const STATE: Record<string, { text: string; chip: "ok" | "warn" | "crit" | "pend
   failed: { text: "se ha caído", chip: "crit" },
   external: { text: "en marcha (lanzado fuera)", chip: "ok" },
 };
+const progress = computed(() => status.value?.progress ?? null);
+const speed = computed(() => info.value?.speed ?? live.lastSpeed);
+
+// --- arranque propio de cada modelo (contexto, capas en GPU, argumentos extra)
+const openCfg = ref<string | null>(null);
+const own = reactive<{ ctx: number | null; ngl: number | null; extra: string }>({ ctx: null, ngl: null, extra: "" });
+function toggleCfg(m: LocalModel) {
+  if (openCfg.value === m.path) {
+    openCfg.value = null;
+    return;
+  }
+  const c = cfg.per_model[m.path] ?? {};
+  Object.assign(own, { ctx: c.ctx ?? null, ngl: c.ngl ?? null, extra: c.extra ?? "" });
+  openCfg.value = m.path;
+}
+async function saveOwn(m: LocalModel) {
+  const per = { ...cfg.per_model };
+  const entry: ModelLaunch = {};
+  if (own.ctx) entry.ctx = Number(own.ctx);
+  if (own.ngl !== null && String(own.ngl) !== "") entry.ngl = Number(own.ngl);
+  if (own.extra.trim()) entry.extra = own.extra.trim();
+  if (Object.keys(entry).length) per[m.path] = entry;
+  else delete per[m.path];
+  await saveCfg({ per_model: per });
+  openCfg.value = null;
+  if (isCurrent(m)) msg.value = "Guardado. Se aplica la próxima vez que arranques este modelo.";
+}
+function launchText(m: LocalModel): string {
+  const c = cfg.per_model[m.path];
+  if (!c) return "";
+  return [c.ctx ? `ctx ${c.ctx}` : null, c.ngl !== undefined && c.ngl !== null ? `ngl ${c.ngl}` : null, c.extra || null]
+    .filter(Boolean).join(" · ");
+}
+const loadTime = (m: LocalModel) => info.value?.load_times?.[m.path];
+
 const isCurrent = (m: LocalModel) => status.value?.model === m.path && status.value.state !== "off";
 const groups = computed(() => {
   const g: Record<string, LocalModel[]> = {};
@@ -116,26 +155,40 @@ async function stop() {
   }
 }
 
-// crear un agente local con el nombre del modelo (el modelo concreto lo decide el servidor arrancado)
-const roleFor = reactive<Record<string, string>>({});
-async function createAgent(m: LocalModel) {
-  const role = roleFor[m.path] ?? "jefe";
-  const base = m.name.toLowerCase().replace(/[^a-z0-9.]+/g, "-").replace(/-+$/, "").slice(0, 40);
-  let name = `${base}-${role}`;
-  for (let i = 2; live.agents.some((a) => a.name === name); i++) name = `${base}-${role}-${i}`;
+// Agentes locales por ROL y sin modelo fijo: llama-server sirve uno a la vez y todos usan el que esté arrancado.
+// Cambiar de modelo no obliga a crear otro agente.
+const localAgents = computed(() => live.agents.filter((a) => a.provider === "local"));
+const newRole = ref("jefe");
+const ROLE_DESC: Record<string, string> = {
+  jefe: "Jefe técnico local: revisa diffs y decide si se aprueban, sin coste.",
+  director: "Director local: reparte la petición en subtareas, sin coste.",
+  trabajador: "Consultas locales: responde preguntas sobre el repo, sin coste.",
+};
+async function createAgent() {
+  const role = newRole.value;
+  const slug = role === "trabajador" ? "consultas" : role;
+  let name = `local-${slug}`;
+  for (let i = 2; live.agents.some((a) => a.name === name); i++) name = `local-${slug}-${i}`;
   error.value = msg.value = "";
   try {
     await post("/api/agents", {
-      name, provider: "local", role, model: m.name,
-      description: `Modelo local ${m.name}${m.quant ? ` (${m.quant})` : ""}, sin coste. Lee el repo en el prompt; no edita archivos.`,
+      name, provider: "local", role,
+      description: `${ROLE_DESC[role]} Usa el modelo arrancado en llama-server. Lee el repo en el prompt; no edita archivos.`,
     });
     await refreshAll();
-    msg.value = `Agente ${name} creado. Úsalo como ${role === "director" ? "Director" : "jefe técnico"} o para preguntas en el Chat.`;
+    msg.value = `Agente ${name} creado. Usará el modelo que tengas arrancado.`;
   } catch (e) {
     error.value = (e as Error).message;
   }
 }
-const agentsFor = (m: LocalModel) => live.agents.filter((a) => a.provider === "local" && a.model === m.name);
+// agentes antiguos creados con el nombre de un GGUF concreto: avisar si piden otro distinto del arrancado
+const servedName = computed(() => {
+  const m = status.value && status.value.state !== "off" ? status.value.model : null;
+  return m ? m.split(/[\\/]/).pop()!.replace(/\.gguf$/i, "") : null;
+});
+const mismatch = (model: string | null) =>
+  !!model && !!servedName.value && !servedName.value.toLowerCase().includes(model.toLowerCase());
+const modelFor = (name: string | null) => info.value?.models.find((m) => m.name === name);
 </script>
 
 <template>
@@ -165,8 +218,26 @@ const agentsFor = (m: LocalModel) => live.agents.filter((a) => a.provider === "l
         <button v-if="status.pid" class="btn btn--danger btn--small" @click="stop">Parar</button>
         <button v-if="status.log" class="btn btn--ghost btn--small" @click="showLog = !showLog">{{ showLog ? "Ocultar log" : "Ver log" }}</button>
       </div>
+      <div v-if="status.state === 'loading'" class="progress">
+        <div class="bar" :class="{ 'bar--unknown': progress?.pct == null }" role="progressbar"
+             :aria-valuenow="progress?.pct ?? undefined" aria-valuemin="0" aria-valuemax="100">
+          <span :style="{ width: progress?.pct != null ? `${progress.pct}%` : undefined }" />
+        </div>
+        <span class="small muted">
+          {{ progress?.stage ?? "arrancando" }}<template v-if="progress?.pct != null"> · {{ progress.pct }} %</template>
+          <template v-if="progress?.eta_s"> · faltan ~{{ duration(progress.eta_s * 1000) }}</template>
+          <template v-if="progress?.source === 'tiempo'"> (según lo que tardó la última vez)</template>
+          <template v-else-if="progress?.pct == null"> · la primera carga de cada modelo no tiene estimación</template>
+        </span>
+      </div>
+      <div v-if="status.log_lines?.length && !showLog" class="loglines">
+        <code v-for="(l, k) in status.log_lines" :key="k">{{ l }}</code>
+      </div>
       <pre v-if="showLog && status.log" class="block log">{{ status.log }}</pre>
-      <p v-if="status.state === 'loading'" class="muted small hint">Cargar un modelo del disco a la GPU puede tardar varios minutos.</p>
+      <p v-if="speed?.tps" class="muted small hint">
+        Velocidad {{ speed.final ? "de la última respuesta" : "ahora" }}: <strong>{{ tps(speed.tps) }}</strong>
+        <template v-if="speed.model"> · {{ speed.model }}</template> · {{ ago(speed.at, now) }}
+      </p>
     </section>
 
     <!-- modelos -->
@@ -186,7 +257,9 @@ const agentsFor = (m: LocalModel) => live.agents.filter((a) => a.provider === "l
               <span class="chip-icon" aria-hidden="true">🧠</span>
               <div class="model__name">
                 <strong :title="m.file">{{ m.name }}</strong>
-                <span class="muted small">{{ m.size_gb.toFixed(1) }} GB<template v-if="m.quant"> · {{ m.quant }}</template></span>
+                <span class="muted small">{{ m.size_gb.toFixed(1) }} GB<template v-if="m.quant"> · {{ m.quant }}</template>
+                  <template v-if="loadTime(m)"> · carga en {{ duration(loadTime(m)! * 1000) }}</template></span>
+                <span v-if="launchText(m)" class="small launch">{{ launchText(m) }}</span>
               </div>
             </div>
             <div class="row">
@@ -199,21 +272,48 @@ const agentsFor = (m: LocalModel) => live.agents.filter((a) => a.provider === "l
                 :title="info?.server ? '' : 'Falta la ruta de llama-server'" @click="start(m)"
               >{{ starting === m.path ? "Arrancando…" : status?.pid ? "Cambiar a este" : "Arrancar" }}</button>
             </div>
-            <div class="model__agents">
-              <span v-for="a in agentsFor(m)" :key="a.id" class="tag">{{ a.name }}</span>
-              <span class="row">
-                <select v-model="roleFor[m.path]" class="input mini" aria-label="Rol del agente">
-                  <option :value="undefined" disabled>rol…</option>
-                  <option value="jefe">jefe técnico</option>
-                  <option value="director">director</option>
-                  <option value="trabajador">consultas</option>
-                </select>
-                <button class="btn btn--small btn--ghost" @click="createAgent(m)">+ Crear agente</button>
-              </span>
-            </div>
+            <button class="btn btn--small btn--ghost cfg-toggle" @click="toggleCfg(m)">
+              {{ openCfg === m.path ? "Cerrar" : "⚙ Arranque de este modelo" }}
+            </button>
+            <form v-if="openCfg === m.path" class="own" @submit.prevent="saveOwn(m)">
+              <label class="field"><span class="label">Contexto</span><input v-model.number="own.ctx" type="number" min="512" step="1024" :placeholder="String(cfg.ctx)" /></label>
+              <label class="field"><span class="label">Capas en GPU</span><input v-model.number="own.ngl" type="number" min="0" :placeholder="String(cfg.ngl)" /></label>
+              <label class="field own__wide">
+                <span class="label">Argumentos extra</span>
+                <input v-model="own.extra" class="code" placeholder="-fa on -t 8" />
+              </label>
+              <div class="row own__wide">
+                <button class="btn btn--primary btn--small">Guardar</button>
+                <span class="hint">Vacío = valores generales de abajo.</span>
+              </div>
+            </form>
           </article>
         </div>
       </div>
+    </Card>
+
+    <!-- agentes locales -->
+    <Card title="Agentes locales" subtitle="Todos usan el modelo que esté arrancado: si cambias de modelo, siguen funcionando.">
+      <p v-if="!localAgents.length" class="empty">Aún no hay agentes locales.</p>
+      <ul class="lagents">
+        <li v-for="a in localAgents" :key="a.id">
+          <strong>{{ a.name }}</strong>
+          <span class="muted small">{{ ROLE_TEXT[a.role ?? ""] ?? a.role ?? "sin rol" }} · usa {{ servedName ?? "(nada arrancado)" }}</span>
+          <span v-if="mismatch(a.model)" class="warnline small">
+            Se creó para «{{ a.model }}» pero el arrancado es otro (responde el arrancado).
+            <button v-if="modelFor(a.model)" class="btn btn--small" :disabled="!!starting" @click="start(modelFor(a.model)!)">Arrancar {{ a.model }}</button>
+          </span>
+        </li>
+      </ul>
+      <form class="row" @submit.prevent="createAgent">
+        <select v-model="newRole" class="input mini" aria-label="Rol del agente">
+          <option value="jefe">jefe técnico</option>
+          <option value="director">director</option>
+          <option value="trabajador">consultas</option>
+        </select>
+        <button class="btn btn--small">+ Crear agente local</button>
+        <span class="hint">Temperatura, tokens y contexto del repo: en Ajustes → Agentes.</span>
+      </form>
     </Card>
 
     <!-- configuración -->
@@ -310,6 +410,88 @@ const agentsFor = (m: LocalModel) => live.agents.filter((a) => a.provider === "l
     opacity: 0.35;
   }
 }
+.progress {
+  display: grid;
+  gap: 6px;
+}
+.bar {
+  position: relative;
+  height: 8px;
+  border-radius: 99px;
+  background: var(--panel-raised);
+  overflow: hidden;
+}
+.bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--info);
+  transition: width 0.6s ease;
+}
+.bar--unknown span {
+  width: 30%;
+  animation: slide 1.6s ease-in-out infinite;
+}
+@keyframes slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(340%);
+  }
+}
+.loglines {
+  display: grid;
+  gap: 2px;
+}
+.loglines code {
+  font-size: 12px;
+  color: var(--ink-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.launch {
+  color: var(--accent);
+  font-weight: 600;
+}
+.cfg-toggle {
+  justify-self: start;
+}
+.own {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.own__wide {
+  grid-column: 1 / -1;
+}
+.lagents {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.lagents li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+.warnline {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--warn-weak);
+  color: var(--warn);
+}
 .log {
   max-height: 240px;
   white-space: pre-wrap;
@@ -366,22 +548,6 @@ const agentsFor = (m: LocalModel) => live.agents.filter((a) => a.provider === "l
 }
 .model__name strong {
   overflow-wrap: anywhere;
-}
-.model__agents {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  padding-top: 8px;
-  border-top: 1px solid var(--line);
-}
-.tag {
-  padding: 2px 8px;
-  border-radius: 6px;
-  background: var(--accent-weak);
-  color: var(--accent);
-  font-size: 12.5px;
-  font-weight: 600;
 }
 .input.mini {
   padding: 4px 8px;
