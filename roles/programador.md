@@ -7,6 +7,7 @@ role: trabajador
 max_turns: 15
 max_budget_usd: 0.5
 delegate_local: true
+thinking: normal
 skills: [cambios-minimos]
 ---
 Eres el Programador del equipo.

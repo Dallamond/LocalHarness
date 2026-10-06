@@ -10,8 +10,8 @@ from pathlib import Path
 
 from localharness import llama, mcp_local, settings, workspace
 from localharness.adapters import get_adapter
-from localharness.adapters.base import RunSpec
-from localharness.adapters.claude import SUBAGENT_TOOL
+from localharness.adapters.base import THINKING_LEVELS, RunSpec
+from localharness.adapters.claude import SUBAGENT_TOOL, thinking_env
 from localharness.adapters.local import config_kwargs
 from localharness.context import build_prompt, load_memory, load_skills
 from localharness.events import Event
@@ -115,13 +115,19 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
     if deleg and (not resume or not _had_delegation(store, task_id)):
         # también al continuar una conversación que empezó sin la casilla: la sesión no sabe que ahora puede delegar
         prompt += "\n" + delegate_guide(write=not ro)
-    spec = RunSpec(prompt=prompt, cwd=str(ws.path), model=agent["model"],
+    thinking = task.get("thinking") or cfg.get("thinking")
+    thinking = thinking if thinking in THINKING_LEVELS else None
+    if thinking and agent["provider"] == "claude":
+        deleg_env = {**(deleg["env"] if deleg else {}), **thinking_env(thinking)}
+    else:
+        deleg_env = deleg["env"] if deleg else {}
+    spec = RunSpec(prompt=prompt, cwd=str(ws.path), model=agent["model"], thinking=thinking,
                    max_turns=cfg.get("max_turns"), max_budget_usd=cfg.get("max_budget_usd"),
                    read_only=ro, allowed_tools=cfg.get("tools"), json_schema=json_schema,
                    extra_tools=[SUBAGENT_TOOL] if cfg.get("subagents") and agent["provider"] == "claude" else [],
                    session_id=task["session_id"] if resume else None,
                    mcp_config=deleg["config"] if deleg else None, mcp_tools=deleg["tools"] if deleg else [],
-                   env=deleg["env"] if deleg else {},
+                   env=deleg_env,
                    ask_director=(_director_line(store, task, ws, binaries)
                                  if agent["provider"] == "local_agent" else None))
     if followup is not None:

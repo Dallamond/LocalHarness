@@ -22,6 +22,9 @@ from localharness.events import Event
 
 READ_TOOLS = ["Read", "Glob", "Grep"]
 WRITE_TOOLS = ["Read", "Glob", "Grep", "Edit", "Write"]  # Bash/PowerShell solo si se conceden explícitamente
+# Pensamiento (docs de Claude Code: --effort en cli-reference; MAX_THINKING_TOKENS en env-vars). «apagado» además
+# pone MAX_THINKING_TOKENS=0 (thinking_env), que algunos modelos nuevos ignoran: entonces solo baja el esfuerzo.
+EFFORT = {"apagado": "low", "profundo": "high"}
 SUBAGENT_TOOL = "Agent"  # antes «Task»; con config.subagents el agente puede lanzar subagentes (gasta más plan)
 
 
@@ -63,6 +66,8 @@ class ClaudeAdapter(Adapter):
             cmd += ["--max-budget-usd", str(spec.max_budget_usd)]
         if spec.session_id:
             cmd += ["--resume", spec.session_id]
+        if spec.thinking in EFFORT:  # pensamiento: «normal» no añade nada (lo de siempre)
+            cmd += ["--effort", EFFORT[spec.thinking]]
         if spec.json_schema:  # la CLI añade su herramienta StructuredOutput (gasta 1 turno)
             cmd += ["--json-schema", json.dumps(spec.json_schema, ensure_ascii=False, separators=(",", ":"))]
         tools = [*(spec.allowed_tools or (READ_TOOLS if spec.read_only else WRITE_TOOLS)), *spec.extra_tools]
@@ -116,6 +121,10 @@ class ClaudeAdapter(Adapter):
         if t == "error":
             return [Event("error", text=str(obj.get("error") or "error desconocido"))]
         return []  # system hook_*, stream_event, user/tool_result: ignorados
+
+
+def thinking_env(level: str | None) -> dict[str, str]:
+    return {"MAX_THINKING_TOKENS": "0"} if level == "apagado" else {}
 
 
 def login_method(binary: str = "claude") -> str | None:

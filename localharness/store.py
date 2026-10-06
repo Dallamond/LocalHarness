@@ -40,6 +40,10 @@ MIGRATIONS = [
     """
     CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     """,
+    # Pensamiento por tarea: apagado | normal | profundo (NULL = el del agente)
+    """
+    ALTER TABLE tasks ADD COLUMN thinking TEXT;
+    """,
 ]
 
 

@@ -114,8 +114,8 @@ Herramientas v1 (pocas a propósito: los modelos pequeños fallan más cuantas m
   (se aplica en el siguiente turno o reintento).
 - Automático: si un paso falla o el revisor pide cambios, el reintento sube un nivel.
 - Coste visible: el Inspector dice cuántos tokens se fueron en pensar.
-- ❓ Por verificar en la CLI real: cómo se activa en `claude -p` (variable de entorno o flag) y en Qwen3
-  (`enable_thinking` en la plantilla de llama-server). Hoy el adaptador local ya distingue «pensando» de «escribiendo».
+- ✅ Implementado (v1): Claude `--effort low|high` (+ `MAX_THINKING_TOKENS=0` al apagar), según la documentación de
+  Claude Code; Qwen3 `chat_template_kwargs.enable_thinking`. Pendiente: subir de nivel solo al reintentar.
 
 ## 6. Subagentes en bucle
 💡 Cada rol tiene una **cola**. Al terminar un paso, el agente coge el siguiente de su cola (de cualquier misión).

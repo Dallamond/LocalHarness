@@ -26,7 +26,13 @@ Inicio, «💭 pensando ahora» en la tarjeta del agente (clic = completo); en e
 (local_agent), `programador` (Claude Sonnet, delega en local), `revisor` (Claude Haiku, jefe). Se crean/actualizan al
 arrancar el servidor y al planificar (`config.from_role`; el archivo manda; un agente tuyo con el mismo nombre no se
 toca). `GET /api/roles`. Las pruebas los apagan con `LOCALHARNESS_ROLES_DIR=""` (tests/__init__.py).
-Siguiente: pensamiento profundo activable (DISENO-OFICINA §5), bucle continuo (objetivo 7).
+**Pensamiento activable (DISENO-OFICINA §5, v1):** niveles apagado / normal / profundo. Claude: `--effort low|high`
+(+ `MAX_THINKING_TOKENS=0` al apagar; según la doc, algunos modelos nuevos no lo apagan del todo). Locales
+(llama-server con `--jinja`): `chat_template_kwargs.enable_thinking`. «normal» no añade nada. Se fija por agente
+(Ajustes), por rol (`thinking:` en roles/*.md; explorador = apagado), por paso del plan (el Director puede marcarlo;
+lo cambias al editar) y por conversación (selector en el chat). **Por verificar en tu PC:** que tu CLI acepta
+`--effort` y que Qwen3 obedece `enable_thinking`.
+Siguiente: bucle continuo (objetivo 7) y límite de tiempo por paso en la GUI.
 
 ## SESIÓN ANTERIOR (06/10/2026, mediodía)
 
@@ -79,7 +85,7 @@ La lectura gruesa del repo, delegada en Qwen para no gastar plan.
 ```
 git clone https://github.com/Dallamond/LocalHarness.git && cd LocalHarness
 python -m venv .venv && .venv/Scripts/python -m pip install -e .[server]     # Linux: .venv/bin/python
-.venv/Scripts/python -m unittest discover -s tests -t .                       # 107 pruebas, NUNCA llaman a Claude real
+.venv/Scripts/python -m unittest discover -s tests -t .                       # 111 pruebas, NUNCA llaman a Claude real
 cd web && npm install && npm run build && cd .. && .venv/Scripts/python -m localharness serve   # :8095
 ```
 Sin GPU ni llama-server, los agentes locales no responden (todo lo demás sí). Sin `claude` logueado, no lanzar

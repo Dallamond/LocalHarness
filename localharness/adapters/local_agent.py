@@ -36,7 +36,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from localharness.adapters.base import RunSpec
-from localharness.adapters.local import LocalAdapter, _out, _short
+from localharness.adapters.local import LocalAdapter, _out, _short, thinking_body
 from localharness.binaries import resolve
 from localharness.events import Event
 from localharness.mcp_local import SEARCH_URL, _http_get, page_text, parse_ddg
@@ -108,6 +108,7 @@ class LocalAgentAdapter(LocalAdapter):
         self.tool_mode = tool_mode if tool_mode in ("native", "json") else "native"
         self.max_tool_chars, self.max_context_chars, self.web = max_tool_chars, max_context_chars, web
         self.http_get = http_get or _http_get  # pruebas: sin red de verdad
+        self.thinking: str | None = None
         self.commands = [c for c in (commands if commands is not None else DEFAULT_COMMANDS) if c.strip()]
         self.command_timeout_s = command_timeout_s
 
@@ -124,7 +125,8 @@ class LocalAgentAdapter(LocalAdapter):
         return names
 
     def body(self, messages: list[dict], names: list[str]) -> dict:
-        b: dict = {"messages": messages, "temperature": self.temperature, "max_tokens": self.max_tokens}
+        b: dict = {"messages": messages, "temperature": self.temperature, "max_tokens": self.max_tokens,
+                   **thinking_body(self.thinking)}
         if self.tool_mode == "native":
             b["tools"] = [TOOLS[n] for n in names]
         else:
@@ -141,6 +143,7 @@ class LocalAgentAdapter(LocalAdapter):
             on_event(Event("error", text="El agente local necesita httpx: pip install -e .[server]"))
             return _out("failed", 0.0)
         t0 = time.monotonic()
+        self.thinking = spec.thinking
         root = Path(spec.cwd).resolve()
         names = self.tool_names(spec.read_only, director=spec.ask_director is not None)
         if "ejecutar" in names:

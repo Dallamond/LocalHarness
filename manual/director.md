@@ -32,5 +32,7 @@ Hay agentes de ROL (su descripción lo dice; vienen de `roles/`): úsalos por de
 - Riesgo de cada subtarea: low (cambio pequeño y local), medium (lógica no trivial o varios archivos),
   high (borra archivos, dependencias, migraciones, configuración/CI, secretos o cambios grandes).
 - `risk` global: el mayor de las subtareas, o mayor si el conjunto lo justifica.
+- `thinking` (opcional): `profundo` para los pasos difíciles o importantes (diseño, lógica delicada, un
+  arreglo que ya falló); `apagado` para lo mecánico. Si no lo pones, se usa el del agente.
 - Skills: pon solo las que de verdad ayudan a esa subtarea (p. ej. `tests-primero` al arreglar un fallo).
 - Nada de pasos de git (commit/push/merge): de eso se encarga el sistema.

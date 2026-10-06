@@ -11,7 +11,7 @@ Director los ve en su lista, la GUI los muestra en el equipo y no hay que crearl
 LOCALHARNESS_ROLES_DIR cambia la carpeta (vacía = sin roles; las pruebas la vacían para no mezclarlos).
 
 Claves del frontmatter: name, description, provider, model, role, read_only, max_turns, max_budget_usd,
-delegate_local, subagents, skills ([a, b]), tool_mode, web, timeout_s.
+delegate_local, subagents, skills ([a, b]), tool_mode, web, timeout_s, thinking (apagado|normal|profundo).
 """
 
 import json
@@ -24,7 +24,7 @@ from localharness.store import Store
 
 BUILTIN_ROLES = Path(__file__).resolve().parent.parent / "roles"
 CONFIG_KEYS = ("read_only", "max_turns", "max_budget_usd", "delegate_local", "subagents", "skills", "tool_mode",
-               "web", "timeout_s")
+               "web", "timeout_s", "thinking")
 
 
 @dataclass

@@ -55,6 +55,7 @@ class LocalAdapter(Adapter):
                 user = f"{user}\n\nCONTEXTO DEL REPOSITORIO (directorio actual):\n{ctx}"
         body: dict = {"messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
                       "temperature": self.temperature, "max_tokens": self.max_tokens}
+        body.update(thinking_body(spec.thinking))
         if spec.json_schema:
             body["response_format"] = {"type": "json_schema",
                                        "json_schema": {"name": "salida", "strict": True, "schema": spec.json_schema}}
@@ -166,6 +167,16 @@ class LocalAdapter(Adapter):
             return _out("failed", time.monotonic() - t0, text)
         on_event(Event("result", text=text, data={"structured": structured}))
         return _out("done", time.monotonic() - t0, text, structured)
+
+
+def thinking_body(level: str | None) -> dict:
+    """llama-server con --jinja pasa chat_template_kwargs a la plantilla: los modelos que razonan (Qwen3…) lo
+    encienden o apagan con enable_thinking. Los demás modelos lo ignoran. «normal» = lo que haga el modelo."""
+    if level == "apagado":
+        return {"chat_template_kwargs": {"enable_thinking": False}}
+    if level == "profundo":
+        return {"chat_template_kwargs": {"enable_thinking": True}}
+    return {}
 
 
 def _rate(tokens: int, seconds: float) -> float | None:

@@ -173,6 +173,7 @@ function diffClass(l: string): string {
           <div class="row">
             <strong class="grow">{{ s.title }}</strong>
             <span class="small muted">{{ s.agent }}</span>
+            <span v-if="s.thinking && s.thinking !== 'normal'" class="risk">💭 {{ s.thinking }}</span>
             <span class="risk" :class="`risk--${s.risk}`">riesgo {{ RISK_TEXT[s.risk] ?? s.risk }}</span>
           </div>
           <p v-if="editingStep !== i" class="small prompt">{{ s.prompt }}</p>
@@ -184,6 +185,11 @@ function diffClass(l: string): string {
               <label class="field">Agente
                 <select v-model="s.agent" @change="changed">
                   <option v-for="a in workers" :key="a.id" :value="a.name">{{ a.name }} ({{ a.provider }})</option>
+                </select></label>
+              <label class="field">Pensamiento
+                <select v-model="s.thinking" @change="changed">
+                  <option :value="undefined">el del agente</option><option value="apagado">apagado</option>
+                  <option value="normal">normal</option><option value="profundo">profundo</option>
                 </select></label>
               <label class="field">Riesgo
                 <select v-model="s.risk" @change="changed">

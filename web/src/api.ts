@@ -20,7 +20,7 @@ export interface Agent {
     skills?: string[]; base_url?: string; description?: string; subagents?: boolean; delegate_local?: boolean;
     temperature?: number; max_tokens?: number; repo_context?: number;
     tool_mode?: string; web?: boolean; commands?: string[]; command_timeout_s?: number; timeout_s?: number;
-    from_role?: string; instructions?: string;
+    from_role?: string; instructions?: string; thinking?: Thinking;
   };
 }
 
@@ -62,12 +62,18 @@ export type PlanStatus =
   | "planning" | "awaiting_you" | "approved" | "running" | "paused" | "ready" | "merged" | "rejected"
   | "failed" | "cancelled" | "interrupted" | "done";
 
+export type Thinking = "apagado" | "normal" | "profundo";
+export const THINKING_TEXT: Record<string, string> = {
+  "": "el del agente", apagado: "apagado (rápido)", normal: "normal", profundo: "profundo (más lento y caro)",
+};
+
 export interface PlanStep {
   title: string;
   agent: string;
   risk: string;
   prompt: string;
   skills?: string[];
+  thinking?: Thinking;
 }
 
 export interface Plan {

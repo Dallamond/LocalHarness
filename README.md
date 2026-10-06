@@ -31,7 +31,7 @@ En este PC `python` es el alias de la Store: usar `py -3.12`.
 
 ```
 py -3.12 -m venv .venv && .venv/Scripts/python -m pip install -e .[server]   # una vez
-.venv/Scripts/python -m unittest discover -s tests -t .   # 107 pruebas con CLIs falsas (nunca llaman a la real)
+.venv/Scripts/python -m unittest discover -s tests -t .   # 111 pruebas con CLIs falsas (nunca llaman a la real)
 py -3.12 -m localharness doctor                   # git, CLIs, login de suscripción
 py -3.12 -m localharness project add demo D:/ruta/al/repo
 py -3.12 -m localharness agent add sonnet-w --provider claude --model sonnet --max-turns 10 --budget 1

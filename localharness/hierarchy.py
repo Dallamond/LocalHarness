@@ -15,6 +15,7 @@ from collections.abc import Callable
 from localharness import settings, workspace
 from localharness.actions import ActionError, now
 from localharness.adapters import ADAPTERS
+from localharness.adapters.base import THINKING_LEVELS
 from localharness.context import load_skills
 from localharness.events import Event
 from localharness.orchestrator import execute_task
@@ -39,6 +40,7 @@ PLAN_SCHEMA = {
                     "agent": {"type": "string"},
                     "risk": {"type": "string", "enum": RISKS},
                     "skills": {"type": "array", "items": {"type": "string"}},
+                    "thinking": {"type": "string", "enum": list(THINKING_LEVELS)},
                 },
                 "required": ["title", "prompt", "agent", "risk"],
             },
@@ -63,6 +65,7 @@ REVIEW_SCHEMA = {
     "required": ["verdict", "risk", "reason"],
 }
 
+STEP_KEYS = ("title", "prompt", "agent", "risk", "skills", "thinking")
 MAX_DIFF_FOR_REVIEW = 60_000  # caracteres: un diff más grande ya es N2 por reglas
 
 
@@ -170,6 +173,8 @@ def validate_plan(data: dict | None, agents: list[dict], skills: dict | None = N
         s["agent_id"] = by_name[s["agent"]]["id"]
         asked = s.get("skills") if isinstance(s.get("skills"), list) else []
         s["skills"] = [n for n in asked if isinstance(n, str) and n in (skills or {})]  # nombres inventados fuera
+        if s.get("thinking") not in THINKING_LEVELS:
+            s.pop("thinking", None)
     if data.get("risk") not in RISKS:
         data["risk"] = max((s["risk"] for s in subtasks), key=RISKS.index)
     return data
@@ -272,6 +277,8 @@ class Hierarchy:
             t = self._new_task(self.store.get_plan(pid), s["title"], s["prompt"], s["agent_id"], i, "worker")
             if s["skills"]:
                 self.store.update_task(t["id"], skills=s["skills"])
+            if s.get("thinking"):
+                self.store.update_task(t["id"], thinking=s["thinking"])
             # SQLite reutiliza los ids de los pasos borrados al editar: se anuncia cada paso para que la GUI no
             # mezcle el nuevo con lo que tenía guardado del anterior
             self._emit(t["id"], Event("status", text="pending"))
@@ -289,7 +296,7 @@ class Hierarchy:
             raise ActionError(f"Solo se edita un plan que espera tu aprobación (está en '{plan['status']}')")
         old = json.loads(plan["plan"] or "{}")
         data = {"summary": old.get("summary", ""), "risk": None,
-                "subtasks": [{k: s.get(k) for k in ("title", "prompt", "agent", "risk", "skills")} for s in subtasks]}
+                "subtasks": [{k: s.get(k) for k in STEP_KEYS} for s in subtasks]}
         try:
             data = validate_plan(data, self._workers(plan), load_skills())
         except PlanError as e:
@@ -319,7 +326,7 @@ class Hierarchy:
             new = got.get("subtask") if isinstance(got, dict) else None
             if res["status"] not in ("review", "done") or not isinstance(new, dict):
                 raise ActionError("El Director no devolvió el paso rehecho")
-            steps = [{k: x.get(k) for k in ("title", "prompt", "agent", "risk", "skills")} for x in data["subtasks"]]
+            steps = [{k: x.get(k) for k in STEP_KEYS} for x in data["subtasks"]]
             steps[seq - 1] = new
             candidate = {"summary": data.get("summary", ""), "risk": None, "subtasks": steps}
             try:

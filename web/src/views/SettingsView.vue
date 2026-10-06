@@ -176,11 +176,12 @@ interface AgentForm {
   tool_mode: string;
   web: boolean;
   commands: string; // «;» entre órdenes; vacío = lista blanca por defecto
+  thinking: string;
 }
 const blank = (): AgentForm => ({
   name: "", provider: "claude", model: "", role: "trabajador", max_turns: null, max_budget_usd: null,
   read_only: false, skills: [], base_url: "", description: "", subagents: false, delegate_local: false, temperature: null,
-  max_tokens: null, repo_context: null, tool_mode: "native", web: true, commands: "",
+  max_tokens: null, repo_context: null, tool_mode: "native", web: true, commands: "", thinking: "",
 });
 
 // lo propio de cada proveedor: subagentes solo en Claude; temperatura, tokens y contexto solo en local
@@ -211,7 +212,7 @@ async function addAgent() {
   try {
     const { subagents, delegate_local, temperature, max_tokens, repo_context, base_url, tool_mode, web, commands, ...common } = newAgent;
     await post<Agent>("/api/agents", {
-      ...common, model: newAgent.model || null, role: newAgent.role || null,
+      ...common, model: newAgent.model || null, role: newAgent.role || null, thinking: newAgent.thinking || null,
       ...providerFields(newAgent, newAgent.provider),
     });
     resetNewAgent();
@@ -231,6 +232,7 @@ function startEdit(a: Agent) {
     description: a.config.description ?? "", subagents: !!a.config.subagents, delegate_local: !!a.config.delegate_local,
     temperature: a.config.temperature ?? null, max_tokens: a.config.max_tokens ?? null,
     repo_context: a.config.repo_context ?? null,
+    thinking: a.config.thinking ?? "",
     tool_mode: a.config.tool_mode ?? "native", web: a.config.web !== false, commands: (a.config.commands ?? []).join("; "),
   });
 }
@@ -243,7 +245,7 @@ async function saveAgent(a: Agent) {
       body: JSON.stringify({
         model: edit.model, role: edit.role, max_turns: edit.max_turns || null,
         max_budget_usd: edit.max_budget_usd || null, read_only: edit.read_only, skills: edit.skills,
-        description: edit.description,
+        description: edit.description, thinking: edit.thinking || null,
         ...providerFields(edit, a.provider),
       }),
     });
@@ -275,6 +277,7 @@ function limits(a: Agent): string {
     c.delegate_local ? "delega en el modelo local" : null,
     c.temperature !== undefined ? `temp. ${c.temperature}` : null,
     c.max_tokens ? `${c.max_tokens} tokens máx.` : null,
+    c.thinking && c.thinking !== "normal" ? `pensamiento ${c.thinking}` : null,
     c.repo_context !== undefined ? (c.repo_context ? `${Math.round(c.repo_context / 1000)}k car. de repo` : "sin contexto del repo") : null,
     c.base_url ? c.base_url : null,
   ].filter(Boolean).join(" · ") || "sin límites";
@@ -360,6 +363,10 @@ watch(look, applyLook, { deep: true });
           <label v-if="newAgent.provider === 'claude'" class="check wide" title="Le da herramientas para encargar al modelo arrancado en llama-server resumir, pensar, comparar y escribir archivos. Lo que haga el modelo local no gasta plan.">
             <input v-model="newAgent.delegate_local" type="checkbox" /> Puede delegar en el modelo local <span class="muted small">(ahorra plan: resumir, comparar, generar código)</span>
           </label>
+          <label class="field" title="Por defecto para sus tareas; cada conversación o paso del plan puede cambiarlo">
+            <span class="label">Pensamiento</span>
+            <select v-model="newAgent.thinking"><option value="">normal (por defecto)</option><option value="apagado">apagado</option><option value="profundo">profundo</option></select>
+          </label>
           <label class="check"><input v-model="newAgent.read_only" type="checkbox" /> Solo lectura</label>
           <div class="row wide"><button class="btn btn--primary">Crear agente</button></div>
         </form>
@@ -437,7 +444,11 @@ watch(look, applyLook, { deep: true });
               <label v-if="a.provider === 'claude'" class="check wide" title="Le da herramientas para encargar al modelo arrancado en llama-server resumir, pensar, comparar y escribir archivos. Lo que haga el modelo local no gasta plan.">
                 <input v-model="edit.delegate_local" type="checkbox" /> Puede delegar en el modelo local <span class="muted small">(ahorra plan: resumir, comparar, generar código)</span>
               </label>
-              <label class="check"><input v-model="edit.read_only" type="checkbox" /> Solo lectura</label>
+              <label class="field" title="Por defecto para sus tareas; cada conversación o paso del plan puede cambiarlo">
+            <span class="label">Pensamiento</span>
+            <select v-model="edit.thinking"><option value="">normal (por defecto)</option><option value="apagado">apagado</option><option value="profundo">profundo</option></select>
+          </label>
+          <label class="check"><input v-model="edit.read_only" type="checkbox" /> Solo lectura</label>
               <div class="row wide"><button class="btn btn--primary">Guardar agente</button></div>
             </form>
           </li>

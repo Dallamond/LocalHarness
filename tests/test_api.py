@@ -160,6 +160,9 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(cfg, {"tool_mode": "native", "web": True, "commands": [], "timeout_s": 600})  # [] = sin ejecutar
             self.assertEqual(c.post("/api/agents", json={"name": "x", "provider": "local_agent",
                                                          "tool_mode": "otro"}).status_code, 422)
+            cfg = c.patch(f"/api/agents/{aid}", json={"thinking": "profundo"}).json()["config"]
+            self.assertEqual(cfg["thinking"], "profundo")
+            self.assertEqual(c.patch(f"/api/agents/{aid}", json={"thinking": "mucho"}).status_code, 422)
 
     def test_validation(self):
         with TestClient(self.app) as c:

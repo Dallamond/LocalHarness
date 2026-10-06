@@ -77,6 +77,7 @@ class AgentIn(BaseModel):
     commands: list[str] | None = None                   # lista blanca de `ejecutar` ([] = sin ejecutar)
     command_timeout_s: float | None = Field(default=None, gt=0, le=3600)
     timeout_s: float | None = Field(default=None, gt=0, le=86_400)  # tope de tiempo de cada tarea del agente
+    thinking: Literal["apagado", "normal", "profundo"] | None = None  # pensamiento por defecto del agente
 
 
 class AgentPatch(BaseModel):
@@ -99,11 +100,12 @@ class AgentPatch(BaseModel):
     commands: list[str] | None = None
     command_timeout_s: float | None = Field(default=None, gt=0, le=3600)
     timeout_s: float | None = Field(default=None, gt=0, le=86_400)
+    thinking: Literal["apagado", "normal", "profundo"] | None = None
 
 
 AGENT_CFG = ("max_turns", "max_budget_usd", "read_only", "skills", "base_url", "description", "subagents",
              "delegate_local", "temperature", "max_tokens", "repo_context", "tool_mode", "web", "commands",
-             "command_timeout_s", "timeout_s")
+             "command_timeout_s", "timeout_s", "thinking")
 KEEP_FALSY = ("web", "commands")  # web=False y commands=[] significan algo (apagar), no «quitar el ajuste»
 
 
@@ -118,6 +120,7 @@ class TaskIn(BaseModel):
     title: str | None = None
     start: bool = True
     skills: list[str] | None = None  # M5: skills inyectadas solo en esta tarea (además de las del agente)
+    thinking: Literal["apagado", "normal", "profundo"] | None = None  # None = el del agente
 
 
 class MergeIn(BaseModel):
@@ -130,6 +133,7 @@ class StepIn(BaseModel):
     agent: str = Field(min_length=1)
     risk: str = "low"
     skills: list[str] = []
+    thinking: Literal["apagado", "normal", "profundo"] | None = None
 
 
 class PlanEditIn(BaseModel):
@@ -351,7 +355,8 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
                                  "temperature": body.temperature,
                                  "max_tokens": body.max_tokens, "repo_context": body.repo_context,
                                  "tool_mode": body.tool_mode, "web": body.web, "commands": body.commands,
-                                 "command_timeout_s": body.command_timeout_s, "timeout_s": body.timeout_s}.items()
+                                 "command_timeout_s": body.command_timeout_s, "timeout_s": body.timeout_s,
+                                 "thinking": body.thinking}.items()
                if v is not None}
         a = st(request).add_agent(body.name, body.provider, model=body.model, role=body.role, config=cfg)
         return {**a, "config": cfg}
@@ -511,6 +516,9 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
             raise HTTPException(409, "Ese proyecto ya tiene una tarea en marcha (una por repo a la vez)")
         title = (body.title or body.prompt.strip().splitlines()[0])[:80]
         t = store.add_task(body.project_id, title, body.prompt, body.agent_id, skills=body.skills or [])
+        if body.thinking:
+            store.update_task(t["id"], thinking=body.thinking)
+            t = store.get_task(t["id"])
         request.app.state.hub.publish("task", task_out(t))
         if body.start:
             request.app.state.runner.start(t["id"])

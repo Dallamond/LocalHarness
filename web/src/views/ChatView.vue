@@ -7,7 +7,7 @@ import StatusChip from "../components/StatusChip.vue";
 import {
   ROLE_TEXT, STATUS_TEXT, agentName, ago, api, live, onTaskEvent, parseTs, pickPath, post, projectName,
   refreshAll, speedText, statusChip, taskList, usd,
-  type Plan, type Project, type Review, type Skill, type Task, type TaskEvent,
+  type Plan, type Project, type Review, type Skill, type Task, type TaskEvent, THINKING_TEXT
 } from "../api";
 
 const props = defineProps<{ id?: number }>();
@@ -165,12 +165,13 @@ async function act(path: string, body: unknown = {}, question?: string) {
 const draft = ref("");
 const sending = ref(false);
 const mode = ref<"agent" | "team">("agent");
-const form = reactive({ project_id: 0, agent_id: 0, director_agent_id: 0, reviewer_agent_id: 0, skills: [] as string[] });
+const form = reactive({ project_id: 0, agent_id: 0, director_agent_id: 0, reviewer_agent_id: 0, skills: [] as string[], thinking: "" });
 
 // M5: skills para esta conversación (se suman a las que el agente ya lleva siempre)
 const skills = ref<Skill[]>([]);
 const showSkills = ref(false);
 api<Skill[]>("/api/skills").then((s) => (skills.value = s)).catch(() => {});
+const agentThinking = computed(() => live.agents.find((a) => a.id === form.agent_id)?.config.thinking ?? "");
 const agentSkills = computed(() => live.agents.find((a) => a.id === form.agent_id)?.config.skills ?? []);
 
 watchEffect(() => {
@@ -203,6 +204,7 @@ async function send() {
       const t = await post<Task>("/api/tasks", {
         project_id: form.project_id, agent_id: form.agent_id, prompt: text,
         skills: form.skills.filter((n) => !agentSkills.value.includes(n)),
+        thinking: form.thinking || null,
       });
       form.skills = [];
       live.tasks[t.id] = t;
@@ -402,6 +404,12 @@ const placeholder = computed(() => {
                 </span>
               </button>
             </div>
+            <label class="field thinkpick">
+              <span class="label">Pensamiento</span>
+              <select v-model="form.thinking">
+                <option v-for="(t, k) in THINKING_TEXT" :key="k" :value="k">{{ t }}{{ k === "" && agentThinking ? ` (${agentThinking})` : "" }}</option>
+              </select>
+            </label>
             <div v-if="skills.length" class="skillpick">
               <button type="button" class="btn btn--small btn--ghost" @click="showSkills = !showSkills">
                 {{ showSkills ? "▾" : "▸" }} Skills para esta conversación<template v-if="form.skills.length"> ({{ form.skills.length }})</template>
@@ -617,6 +625,10 @@ const placeholder = computed(() => {
   text-align: left;
   border-radius: var(--radius-sm);
 }
+.thinkpick {
+  max-width: 260px;
+  margin-top: 8px;
+}
 .think {
   margin: 2px 0 2px 38px;
   font-size: 12px;
@@ -713,8 +725,16 @@ const placeholder = computed(() => {
 }
 .setup {
   display: grid;
+  grid-template-columns: minmax(0, 1fr); /* una ruta larga en el selector no ensancha la columna */
   gap: 14px;
   max-width: 760px;
+}
+.setup select {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  text-overflow: ellipsis;
 }
 .seg {
   display: inline-flex;
