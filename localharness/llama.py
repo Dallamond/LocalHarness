@@ -18,6 +18,9 @@ from pathlib import Path
 
 SERVER_OVERRIDE: str | None = None
 DIRS_OVERRIDE: list[str] = []
+# Clave del llama-server lanzado desde la GUI (aleatoria en cada arranque). Sin ella llama-server deja CORS
+# abierto: cualquier web abierta en el navegador podría usar tu GPU a través de 127.0.0.1.
+API_KEY: str | None = None
 
 
 def arena_config() -> dict:
@@ -110,7 +113,10 @@ class LlamaManager:
         self.stop()
         if health(port) != "off":
             raise RuntimeError(f"Ya hay algo escuchando en el puerto {port} (¿un llama-server lanzado a mano?)")
-        cmd = serve_command(model, port, ctx, ngl, extra)
+        global API_KEY
+        import secrets
+        key = secrets.token_urlsafe(24)
+        cmd = serve_command(model, port, ctx, ngl, [*(extra or []), "--api-key", key])
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         log = open(self.log_path, "w", encoding="utf-8", errors="replace")
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # sin ventana de consola en Windows
@@ -118,6 +124,7 @@ class LlamaManager:
                                      creationflags=flags)
         log.close()
         self.model, self.port, self.started_at, self.ready_at = str(model), port, time.time(), None
+        API_KEY = key
 
     def stop(self) -> None:
         if self.proc and self.proc.poll() is None:

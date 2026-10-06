@@ -30,8 +30,9 @@ class LocalAdapter(Adapter):
     can_write = False
 
     def __init__(self, binary: str | None = None, base_url: str | None = None, temperature: float = 0.2,
-                 max_tokens: int = 4096, repo_context: int = 24_000, transport=None):
+                 max_tokens: int = 4096, repo_context: int = 24_000, api_key: str | None = None, transport=None):
         super().__init__(binary)
+        self.headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}  # sin clave el servidor la ignora
         self.base_url = (base_url or DEFAULT_URL).rstrip("/").removesuffix("/v1")
         self.temperature, self.max_tokens, self.repo_context = temperature, max_tokens, repo_context
         self.transport = transport  # pruebas: httpx.MockTransport
@@ -68,7 +69,7 @@ class LocalAdapter(Adapter):
         usage: dict = {}
         timings: dict = {}
         finish = None
-        async with httpx.AsyncClient(transport=self.transport) as client:
+        async with httpx.AsyncClient(transport=self.transport, headers=self.headers) as client:
             try:
                 r = await client.get(self.base_url + "/v1/models", timeout=5)
                 served = (r.json().get("data") or [{}])[0].get("id")

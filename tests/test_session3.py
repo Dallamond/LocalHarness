@@ -156,6 +156,19 @@ class LocalModelNameAndSpeedTests(unittest.IsolatedAsyncioTestCase):
         usage = next(e for e in evs if e.kind == "usage")
         self.assertEqual(usage.data["tokens"], 5)
 
+    async def test_api_key_header(self):
+        seen = []
+
+        def handler(request):
+            seen.append(request.headers.get("authorization"))
+            if request.url.path == "/v1/models":
+                return httpx.Response(200, json={"data": [{"id": "m"}]})
+            return httpx.Response(200, text='data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n',
+                                  headers={"content-type": "text/event-stream"})
+        a = LocalAdapter(transport=httpx.MockTransport(handler), repo_context=0, api_key="secreta")
+        await run(a, RunSpec(prompt="x", cwd="."), lambda e: None)
+        self.assertEqual(set(seen), {"Bearer secreta"})
+
     async def test_only_thinking_is_a_failure(self):
         evs = []  # visto con Qwen3.5-4B real: gastó los 400 tokens pensando y la respuesta llegó vacía
         a = LocalAdapter(transport=fake_llama([("reasoning_content", "hmm")] * 4, "m", []), repo_context=0)

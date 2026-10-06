@@ -5,7 +5,7 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 
-from localharness import settings, workspace
+from localharness import llama, settings, workspace
 from localharness.adapters import get_adapter
 from localharness.adapters.base import RunSpec
 from localharness.adapters.claude import SUBAGENT_TOOL
@@ -41,7 +41,7 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
         raise ValueError(f"El proyecto ya tiene una tarea en curso: #{busy[0]['id']}")
     cfg = json.loads(agent["config"] or "{}")
     # la URL del llama-server del agente manda; si no tiene, la de Ajustes
-    extra = (config_kwargs({"base_url": settings.load(store)["local_base_url"], **cfg})
+    extra = ({**config_kwargs({"base_url": settings.load(store)["local_base_url"], **cfg}), "api_key": llama.API_KEY}
              if agent["provider"] == "local" else {})
     adapter = get_adapter(agent["provider"], binary=(binaries or {}).get(agent["provider"]) or cfg.get("binary"),
                           **extra)
