@@ -178,6 +178,9 @@ class Store:
         """Al arrancar: una tarea que seguía 'running' murió con el proceso anterior (como Arena)."""
         cur = self.db.execute("UPDATE tasks SET status='interrupted' WHERE status='running'")
         self.db.execute("UPDATE plans SET status='interrupted' WHERE status IN ('planning','running')")
+        # subtareas que ya nunca se ejecutarán: su plan terminó sin llegar a ellas
+        self.db.execute("UPDATE tasks SET status='cancelled' WHERE status='pending' AND plan_id IN "
+                        "(SELECT id FROM plans WHERE status IN ('failed','cancelled','interrupted','rejected'))")
         self.db.commit()
         return cur.rowcount
 

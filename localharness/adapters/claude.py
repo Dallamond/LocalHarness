@@ -22,6 +22,7 @@ from localharness.events import Event
 
 READ_TOOLS = ["Read", "Glob", "Grep"]
 WRITE_TOOLS = ["Read", "Glob", "Grep", "Edit", "Write"]  # Bash/PowerShell solo si se conceden explícitamente
+SUBAGENT_TOOL = "Agent"  # antes «Task»; con config.subagents el agente puede lanzar subagentes (gasta más plan)
 
 
 def _names(tools: list[str]) -> list[str]:
@@ -59,7 +60,7 @@ class ClaudeAdapter(Adapter):
             cmd += ["--resume", spec.session_id]
         if spec.json_schema:  # la CLI añade su herramienta StructuredOutput (gasta 1 turno)
             cmd += ["--json-schema", json.dumps(spec.json_schema, ensure_ascii=False, separators=(",", ":"))]
-        tools = spec.allowed_tools or (READ_TOOLS if spec.read_only else WRITE_TOOLS)
+        tools = [*(spec.allowed_tools or (READ_TOOLS if spec.read_only else WRITE_TOOLS)), *spec.extra_tools]
         # --tools limita lo disponible (verificado); --allowedTools auto-aprueba patrones como Bash(git status).
         cmd += ["--permission-mode", "bypassPermissions",
                 "--tools", ",".join(_names(tools)), "--allowedTools", ",".join(tools)]

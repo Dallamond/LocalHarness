@@ -99,23 +99,25 @@ class LlamaManager:
 
     def __init__(self, log_path: Path):
         self.log_path = log_path
+        self.times_path = log_path.with_name("llama-load-times.json")  # segundos que tardó cada GGUF en cargar
         self.proc: subprocess.Popen | None = None
         self.model: str | None = None
         self.port = 8080
         self.started_at: float | None = None
+        self.ready_at: float | None = None
 
-    def start(self, model: Path, port: int, ctx: int, ngl: int) -> None:
+    def start(self, model: Path, port: int, ctx: int, ngl: int, extra: list[str] | None = None) -> None:
         self.stop()
         if health(port) != "off":
             raise RuntimeError(f"Ya hay algo escuchando en el puerto {port} (¿un llama-server lanzado a mano?)")
-        cmd = serve_command(model, port, ctx, ngl)
+        cmd = serve_command(model, port, ctx, ngl, extra)
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         log = open(self.log_path, "w", encoding="utf-8", errors="replace")
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # sin ventana de consola en Windows
         self.proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                      creationflags=flags)
         log.close()
-        self.model, self.port, self.started_at = str(model), port, time.time()
+        self.model, self.port, self.started_at, self.ready_at = str(model), port, time.time(), None
 
     def stop(self) -> None:
         if self.proc and self.proc.poll() is None:
@@ -132,20 +134,102 @@ class LlamaManager:
             code = self.proc.poll()
             h = health(self.port)
             state = ("failed" if code is not None else "ready" if h == "ready" else "loading")
+            if state == "ready" and self.ready_at is None:
+                self.ready_at = time.time()
+                self._remember_load_time(self.model, self.ready_at - (self.started_at or self.ready_at))
+            text = self.log_text()
             return {"state": state, "model": self.model, "port": self.port, "pid": self.proc.pid,
-                    "started_at": self.started_at, "exit_code": code, "log": self.log_tail()}
+                    "started_at": self.started_at, "exit_code": code, "log": _tail(text),
+                    "log_lines": last_lines(text), "progress": self._progress(state, text)}
         h = health(port)
         if h != "off":
             return {"state": "external" if h == "ready" else "loading", "model": served_model(port), "port": port,
                     "pid": None, "started_at": None, "exit_code": None, "log": ""}
+        text = self.log_text() if self.model else ""
         return {"state": "off", "model": self.model, "port": port, "pid": None, "started_at": None,
-                "exit_code": None, "log": self.log_tail() if self.model else ""}
+                "exit_code": None, "log": _tail(text), "log_lines": last_lines(text)}
 
-    def log_tail(self, lines: int = 12) -> str:
+    def log_text(self) -> str:
         try:
-            return "\n".join(self.log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:])
+            return self.log_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             return ""
+
+    def log_tail(self, lines: int = 12) -> str:
+        return _tail(self.log_text(), lines)
+
+    # --- progreso de carga
+    def load_times(self) -> dict[str, float]:
+        try:
+            return json.loads(self.times_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+
+    def _remember_load_time(self, model: str | None, seconds: float) -> None:
+        if not model or seconds <= 0:
+            return
+        times = self.load_times()
+        times[model] = round(seconds, 1)
+        try:
+            self.times_path.write_text(json.dumps(times, ensure_ascii=False, indent=1), encoding="utf-8")
+        except OSError:
+            pass
+
+    def _progress(self, state: str, text: str) -> dict | None:
+        if state != "loading":
+            return {"pct": 100, "stage": "listo"} if state == "ready" else None
+        elapsed = time.time() - (self.started_at or time.time())
+        return load_progress(text, elapsed, self.load_times().get(self.model or ""))
+
+
+def _tail(text: str, lines: int = 12) -> str:
+    return "\n".join(text.splitlines()[-lines:])
+
+
+def _dots(line: str) -> bool:
+    s = line.strip()
+    return bool(s) and set(s) == {"."}
+
+
+def last_lines(text: str, n: int = 2) -> list[str]:
+    """Últimas líneas con contenido (sin las de solo puntos de progreso), para ver de un vistazo que va bien."""
+    return [ln.strip() for ln in text.splitlines() if ln.strip() and not _dots(ln)][-n:]
+
+
+# marcas del log → (% mínimo, etapa). Gana la que aparezca más tarde en el log.
+STAGES = [
+    ("loading model", 3, "leyendo el modelo del disco"),
+    ("load_tensors", 10, "cargando tensores"),
+    ("llama_context", 92, "preparando el contexto"),
+    ("initializing", 92, "preparando el contexto"),
+    ("warming up", 95, "calentando"),
+    ("model loaded", 98, "casi listo"),
+]
+
+
+def load_progress(text: str, elapsed: float, last_load_s: float | None) -> dict:
+    """% aproximado de la carga. Tres fuentes, de más a menos fiable:
+    1. los puntos de progreso de llama.cpp tras `load_tensors` (uno por cada 1 % de tensores; las versiones
+       recientes con verbosidad 3 ya no los imprimen),
+    2. lo que tardó este mismo GGUF la última vez,
+    3. si no hay nada, solo la etapa (pct None = barra indeterminada)."""
+    low = text.lower()
+    stage, floor, at = "arrancando", 0, -1
+    for key, pct, name in STAGES:
+        i = low.rfind(key)
+        if i > at:
+            at, stage, floor = i, name, pct
+    if floor >= 92:
+        return {"pct": floor, "stage": stage, "source": "log"}
+    i = low.rfind("load_tensors")
+    if i >= 0:
+        dots = sum(len(ln.strip()) for ln in text[i:].splitlines() if _dots(ln))
+        if dots:
+            return {"pct": min(90, 10 + round(dots * 0.8)), "stage": "cargando tensores", "source": "log"}
+    if last_load_s:
+        return {"pct": max(floor, min(95, round(elapsed / last_load_s * 100))), "stage": stage,
+                "source": "tiempo", "eta_s": max(0, round(last_load_s - elapsed))}
+    return {"pct": None, "stage": stage, "source": None}
 
 
 def health(port: int) -> str:

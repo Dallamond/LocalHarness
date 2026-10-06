@@ -28,7 +28,8 @@ DEFAULTS: dict[str, Any] = {
     "context": {"max_memory_chars": context.MAX_MEMORY_CHARS, "max_skill_chars": context.MAX_SKILL_CHARS,
                 "skill_dirs": []},
     # Modelos locales (llama.cpp): vacío = variables de entorno o configuración de Arena LLM
-    "llama": {"server": "", "model_dirs": [], "port": 8080, "ctx": 16384, "ngl": 99},
+    # per_model: {ruta del GGUF: {ctx, ngl, extra}} — lo que falte usa los valores generales de arriba
+    "llama": {"server": "", "model_dirs": [], "port": 8080, "ctx": 16384, "ngl": 99, "per_model": {}},
     # Valores que propone el formulario de nuevo agente
     "agent_defaults": {"provider": "claude", "model": "sonnet", "role": "trabajador", "max_turns": 10,
                        "max_budget_usd": 1.0},
@@ -78,6 +79,17 @@ def apply(store: Store) -> None:
 
 def policy(store: Store) -> Policy:
     return Policy.from_dict(load(store)["policy"])
+
+
+def llama_launch(store: Store, model: str) -> dict:
+    """ctx, ngl y argumentos extra con los que arrancar un GGUF (su configuración propia, si la tiene)."""
+    import shlex
+    lm = load(store)["llama"]
+    own = (lm.get("per_model") or {}).get(model) or {}
+    extra = own.get("extra") or ""
+    return {"ctx": int(own.get("ctx") or lm["ctx"]),
+            "ngl": int(own["ngl"]) if own.get("ngl") not in (None, "") else int(lm["ngl"]),
+            "extra": shlex.split(extra, posix=False) if isinstance(extra, str) else list(extra)}
 
 
 def task_timeout_s(store: Store) -> float:

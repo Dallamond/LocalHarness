@@ -19,6 +19,7 @@ from localharness.adapters.base import Adapter, AdapterError, RunSpec
 from localharness.events import Event
 
 DEFAULT_URL = "http://127.0.0.1:8080"
+SPEED_EVERY_S = 1.5  # cada cuánto se emite el evento `speed` (tokens/s en vivo) mientras genera
 TEXT_EXT = {".py", ".md", ".txt", ".toml", ".json", ".yaml", ".yml", ".js", ".ts", ".vue", ".tsx", ".jsx", ".css",
             ".html", ".rs", ".go", ".java", ".cs", ".sh", ".ps1", ".sql", ".ini", ".cfg"}
 
@@ -51,8 +52,6 @@ class LocalAdapter(Adapter):
                 user = f"{user}\n\nCONTEXTO DEL REPOSITORIO (directorio actual):\n{ctx}"
         body: dict = {"messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
                       "temperature": self.temperature, "max_tokens": self.max_tokens}
-        if spec.model:
-            body["model"] = spec.model
         if spec.json_schema:
             body["response_format"] = {"type": "json_schema",
                                        "json_schema": {"name": "salida", "strict": True, "schema": spec.json_schema}}
@@ -70,17 +69,22 @@ class LocalAdapter(Adapter):
         timings: dict = {}
         finish = None
         async with httpx.AsyncClient(transport=self.transport) as client:
-            model = spec.model
             try:
                 r = await client.get(self.base_url + "/v1/models", timeout=5)
-                model = model or ((r.json().get("data") or [{}])[0].get("id"))
+                served = (r.json().get("data") or [{}])[0].get("id")
             except (httpx.HTTPError, ValueError):
                 on_event(Event("error", text=f"No responde llama-server en {self.base_url}. "
                                              "Arráncalo con: python -m localharness llama serve <modelo>"))
                 return _out("failed", time.monotonic() - t0)
+            # llama-server sirve UN modelo: el que esté arrancado, se llame como se llame el agente
+            model = _short(served) or spec.model
             on_event(Event("session", data={"session_id": None, "model": model, "tools": [],
-                                            "base_url": self.base_url}))
+                                            "base_url": self.base_url, "requested": spec.model}))
+            if spec.model and served and not _same_model(spec.model, served):
+                on_event(Event("warning", text=f"El agente pide «{spec.model}» pero el arrancado es «{model}»: "
+                                               "responde el arrancado"))
             body = {**self.payload(spec), "stream": True, "stream_options": {"include_usage": True}}
+            tokens, phase, last_tick, t_first = 0, "", time.monotonic(), None
             try:
                 async with client.stream("POST", self.base_url + "/v1/chat/completions", json=body,
                                          timeout=timeout_s) as resp:
@@ -105,6 +109,10 @@ class LocalAdapter(Adapter):
                         timings = chunk.get("timings") or timings
                         for choice in chunk.get("choices") or []:
                             delta = choice.get("delta") or {}
+                            if delta.get("reasoning_content") or delta.get("content"):
+                                tokens += 1  # llama-server manda un token por trozo
+                                t_first = t_first or time.monotonic()
+                                phase = "pensando" if delta.get("reasoning_content") else "escribiendo"
                             if delta.get("reasoning_content"):
                                 reasoning.append(delta["reasoning_content"])
                             if delta.get("content"):
@@ -114,6 +122,11 @@ class LocalAdapter(Adapter):
                                     on_event(Event("text", text="".join(buf).strip()))
                                     buf.clear()
                             finish = choice.get("finish_reason") or finish
+                        tick = time.monotonic()
+                        if t_first and tick - last_tick >= SPEED_EVERY_S:
+                            last_tick = tick
+                            on_event(Event("speed", data={"tps": _rate(tokens, tick - t_first), "tokens": tokens,
+                                                          "phase": phase, "model": model}))
             except httpx.TimeoutException:
                 on_event(Event("error", text=f"Tiempo agotado ({timeout_s:.0f} s)"))
                 return _out("timeout", time.monotonic() - t0)
@@ -130,8 +143,9 @@ class LocalAdapter(Adapter):
                 on_event(Event("error", text=f"El modelo local no devolvió JSON válido: {text[:300]}"))
             else:
                 on_event(Event("text", text=json.dumps(structured, ensure_ascii=False)))
-        on_event(Event("usage", data={"cost_usd": 0.0, "turns": 1, "usage": usage, "local": True,
-                                      "tps": timings.get("predicted_per_second"), "finish_reason": finish,
+        tps = timings.get("predicted_per_second") or (_rate(tokens, time.monotonic() - t_first) if t_first else None)
+        on_event(Event("usage", data={"cost_usd": 0.0, "turns": 1, "usage": usage, "local": True, "model": model,
+                                      "tps": tps, "tokens": tokens or None, "finish_reason": finish,
                                       "reasoning_chars": len("".join(reasoning)) or None}))
         if finish == "length":
             on_event(Event("warning", text="Respuesta cortada por max_tokens"))
@@ -139,6 +153,22 @@ class LocalAdapter(Adapter):
             return _out("failed", time.monotonic() - t0, text)
         on_event(Event("result", text=text, data={"structured": structured}))
         return _out("done", time.monotonic() - t0, text, structured)
+
+
+def _rate(tokens: int, seconds: float) -> float | None:
+    return round(tokens / seconds, 1) if seconds > 0 else None
+
+
+def _short(model_id: str | None) -> str | None:
+    """llama-server llama al modelo por la ruta del GGUF: se deja el nombre del archivo sin extensión."""
+    if not model_id:
+        return None
+    return Path(model_id.replace("\\", "/")).name.removesuffix(".gguf") or model_id
+
+
+def _same_model(wanted: str, served: str) -> bool:
+    a, b = wanted.lower(), (_short(served) or served).lower()
+    return a in b or b in a
 
 
 def _out(status: str, dur: float, final: str | None = None, structured: dict | None = None) -> dict:

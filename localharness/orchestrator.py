@@ -8,11 +8,14 @@ from pathlib import Path
 from localharness import settings, workspace
 from localharness.adapters import get_adapter
 from localharness.adapters.base import RunSpec
+from localharness.adapters.claude import SUBAGENT_TOOL
 from localharness.adapters.local import config_kwargs
 from localharness.context import build_prompt, load_memory, load_skills
 from localharness.events import Event
 from localharness.runner import run
 from localharness.store import Store
+
+EPHEMERAL = ("speed",)  # en vivo para la GUI, no se guardan (llegan cada ~1,5 s)
 
 
 async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] | None = None,
@@ -56,7 +59,8 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
     store.update_task(task_id, status="running", branch=ws.branch, worktree=str(ws.path), base_commit=base)
 
     def sink(ev: Event) -> None:  # el estado se guarda ANTES de avisar: quien escucha lee la tarea ya al día
-        ev.id = store.add_event(task_id, ev.kind, ev.text, ev.data)
+        if ev.kind not in EPHEMERAL:
+            ev.id = store.add_event(task_id, ev.kind, ev.text, ev.data)
         if ev.kind == "session" and ev.data.get("session_id"):
             store.update_task(task_id, session_id=ev.data["session_id"])
         if ev.kind == "usage" and ev.data.get("cost_usd") is not None:
@@ -76,10 +80,11 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
                                         [catalog[n] for n in wanted if n in catalog])
     missing = [n for n in wanted if n not in catalog]
 
+    ro = bool(cfg.get("read_only")) if read_only is None else read_only
     spec = RunSpec(prompt=prompt, cwd=str(ws.path), model=agent["model"],
                    max_turns=cfg.get("max_turns"), max_budget_usd=cfg.get("max_budget_usd"),
-                   read_only=bool(cfg.get("read_only")) if read_only is None else read_only,
-                   allowed_tools=cfg.get("tools"), json_schema=json_schema,
+                   read_only=ro, allowed_tools=cfg.get("tools"), json_schema=json_schema,
+                   extra_tools=[SUBAGENT_TOOL] if cfg.get("subagents") and agent["provider"] == "claude" else [],
                    session_id=task["session_id"] if resume else None)
     if followup is not None:
         sink(Event("user", text=followup))

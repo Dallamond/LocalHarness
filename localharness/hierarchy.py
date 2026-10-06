@@ -229,6 +229,7 @@ class Hierarchy:
         return self.store.get_plan(pid)
 
     def _fail(self, pid: int, msg: str) -> dict:
+        close_pending(self.store, pid)
         self._set(pid, status="failed", error=msg, finished_at=now(), cost_usd=self._total_cost(pid))
         return self.store.get_plan(pid)
 
@@ -302,6 +303,8 @@ class Hierarchy:
         self._emit(tid, Event("status", text=status, data={"level": LEVEL_NAME[level], "reasons": reasons}))
 
     def _pause(self, pid: int, msg: str, failed: bool = False) -> dict:
+        if failed:
+            close_pending(self.store, pid)
         self._set(pid, status="failed" if failed else "paused", error=msg, cost_usd=self._total_cost(pid))
         return self.store.get_plan(pid)
 
@@ -367,6 +370,17 @@ class Hierarchy:
         if not plan:
             raise ActionError(f"No existe el plan #{pid}")
         return plan
+
+
+def close_pending(store: Store, pid: int, status: str = "cancelled") -> int:
+    """Un plan que termina mal (fallido, cancelado, interrumpido) no ejecutará sus subtareas pendientes:
+    se cierran para que no se queden «pendientes» para siempre."""
+    n = 0
+    for t in store.plan_tasks(pid):
+        if t["status"] == "pending":
+            store.update_task(t["id"], status=status, finished_at=now())
+            n += 1
+    return n
 
 
 def inbox(store: Store) -> list[dict]:

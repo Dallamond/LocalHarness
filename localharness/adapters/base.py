@@ -22,6 +22,7 @@ class RunSpec:
     max_turns: int | None = None
     read_only: bool = False          # planificar/revisar sin tocar archivos
     allowed_tools: list[str] | None = None   # Claude: lista blanca; None = valores por defecto
+    extra_tools: list[str] = field(default_factory=list)  # Claude: añadidas a la lista (p. ej. Agent = subagentes)
     max_budget_usd: float | None = None      # Claude: tope de gasto por tarea
     approval_policy: str = "never"           # Codex: nadie contesta preguntas en modo automático
     session_id: str | None = None    # para reanudar

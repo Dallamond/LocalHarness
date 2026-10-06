@@ -23,7 +23,7 @@ from localharness import actions, llama, settings, workspace
 from localharness.adapters import ADAPTERS
 from localharness.context import load_skills
 from localharness.events import Event
-from localharness.hierarchy import Hierarchy, inbox
+from localharness.hierarchy import Hierarchy, close_pending, inbox
 from localharness.hub import EventHub, sse_format
 from localharness.orchestrator import execute_task
 from localharness.store import Store
@@ -66,6 +66,10 @@ class AgentIn(BaseModel):
     skills: list[str] | None = None
     base_url: str | None = None  # solo proveedor local
     description: str | None = None  # en qué es bueno: el Director lo lee para repartir subtareas
+    subagents: bool = False  # solo claude: puede lanzar subagentes (herramienta Agent; gasta más)
+    temperature: float | None = Field(default=None, ge=0, le=2)  # solo local
+    max_tokens: int | None = Field(default=None, ge=64, le=131_072)  # solo local
+    repo_context: int | None = Field(default=None, ge=0, le=2_000_000)  # solo local: caracteres del repo
 
 
 class AgentPatch(BaseModel):
@@ -78,6 +82,14 @@ class AgentPatch(BaseModel):
     skills: list[str] | None = None
     base_url: str | None = None
     description: str | None = None
+    subagents: bool | None = None
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    max_tokens: int | None = Field(default=None, ge=64, le=131_072)
+    repo_context: int | None = Field(default=None, ge=0, le=2_000_000)
+
+
+AGENT_CFG = ("max_turns", "max_budget_usd", "read_only", "skills", "base_url", "description", "subagents",
+             "temperature", "max_tokens", "repo_context")
 
 
 class ProjectPatch(BaseModel):
@@ -118,6 +130,7 @@ class Runner:
         self.hier = Hierarchy(store, on_event=self.on_event, on_plan=self.publish_plan, binaries=binaries,
                               worktree_root=worktree_root)
         self.last_limit = _last_limit(store)  # último uso del plan conocido (evento rate_limit_event)
+        self.last_speed: dict | None = None    # última velocidad de un modelo local (tokens/s)
 
     def publish_task(self, tid: int) -> None:
         t = self.store.get_task(tid)
@@ -137,8 +150,10 @@ class Runner:
                 if p["status"] in ("approved", "paused"):
                     await self.hier.run(pid)
             except asyncio.CancelledError:
+                close_pending(self.store, pid)
                 self.store.update_plan(pid, status="cancelled", finished_at=actions.now())
             except Exception as e:  # noqa: BLE001 — se registra en el plan, no tumba el servidor
+                close_pending(self.store, pid)
                 self.store.update_plan(pid, status="failed", error=str(e), finished_at=actions.now())
             finally:
                 self.plans.pop(pid, None)
@@ -150,6 +165,9 @@ class Runner:
         self.hub.publish("task_event", {"task_id": tid, **ev.as_dict()})
         if ev.kind in ("status", "session", "usage"):
             self.publish_task(tid)
+        if ev.kind == "speed" or (ev.kind == "usage" and ev.data.get("local") and ev.data.get("tps")):
+            self.last_speed = {"model": ev.data.get("model"), "tps": ev.data.get("tps"), "task_id": tid,
+                               "at": time.time(), "final": ev.kind == "usage"}
         if ev.kind == "limit":
             self.last_limit = ev.data
             self.hub.publish("limit", ev.data)
@@ -227,8 +245,13 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
     # --- estado general
     @app.get("/api/health")
     async def health(request: Request) -> dict[str, Any]:
+        port = settings.load(st(request))["llama"]["port"]
+        ls = await asyncio.to_thread(request.app.state.llama.status, port)
         return {"version": __version__, "providers": list(ADAPTERS),
-                "running": sorted(request.app.state.runner.active), "limit": request.app.state.runner.last_limit}
+                "running": sorted(request.app.state.runner.active), "limit": request.app.state.runner.last_limit,
+                # qué modelo responde de verdad a los agentes locales (el arrancado, no el nombre del agente)
+                "local": {"state": ls["state"], "model": _model_name(ls.get("model")) if ls["state"] != "off" else None},
+                "speed": request.app.state.runner.last_speed}
 
     # --- proyectos
     @app.get("/api/projects")
@@ -271,7 +294,9 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         cfg = {k: v for k, v in {"max_turns": body.max_turns, "max_budget_usd": body.max_budget_usd,
                                  "read_only": body.read_only or None, "tools": body.tools,
                                  "skills": body.skills or None, "base_url": body.base_url or None,
-                                 "description": (body.description or "").strip() or None}.items()
+                                 "description": (body.description or "").strip() or None,
+                                 "subagents": body.subagents or None, "temperature": body.temperature,
+                                 "max_tokens": body.max_tokens, "repo_context": body.repo_context}.items()
                if v is not None}
         a = st(request).add_agent(body.name, body.provider, model=body.model, role=body.role, config=cfg)
         return {**a, "config": cfg}
@@ -285,9 +310,9 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         sent = body.model_fields_set
         cols = {k: getattr(body, k) or None for k in ("model", "role") if k in sent}
         cfg = json.loads(a["config"] or "{}")
-        for k in sent & {"max_turns", "max_budget_usd", "read_only", "skills", "base_url", "description"}:
+        for k in sent & set(AGENT_CFG):
             v = getattr(body, k)
-            if v in (None, False, [], ""):
+            if v is None or v is False or v == [] or v == "":  # 0 es válido (repo_context = 0: sin contexto)
                 cfg.pop(k, None)
             else:
                 cfg[k] = v
@@ -340,7 +365,9 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         def gather() -> dict:
             return {"server": llama.server_binary(), "dirs": [str(d) for d in llama.model_dirs()],
                     "models": [llama.describe(m) for m in llama.list_models()],
-                    "status": request.app.state.llama.status(cfg["port"]), "config": cfg}
+                    "status": request.app.state.llama.status(cfg["port"]), "config": cfg,
+                    "speed": request.app.state.runner.last_speed,
+                    "load_times": request.app.state.llama.load_times()}
         return await asyncio.to_thread(gather)
 
     @app.post("/api/llama/start")
@@ -350,9 +377,10 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         model = Path(body.path)
         if not model.is_file() or model.suffix.lower() != ".gguf":
             raise HTTPException(422, "Eso no es un archivo .gguf")
+        own = settings.llama_launch(store, str(model))
         try:
-            await asyncio.to_thread(request.app.state.llama.start, model, cfg["port"], body.ctx or cfg["ctx"],
-                                    body.ngl if body.ngl is not None else cfg["ngl"])
+            await asyncio.to_thread(request.app.state.llama.start, model, cfg["port"], body.ctx or own["ctx"],
+                                    body.ngl if body.ngl is not None else own["ngl"], own["extra"])
         except (LookupError, RuntimeError, OSError) as e:
             raise HTTPException(409, str(e)) from None
         # los agentes locales sin URL propia se conectan a este servidor
@@ -642,6 +670,10 @@ def _files(store: Store, t: dict) -> list[dict]:
             files.append({"path": path, "added": int(add) if add.isdigit() else 0,
                           "deleted": int(rem) if rem.isdigit() else 0})
     return files
+
+
+def _model_name(path: str | None) -> str | None:
+    return Path(path.replace("\\", "/")).name.removesuffix(".gguf") if path else None
 
 
 def _last_limit(store: Store) -> dict | None:
