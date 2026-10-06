@@ -60,6 +60,14 @@ export type PlanStatus =
   | "planning" | "awaiting_you" | "approved" | "running" | "paused" | "ready" | "merged" | "rejected"
   | "failed" | "cancelled" | "interrupted" | "done";
 
+export interface PlanStep {
+  title: string;
+  agent: string;
+  risk: string;
+  prompt: string;
+  skills?: string[];
+}
+
 export interface Plan {
   id: number;
   project_id: number;
@@ -67,7 +75,7 @@ export interface Plan {
   director_agent_id: number | null;
   reviewer_agent_id: number | null;
   status: PlanStatus;
-  plan: { summary: string; risk: string; subtasks: { title: string; agent: string; risk: string; prompt: string }[] } | null;
+  plan: { summary: string; risk: string; subtasks: PlanStep[] } | null;
   level: string | null;
   level_reasons: string[];
   branch: string | null;

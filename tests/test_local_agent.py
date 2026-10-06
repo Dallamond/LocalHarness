@@ -224,6 +224,8 @@ class LocalAgentInPlanTests(unittest.IsolatedAsyncioTestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 repo = make_repo(tmp)
                 store = Store()
+                from localharness import settings
+                settings.save(store, {"plans": {"always_review": False}})
                 p = store.add_project("demo", str(repo))
                 d = store.add_agent("director", "claude", role="director")
                 store.add_agent("qwen-agente", "local_agent")

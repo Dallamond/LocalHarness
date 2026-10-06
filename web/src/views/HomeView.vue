@@ -114,7 +114,8 @@ Merge local; nunca se hace push.` },
       ];
     case "plan_approval":
       return [
-        { label: "Aprobar plan", tone: "ok", run: () => post(`/api/plans/${i.plan_id}/approve`) },
+        { label: "Ver y editar pasos", tone: "primary", run: () => router.push(`/planes/${i.plan_id}`) },
+        { label: "Aprobar todo", tone: "ok", run: () => post(`/api/plans/${i.plan_id}/approve`) },
         { label: "Rechazar", tone: "danger", run: () => post(`/api/plans/${i.plan_id}/reject`),
           confirm: "¿Rechazar el plan? No se ejecutará ninguna subtarea." },
       ];

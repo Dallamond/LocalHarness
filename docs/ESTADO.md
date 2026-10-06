@@ -15,7 +15,11 @@ internet. Si no usa herramientas, en el agente poner `tool_mode: json`. Diseño 
 Ya tiene `ejecutar` (lista blanca `DEFAULT_COMMANDS`, ampliable con `commands` en la config; sin shell; 120 s) y
 `preguntar_director` (dentro de un plan con Director de Claude: reanuda su sesión, máx. 3 preguntas, tope 0,2 $;
 el coste se suma a la tarea). Ojo: `ejecutar` NO aísla la red (los tests podrían usarla).
-Siguiente: objetivo 3 (plan editable en el Inicio), 4 y 5.
+**Plan editable (objetivo 3, v1):** Ajustes `plans.always_review` (por defecto sí): todo plan te espera. En
+Planes → plan: editar paso (título, instrucciones, agente, riesgo), quitar, reordenar, «Pedir al Director que lo
+rehaga» (reanuda su sesión con tu comentario) y «Aprobar todo y ejecutar». API: `PUT /api/plans/{id}`,
+`POST /api/plans/{id}/redo`. Probado en navegador con la CLI falsa.
+Siguiente: objetivo 4 (ver a los subagentes: tarea, pensamiento, tok/s) y 5 (catálogo de roles).
 
 ## SESIÓN ANTERIOR (06/10/2026, mediodía)
 

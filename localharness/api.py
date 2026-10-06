@@ -111,6 +111,23 @@ class MergeIn(BaseModel):
     confirm: bool = False  # la GUI lo manda tras tu confirmación explícita
 
 
+class StepIn(BaseModel):
+    title: str = Field(min_length=1)
+    prompt: str = Field(min_length=1)
+    agent: str = Field(min_length=1)
+    risk: str = "low"
+    skills: list[str] = []
+
+
+class PlanEditIn(BaseModel):
+    subtasks: list[StepIn] = Field(min_length=1, max_length=12)
+
+
+class RedoIn(BaseModel):
+    seq: int = Field(ge=1)
+    comment: str = Field(min_length=1)
+
+
 class PlanIn(BaseModel):
     project_id: int
     request: str = Field(min_length=1)
@@ -158,6 +175,19 @@ class Runner:
             except Exception as e:  # noqa: BLE001 — se registra en el plan, no tumba el servidor
                 close_pending(self.store, pid)
                 self.store.update_plan(pid, status="failed", error=str(e), finished_at=actions.now())
+            finally:
+                self.plans.pop(pid, None)
+                self.publish_plan(pid)
+
+        self.plans[pid] = asyncio.create_task(go())
+
+    def redo_step(self, pid: int, seq: int, comment: str) -> None:
+        """El Director rehace un paso en segundo plano; el plan vuelve a esperarte (o guarda el error)."""
+        async def go() -> None:
+            try:
+                await self.hier.redo_step(pid, seq, comment)
+            except Exception:  # noqa: BLE001 — redo_step ya deja el error en el plan
+                pass
             finally:
                 self.plans.pop(pid, None)
                 self.publish_plan(pid)
@@ -580,6 +610,23 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         p = _plan_action(runner.hier.approve_plan, pid)
         runner.run_plan(pid, plan_first=False)
         return plan_out(p)
+
+    @app.put("/api/plans/{pid}")
+    async def edit_plan(request: Request, pid: int, body: PlanEditIn) -> dict:
+        plan_or_404(st(request), pid)
+        p = _plan_action(request.app.state.runner.hier.edit_plan, pid, [s.model_dump() for s in body.subtasks])
+        request.app.state.runner.publish_plan(pid)
+        return {**plan_out(p), "tasks": [task_out(t) for t in st(request).plan_tasks(pid)]}
+
+    @app.post("/api/plans/{pid}/redo")
+    async def redo_step(request: Request, pid: int, body: RedoIn) -> dict:
+        p = plan_or_404(st(request), pid)
+        if p["status"] != "awaiting_you":
+            raise HTTPException(409, f"Solo se rehace un paso de un plan que espera tu aprobación (está en '{p['status']}')")
+        if body.seq > len(json.loads(p["plan"] or "{}").get("subtasks") or []):
+            raise HTTPException(422, f"El plan no tiene paso {body.seq}")
+        request.app.state.runner.redo_step(pid, body.seq, body.comment)
+        return plan_out(st(request).get_plan(pid))
 
     @app.post("/api/plans/{pid}/reject")
     async def reject_plan(request: Request, pid: int) -> dict:

@@ -157,6 +157,10 @@ class Store:
             return [dict(r) for r in self.db.execute("SELECT * FROM plans ORDER BY id")]
         return [dict(r) for r in self.db.execute("SELECT * FROM plans WHERE project_id=? ORDER BY id", (project_id,))]
 
+    def delete_task(self, tid: int) -> None:
+        self.db.execute("DELETE FROM tasks WHERE id=?", (tid,))  # sus eventos se borran en cascada
+        self.db.commit()
+
     def update_plan(self, pid: int, **f: Any) -> None:
         f = {k: json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else v for k, v in f.items()}
         keys = ", ".join(f"{k}=?" for k in f)

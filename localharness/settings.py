@@ -21,6 +21,8 @@ DEFAULTS: dict[str, Any] = {
         "dependency": list(DEFAULT_DEPENDENCY),
         "config": list(DEFAULT_CONFIG),
     },
+    # Planes: con always_review el plan SIEMPRE te espera para aprobarlo, editarlo o rehacer pasos
+    "plans": {"always_review": True},
     # Ejecución
     "task_timeout_min": 30,
     "local_base_url": "http://127.0.0.1:8080",

@@ -59,6 +59,13 @@ if schema and "subtasks" in schema.get("properties", {}):
     plan = {"summary": "plan falso", "risk": "high" if "BORRA" in prompt else "low", "subtasks": subs}
     out({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "StructuredOutput", "input": plan}]}})
     finish(json.dumps(plan, ensure_ascii=False), plan, cost=0.005)
+elif schema and "subtask" in schema.get("properties", {}):
+    # «rehacer este paso»: devuelve la subtarea nueva con lo que pidió el humano
+    agent = (re.findall(r"^\d+\. .+ \(([^,]+), riesgo", prompt, re.M) or ["nadie"])[0]
+    asked = prompt.split("LO QUE PIDE EL HUMANO:")[-1].split("Devuelve")[0].strip()
+    sub = {"title": "Paso rehecho", "prompt": f"crea el archivo rehecho.txt ({asked})", "agent": agent, "risk": "low",
+           "skills": ["tests-primero"]}
+    finish(json.dumps({"subtask": sub}, ensure_ascii=False), {"subtask": sub}, cost=0.004)
 elif schema and "verdict" in schema.get("properties", {}):
     v = ({"verdict": "escalate", "risk": "medium", "reason": "contenido dudoso"} if "ESCALA" in prompt.split("DIFF:")[-1]
          else {"verdict": "approve", "risk": "low", "reason": "correcto"})
