@@ -328,17 +328,16 @@ Todo proveedor emite los mismos eventos (`events.py`). Se guardan en la tabla `e
 | `temperature` | local, local_agent | temperatura (0,2) | API, GUI |
 | `max_tokens` | local, local_agent | tokens de respuesta (4096) | API, GUI |
 | `repo_context` | local | caracteres del repo en el prompt (24 000; 0 = nada) | API, GUI |
-| `tool_mode` | local_agent | `native` o `json` | solo en la base de datos |
+| `tool_mode` | local_agent | `native` o `json` | API, GUI |
 | `max_tool_chars` | local_agent | recorte de cada salida de herramienta (6000) | solo en la base de datos |
 | `max_context_chars` | local_agent | tamaño a partir del que se recortan resultados viejos (60 000) | solo en la base de datos |
-| `web` | local_agent | `buscar_web` y `leer_url` (activo) | solo en la base de datos |
-| `commands` | local_agent | lista blanca de `ejecutar` (lista vacía = sin `ejecutar`) | solo en la base de datos |
-| `command_timeout_s` | local_agent | tiempo máximo de cada orden (120 s) | solo en la base de datos |
-| `timeout_s` | todos | timeout de la tarea; manda sobre el de la CLI y el de Ajustes | solo en la base de datos |
+| `web` | local_agent | `buscar_web` y `leer_url` (activo) | API, GUI |
+| `commands` | local_agent | lista blanca de `ejecutar` (lista vacía = sin `ejecutar`) | API, GUI |
+| `command_timeout_s` | local_agent | tiempo máximo de cada orden (120 s) | API |
+| `timeout_s` | todos | timeout de la tarea; manda sobre el de la CLI y el de Ajustes | API |
 
-Notas: la GUI enseña `repo_context` también en agentes `local_agent`, pero ese proveedor lo ignora. Las claves
-«solo en la base de datos» no tienen campo en la CLI, en la API (`AgentIn`/`AgentPatch`) ni en la GUI; hoy solo
-las pone `sandbox` o una edición directa de la tabla `agents`. Ajustes globales (`settings.py`): `policy`, `plans`,
+Notas: las claves «solo en la base de datos» no tienen campo en la CLI, la API ni la GUI; hoy solo las pone
+`sandbox` o una edición directa de la tabla `agents`. En la GUI, «Órdenes permitidas» vacío = lista por defecto. Ajustes globales (`settings.py`): `policy`, `plans`,
 `task_timeout_min` (30), `local_base_url`, `context`, `llama` y `agent_defaults`.
 
 ## 12. Pruebas

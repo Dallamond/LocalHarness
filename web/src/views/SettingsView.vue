@@ -173,17 +173,24 @@ interface AgentForm {
   temperature: number | null;
   max_tokens: number | null;
   repo_context: number | null;
+  tool_mode: string;
+  web: boolean;
+  commands: string; // «;» entre órdenes; vacío = lista blanca por defecto
 }
 const blank = (): AgentForm => ({
   name: "", provider: "claude", model: "", role: "trabajador", max_turns: null, max_budget_usd: null,
   read_only: false, skills: [], base_url: "", description: "", subagents: false, delegate_local: false, temperature: null,
-  max_tokens: null, repo_context: null,
+  max_tokens: null, repo_context: null, tool_mode: "native", web: true, commands: "",
 });
 
 // lo propio de cada proveedor: subagentes solo en Claude; temperatura, tokens y contexto solo en local
 const num = (v: number | null | string) => (v === null || v === "" ? null : Number(v));
+const splitCommands = (t: string) => t.split(/[;\n]/).map((c) => c.trim()).filter(Boolean);
 function providerFields(f: AgentForm, provider: string) {
-  return provider.startsWith("local")
+  if (provider === "local_agent")
+    return { base_url: f.base_url || null, temperature: num(f.temperature), max_tokens: num(f.max_tokens),
+             tool_mode: f.tool_mode, web: f.web, commands: f.commands.trim() ? splitCommands(f.commands) : null };
+  return provider === "local"
     ? { base_url: f.base_url || null, temperature: num(f.temperature), max_tokens: num(f.max_tokens),
         repo_context: num(f.repo_context) }
     : provider === "claude" ? { subagents: f.subagents, delegate_local: f.delegate_local } : {};
@@ -202,7 +209,7 @@ function resetNewAgent() {
 async function addAgent() {
   agError.value = "";
   try {
-    const { subagents, delegate_local, temperature, max_tokens, repo_context, base_url, ...common } = newAgent;
+    const { subagents, delegate_local, temperature, max_tokens, repo_context, base_url, tool_mode, web, commands, ...common } = newAgent;
     await post<Agent>("/api/agents", {
       ...common, model: newAgent.model || null, role: newAgent.role || null,
       ...providerFields(newAgent, newAgent.provider),
@@ -224,6 +231,7 @@ function startEdit(a: Agent) {
     description: a.config.description ?? "", subagents: !!a.config.subagents, delegate_local: !!a.config.delegate_local,
     temperature: a.config.temperature ?? null, max_tokens: a.config.max_tokens ?? null,
     repo_context: a.config.repo_context ?? null,
+    tool_mode: a.config.tool_mode ?? "native", web: a.config.web !== false, commands: (a.config.commands ?? []).join("; "),
   });
 }
 
@@ -331,8 +339,19 @@ watch(look, applyLook, { deep: true });
           <template v-if="newAgent.provider.startsWith('local')">
             <label class="field"><span class="label">Temperatura</span><input v-model.number="newAgent.temperature" type="number" min="0" max="2" step="0.05" placeholder="0.2" /></label>
             <label class="field"><span class="label">Tokens de respuesta</span><input v-model.number="newAgent.max_tokens" type="number" min="64" step="256" placeholder="4096" /></label>
-            <label class="field" title="Cuántos caracteres del repo se meten en el prompt (0 = nada)">
+            <label v-if="newAgent.provider === 'local'" class="field" title="Cuántos caracteres del repo se meten en el prompt (0 = nada)">
               <span class="label">Contexto del repo (car.)</span><input v-model.number="newAgent.repo_context" type="number" min="0" step="1000" placeholder="24000" />
+            </label>
+          </template>
+          <template v-if="newAgent.provider === 'local_agent'">
+            <label class="field" title="native: herramientas de la API (Qwen3.5-9B). json: para modelos que no devuelven tool_calls">
+              <span class="label">Modo de herramientas</span>
+              <select v-model="newAgent.tool_mode"><option value="native">nativo</option><option value="json">json</option></select>
+            </label>
+            <label class="check"><input v-model="newAgent.web" type="checkbox" /> Puede buscar en internet</label>
+            <label class="field wide" title="Prefijos de orden que puede usar `ejecutar`, separados por «;». Vacío = tests y linters por defecto">
+              <span class="label">Órdenes permitidas</span>
+              <input v-model.trim="newAgent.commands" class="code" placeholder="python -m unittest; pytest; npm test (por defecto)" />
             </label>
           </template>
           <label v-if="newAgent.provider === 'claude'" class="check wide" title="Añade la herramienta Agent: puede repartir trabajo en subagentes. Gasta bastante más plan.">
@@ -395,8 +414,19 @@ watch(look, applyLook, { deep: true });
               <template v-if="a.provider.startsWith('local')">
                 <label class="field"><span class="label">Temperatura</span><input v-model.number="edit.temperature" type="number" min="0" max="2" step="0.05" placeholder="0.2" /></label>
                 <label class="field"><span class="label">Tokens de respuesta</span><input v-model.number="edit.max_tokens" type="number" min="64" step="256" placeholder="4096" /></label>
-                <label class="field" title="Cuántos caracteres del repo se meten en el prompt (0 = nada)">
+                <label v-if="a.provider === 'local'" class="field" title="Cuántos caracteres del repo se meten en el prompt (0 = nada)">
                   <span class="label">Contexto del repo (car.)</span><input v-model.number="edit.repo_context" type="number" min="0" step="1000" placeholder="24000" />
+                </label>
+              </template>
+              <template v-if="a.provider === 'local_agent'">
+                <label class="field" title="native: herramientas de la API (Qwen3.5-9B). json: para modelos que no devuelven tool_calls">
+                  <span class="label">Modo de herramientas</span>
+                  <select v-model="edit.tool_mode"><option value="native">nativo</option><option value="json">json</option></select>
+                </label>
+                <label class="check"><input v-model="edit.web" type="checkbox" /> Puede buscar en internet</label>
+                <label class="field wide" title="Prefijos de orden que puede usar `ejecutar`, separados por «;». Vacío = tests y linters por defecto">
+                  <span class="label">Órdenes permitidas</span>
+                  <input v-model.trim="edit.commands" class="code" placeholder="python -m unittest; pytest; npm test (por defecto)" />
                 </label>
               </template>
               <label v-if="a.provider === 'claude'" class="check wide" title="Añade la herramienta Agent: puede repartir trabajo en subagentes. Gasta bastante más plan.">
@@ -462,6 +492,13 @@ watch(look, applyLook, { deep: true });
 
     <!-- APROBACIONES -->
     <template v-else-if="section === 'aprobaciones' && draft">
+      <Card title="Planes" subtitle="Qué pasa cuando el Director termina de pensar un plan.">
+        <label class="check">
+          <input v-model="draft.plans.always_review" type="checkbox" />
+          Revisar siempre el plan antes de empezar
+          <span class="muted small">(si lo quitas, los planes pequeños y de riesgo bajo arrancan solos)</span>
+        </label>
+      </Card>
       <Card title="Cuándo te lo pasan a ti" subtitle="Un cambio que supere cualquiera de estos límites sube a N2: lo decides tú.">
         <div class="grid">
           <label class="field">

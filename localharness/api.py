@@ -12,7 +12,7 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
@@ -71,6 +71,12 @@ class AgentIn(BaseModel):
     temperature: float | None = Field(default=None, ge=0, le=2)  # solo local
     max_tokens: int | None = Field(default=None, ge=64, le=131_072)  # solo local
     repo_context: int | None = Field(default=None, ge=0, le=2_000_000)  # solo local: caracteres del repo
+    # solo local_agent (bucle con herramientas)
+    tool_mode: Literal["native", "json"] | None = None  # json: para modelos que no devuelven tool_calls
+    web: bool | None = None                             # False: sin buscar_web ni leer_url
+    commands: list[str] | None = None                   # lista blanca de `ejecutar` ([] = sin ejecutar)
+    command_timeout_s: float | None = Field(default=None, gt=0, le=3600)
+    timeout_s: float | None = Field(default=None, gt=0, le=86_400)  # tope de tiempo de cada tarea del agente
 
 
 class AgentPatch(BaseModel):
@@ -88,10 +94,17 @@ class AgentPatch(BaseModel):
     temperature: float | None = Field(default=None, ge=0, le=2)
     max_tokens: int | None = Field(default=None, ge=64, le=131_072)
     repo_context: int | None = Field(default=None, ge=0, le=2_000_000)
+    tool_mode: Literal["native", "json"] | None = None
+    web: bool | None = None
+    commands: list[str] | None = None
+    command_timeout_s: float | None = Field(default=None, gt=0, le=3600)
+    timeout_s: float | None = Field(default=None, gt=0, le=86_400)
 
 
 AGENT_CFG = ("max_turns", "max_budget_usd", "read_only", "skills", "base_url", "description", "subagents",
-             "delegate_local", "temperature", "max_tokens", "repo_context")
+             "delegate_local", "temperature", "max_tokens", "repo_context", "tool_mode", "web", "commands",
+             "command_timeout_s", "timeout_s")
+KEEP_FALSY = ("web", "commands")  # web=False y commands=[] significan algo (apagar), no «quitar el ajuste»
 
 
 class ProjectPatch(BaseModel):
@@ -335,7 +348,9 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
                                  "description": (body.description or "").strip() or None,
                                  "subagents": body.subagents or None, "delegate_local": body.delegate_local or None,
                                  "temperature": body.temperature,
-                                 "max_tokens": body.max_tokens, "repo_context": body.repo_context}.items()
+                                 "max_tokens": body.max_tokens, "repo_context": body.repo_context,
+                                 "tool_mode": body.tool_mode, "web": body.web, "commands": body.commands,
+                                 "command_timeout_s": body.command_timeout_s, "timeout_s": body.timeout_s}.items()
                if v is not None}
         a = st(request).add_agent(body.name, body.provider, model=body.model, role=body.role, config=cfg)
         return {**a, "config": cfg}
@@ -351,7 +366,7 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         cfg = json.loads(a["config"] or "{}")
         for k in sent & set(AGENT_CFG):
             v = getattr(body, k)
-            if v is None or v is False or v == [] or v == "":  # 0 es válido (repo_context = 0: sin contexto)
+            if v is None or (k not in KEEP_FALSY and (v is False or v == [] or v == "")):  # 0 es válido
                 cfg.pop(k, None)
             else:
                 cfg[k] = v

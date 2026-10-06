@@ -72,7 +72,7 @@ La lectura gruesa del repo, delegada en Qwen para no gastar plan.
 ```
 git clone https://github.com/Dallamond/LocalHarness.git && cd LocalHarness
 python -m venv .venv && .venv/Scripts/python -m pip install -e .[server]     # Linux: .venv/bin/python
-.venv/Scripts/python -m unittest discover -s tests -t .                       # 79 pruebas, NUNCA llaman a Claude real
+.venv/Scripts/python -m unittest discover -s tests -t .                       # 102 pruebas, NUNCA llaman a Claude real
 cd web && npm install && npm run build && cd .. && .venv/Scripts/python -m localharness serve   # :8095
 ```
 Sin GPU ni llama-server, los agentes locales no responden (todo lo demás sí). Sin `claude` logueado, no lanzar
@@ -178,7 +178,7 @@ pruebas (71 en verde) y GUI compilada; nada probado aún por Lucas en el navegad
 3. **1–2 líneas del log** siempre visibles en la tarjeta de estado (`log_lines`, sin las de solo puntos).
 4. **Tokens por segundo** — evento `speed` cada 1,5 s (`SPEED_EVERY_S`) con tps, tokens y fase pensando/escribiendo;
    NO se guarda en la BD (`orchestrator.EPHEMERAL`). Se ve en la burbuja «escribiendo…» del chat, en la tarjeta del
-   agente del Inicio y la última velocidad en Modelos locales (`runner.last_speed`, también en `/api/health`).
+   agente del Inicio y la última velocidad en Modelos locales (`api.Runner.last_speed`, también en `/api/health`).
    Real: Qwen3.5-4B ~73 tok/s en la 3060.
    Hallazgo: un modelo que razona puede gastar TODOS los tokens pensando y devolver respuesta vacía (pasó con
    Qwen3.5-4B y 400 tokens; es lo de DeepSeek). Ahora eso es `failed` con un mensaje claro (subir «Tokens de respuesta»).

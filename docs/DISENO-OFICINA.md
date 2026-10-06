@@ -82,8 +82,8 @@ LocalHarness ──(prompt del paso + herramientas)──► llama-server (Qwen)
 Herramientas v1 (pocas a propósito: los modelos pequeños fallan más cuantas más hay):
 | Grupo | Herramientas | Límites |
 |---|---|---|
-| Archivos | `leer`, `listar`, `buscar`, `escribir`, `editar` | solo dentro del worktree, nunca `.git` |
-| Comandos | `ejecutar` | lista blanca por proyecto (tests, linter), tiempo máximo, sin red |
+| Archivos | `leer_archivo`, `listar`, `buscar_texto`, `escribir_archivo` (💡 `editar` por trozos: futuro) | solo dentro del worktree, nunca `.git` |
+| Comandos | `ejecutar` | lista blanca por agente (tests, linter), sin shell, tiempo máximo. ⏳ Aislar la red: pendiente |
 | Internet | `buscar_web`, `leer_url` | DuckDuckGo; texto recortado por página |
 | Equipo | `preguntar_director`, `avisar_progreso`, `terminar` | ver abajo |
 

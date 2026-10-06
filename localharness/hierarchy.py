@@ -275,7 +275,7 @@ class Hierarchy:
             self._emit(t["id"], Event("status", text="pending"))
         review = settings.load(self.store)["plans"]["always_review"]
         if review and level != N2:
-            reasons.append("revisas siempre el plan antes de empezar (Ajustes → Planes)")
+            reasons.append("revisas siempre el plan antes de empezar (Ajustes → Aprobaciones → Planes)")
         status = "awaiting_you" if level == N2 or review else "approved"
         self._set(pid, plan=data, level=LEVEL_NAME[level], level_reasons=reasons, status=status,
                   cost_usd=self._total_cost(pid))

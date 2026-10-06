@@ -19,6 +19,7 @@ export interface Agent {
     max_turns?: number; max_budget_usd?: number; read_only?: boolean; tools?: string[];
     skills?: string[]; base_url?: string; description?: string; subagents?: boolean; delegate_local?: boolean;
     temperature?: number; max_tokens?: number; repo_context?: number;
+    tool_mode?: string; web?: boolean; commands?: string[]; command_timeout_s?: number; timeout_s?: number;
   };
 }
 
@@ -142,6 +143,7 @@ export interface Settings {
     max_files: number; max_lines: number; max_auto_subtasks: number;
     sensitive: string[]; dependency: string[]; config: string[];
   };
+  plans: { always_review: boolean };
   task_timeout_min: number;
   local_base_url: string;
   context: { max_memory_chars: number; max_skill_chars: number; skill_dirs: string[] };
