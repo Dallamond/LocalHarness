@@ -278,7 +278,11 @@ const placeholder = computed(() => {
         <div class="room__who">
           <strong>{{ task.title }}</strong>
           <span class="muted small">{{ agentName(task.agent_id) }}<template v-if="agent?.provider === 'local'"> · usa
-            <strong>{{ localModel ?? "ningún modelo arrancado" }}</strong></template> · {{ projectName(task.project_id) }} · {{ usd(task.cost_usd) }}</span>
+            <strong>{{ localModel ?? "ningún modelo arrancado" }}</strong></template>
+            <template v-if="agent?.provider === 'claude'"> ·
+              <span v-if="agent.config.delegate_local" title="Puede encargar trabajo al modelo arrancado">🦙 delega en {{ live.local.model ?? "local (nada arrancado)" }}</span>
+              <RouterLink v-else to="/ajustes?s=agentes" title="Ajustes → Agentes → Editar → «Puede delegar en el modelo local»">no delega en local</RouterLink>
+            </template> · {{ projectName(task.project_id) }} · {{ usd(task.cost_usd) }}</span>
         </div>
         <StatusChip :state="statusChip(task.status)" :text="STATUS_TEXT[task.status] ?? task.status" />
         <RouterLink :to="`/tareas/${task.id}`" class="btn btn--small btn--ghost">Detalle y diff</RouterLink>

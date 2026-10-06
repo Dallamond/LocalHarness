@@ -105,7 +105,8 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
     ro = bool(cfg.get("read_only")) if read_only is None else read_only
     deleg = (_delegation(store, ws.path, write=not ro)
              if cfg.get("delegate_local") and agent["provider"] == "claude" else None)
-    if deleg and not resume:
+    if deleg and (not resume or not _had_delegation(store, task_id)):
+        # también al continuar una conversación que empezó sin la casilla: la sesión no sabe que ahora puede delegar
         prompt += "\n" + delegate_guide(write=not ro)
     spec = RunSpec(prompt=prompt, cwd=str(ws.path), model=agent["model"],
                    max_turns=cfg.get("max_turns"), max_budget_usd=cfg.get("max_budget_usd"),
@@ -145,6 +146,15 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
     sink(Event("status", text=status))
     return {**res, "status": status, "diff": ws.diff_range(base, head), "changes": changes,
             "stat": git_stat(ws, base, head)}
+
+
+def _had_delegation(store: Store, task_id: int) -> bool:
+    """¿La sesión ya arrancó alguna vez con las herramientas del modelo local?"""
+    for e in reversed(store.list_events(task_id)):
+        if e["kind"] == "session":
+            if any(str(t).startswith("mcp__local__") for t in json.loads(e["data"] or "{}").get("tools") or []):
+                return True
+    return False
 
 
 def _delegation(store: Store, root: Path, write: bool) -> dict:

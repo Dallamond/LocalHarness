@@ -160,3 +160,16 @@ class EndToEndTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ResumeTests(unittest.TestCase):
+    def test_had_delegation(self):
+        from localharness.orchestrator import _had_delegation
+        s = Store()
+        p = s.add_project("d", "/x")
+        a = s.add_agent("w", "claude")
+        t = s.add_task(p["id"], "t", "x", a["id"])
+        s.add_event(t["id"], "session", data={"tools": ["Read", "Edit"]})
+        self.assertFalse(_had_delegation(s, t["id"]))  # empezó sin la casilla: al continuar se le explica
+        s.add_event(t["id"], "session", data={"tools": ["Read", "mcp__local__local_ask"]})
+        self.assertTrue(_had_delegation(s, t["id"]))
