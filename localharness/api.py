@@ -477,13 +477,17 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
     async def activity(request: Request, limit: int = 12) -> dict:
         store = st(request)
         current = {}
+        thinking = {}
         for t in store.list_tasks(status="running"):
-            e = store.last_event(t["id"])
+            e = store.last_event(t["id"], ("text", "tool", "status", "context", "progress", "thinking"))
             if e:
                 current[t["id"]] = {**e, "data": json.loads(e["data"] or "{}")}
+            th = store.last_event(t["id"], ("thinking",))
+            if th:
+                thinking[t["id"]] = {"text": th["text"], "ts": th["ts"]}
         done = [t for t in reversed(store.list_tasks()) if t["finished_at"] and t["kind"] != "director"][:limit]
         recent = await asyncio.to_thread(lambda: [{**task_out(t), "files": _files(store, t)} for t in done])
-        return {"current": current, "recent": recent}
+        return {"current": current, "recent": recent, "thinking": thinking}
 
     # --- tareas
     @app.get("/api/tasks")

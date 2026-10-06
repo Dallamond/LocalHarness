@@ -89,6 +89,8 @@ class ClaudeAdapter(Adapter):
                     out.append(Event("text", text=block["text"]))
                 elif block.get("type") == "tool_use":
                     out.append(Event("tool", text=block.get("name", ""), data={"input": block.get("input")}))
+                elif block.get("type") == "thinking" and block.get("thinking"):  # pensamiento extendido
+                    out.append(Event("thinking", text=block["thinking"][-4000:]))
             return out
         if t == "rate_limit_event":
             info = obj.get("rate_limit_info") or {}
@@ -113,7 +115,7 @@ class ClaudeAdapter(Adapter):
             return [usage, Event("error", text=f"claude falló ({subtype or 'desconocido'}): {detail}".rstrip(": "))]
         if t == "error":
             return [Event("error", text=str(obj.get("error") or "error desconocido"))]
-        return []  # system hook_*, stream_event, user/tool_result, thinking: ignorados
+        return []  # system hook_*, stream_event, user/tool_result: ignorados
 
 
 def login_method(binary: str = "claude") -> str | None:

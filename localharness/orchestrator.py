@@ -18,7 +18,7 @@ from localharness.events import Event
 from localharness.runner import run
 from localharness.store import Store
 
-EPHEMERAL = ("speed",)  # en vivo para la GUI, no se guardan (llegan cada ~1,5 s)
+EPHEMERAL = ("speed", "thinking_live")  # en vivo para la GUI, no se guardan (llegan cada ~1,5 s)
 
 DELEGATE_TOOLS = {"local_ask": "mcp__local__local_ask", "local_write_file": "mcp__local__local_write_file",
                   "local_research": "mcp__local__local_research"}

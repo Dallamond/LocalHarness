@@ -35,7 +35,8 @@ type Msg =
   | { type: "agent"; text: string }
   | { type: "tools"; items: { name: string; target: string }[] }
   | { type: "note"; text: string; tone: "ok" | "warn" | "crit" | "dim" }
-  | { type: "delegate"; ok: boolean; what: string; tool: string; detail: string };
+  | { type: "delegate"; ok: boolean; what: string; tool: string; detail: string }
+  | { type: "thinking"; text: string };
 
 const TERMINAL = new Set(["review", "done", "failed", "timeout", "cancelled", "interrupted", "merged", "rejected"]);
 
@@ -62,6 +63,8 @@ const messages = computed<Msg[]>(() => {
       else out.push({ type: "tools", items: [item] });
     } else if (e.kind === "error") {
       out.push({ type: "note", text: e.text, tone: "crit" });
+    } else if (e.kind === "thinking") {
+      out.push({ type: "thinking", text: e.text });
     } else if (e.kind === "ask_director") {
       out.push({ type: "note", text: `❓ Pregunta al Director: ${e.text}`, tone: "warn" });
     } else if (e.kind === "director_answer") {
@@ -323,6 +326,10 @@ const placeholder = computed(() => {
               <span>{{ m.tool === "local_write_file" ? "escribió" : m.tool === "local_research" ? "investigó en la web" : "respondió a" }} <strong>{{ m.what }}</strong></span>
               <span class="muted small">{{ m.detail }}</span>
             </div>
+            <details v-else-if="m.type === 'thinking'" class="think">
+              <summary>💭 Pensamiento ({{ m.text.length }} caracteres)</summary>
+              <p>{{ m.text }}</p>
+            </details>
             <p v-else class="note" :class="`note--${m.tone}`">{{ m.text }}</p>
           </template>
           <div v-if="busy" class="from">
@@ -609,6 +616,22 @@ const placeholder = computed(() => {
   white-space: pre-wrap;
   text-align: left;
   border-radius: var(--radius-sm);
+}
+.think {
+  margin: 2px 0 2px 38px;
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+.think summary {
+  cursor: pointer;
+}
+.think p {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--line-strong);
+  white-space: pre-wrap;
+  max-height: 280px;
+  overflow: auto;
 }
 .deleg {
   display: flex;

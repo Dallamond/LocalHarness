@@ -218,6 +218,7 @@ export const live = reactive({
   activity: {} as Record<number, Activity>,
   recent: [] as RecentTask[],
   speed: {} as Record<number, Speed>,          // tokens/s en vivo por tarea (modelos locales)
+  thinking: {} as Record<number, { text: string; at: number; live: boolean }>, // último pensamiento por tarea
   local: { state: "off", model: null } as { state: string; model: string | null }, // el modelo ARRANCADO
   lastSpeed: null as Speed | null,
 });
@@ -274,9 +275,15 @@ export async function refreshAll(): Promise<void> {
 
 /** Qué está haciendo cada tarea en marcha y las últimas terminadas (con sus archivos). */
 export async function refreshActivity(): Promise<void> {
-  const a = await api<{ current: Record<string, TaskEvent & { ts: string }>; recent: RecentTask[] }>("/api/activity");
+  const a = await api<{
+    current: Record<string, TaskEvent & { ts: string }>; recent: RecentTask[];
+    thinking?: Record<string, { text: string; ts: string }>;
+  }>("/api/activity");
   for (const [tid, ev] of Object.entries(a.current)) {
     live.activity[Number(tid)] = { kind: ev.kind, text: ev.text, data: ev.data, at: parseTs(ev.ts) };
+  }
+  for (const [tid, th] of Object.entries(a.thinking ?? {})) {
+    live.thinking[Number(tid)] = { text: th.text, at: parseTs(th.ts), live: false };
   }
   live.recent = a.recent;
 }
@@ -327,7 +334,10 @@ export function connect(url = "/api/events"): void {
   });
   source.addEventListener("task_event", (e) => {
     const ev = JSON.parse((e as MessageEvent).data) as TaskEvent;
-    if (["text", "tool", "status", "context"].includes(ev.kind)) {
+    if (ev.kind === "thinking" || ev.kind === "thinking_live") {
+      live.thinking[ev.task_id] = { text: ev.text, at: Date.now(), live: ev.kind === "thinking_live" };
+    }
+    if (["text", "tool", "status", "context", "progress", "thinking"].includes(ev.kind)) {
       live.activity[ev.task_id] = { kind: ev.kind, text: ev.text, data: ev.data ?? {}, at: Date.now() };
     }
     if (ev.kind === "speed" || (ev.kind === "usage" && ev.data?.local && ev.data?.tps)) {
@@ -338,7 +348,10 @@ export function connect(url = "/api/events"): void {
     if (ev.kind === "session" && ev.data?.base_url && ev.data?.model) {
       live.local = { state: "ready", model: String(ev.data.model) };
     }
-    if (ev.kind === "status" && ev.text !== "running") delete live.speed[ev.task_id];
+    if (ev.kind === "status" && ev.text !== "running") {
+      delete live.speed[ev.task_id];
+      delete live.thinking[ev.task_id];
+    }
     eventHandlers.forEach((fn) => fn(ev));
   });
   source.addEventListener("limit", (e) => {
@@ -432,6 +445,8 @@ export function roleColor(a: Agent | undefined): string {
 /** Frase corta de lo que está haciendo un agente a partir de su último evento. */
 export function describeActivity(a: Activity | undefined): string {
   if (!a) return "arrancando…";
+  if (a.kind === "progress") return a.text;
+  if (a.kind === "thinking") return "Pensando…";
   if (a.kind === "tool") {
     const input = (a.data.input ?? {}) as Record<string, unknown>;
     const target = String(input.file_path ?? input.pattern ?? input.command ?? input.path ?? input.ruta ?? input.url ?? input.consulta ?? input.comando ?? input.pregunta ?? input.texto ?? "");

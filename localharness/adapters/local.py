@@ -19,7 +19,9 @@ from localharness.adapters.base import Adapter, AdapterError, RunSpec
 from localharness.events import Event
 
 DEFAULT_URL = "http://127.0.0.1:8080"
-SPEED_EVERY_S = 1.5  # cada cuánto se emite el evento `speed` (tokens/s en vivo) mientras genera
+SPEED_EVERY_S = 1.5
+THINKING_LIVE_CHARS = 1200  # cola del razonamiento que se manda en vivo
+THINKING_KEEP_CHARS = 4000  # lo que se guarda del razonamiento al terminar  # cada cuánto se emite el evento `speed` (tokens/s en vivo) mientras genera
 TEXT_EXT = {".py", ".md", ".txt", ".toml", ".json", ".yaml", ".yml", ".js", ".ts", ".vue", ".tsx", ".jsx", ".css",
             ".html", ".rs", ".go", ".java", ".cs", ".sh", ".ps1", ".sql", ".ini", ".cfg"}
 
@@ -129,6 +131,8 @@ class LocalAdapter(Adapter):
                             last_tick = tick
                             on_event(Event("speed", data={"tps": _rate(tokens, tick - t_first), "tokens": tokens,
                                                           "phase": phase, "model": model}))
+                            if phase == "pensando":  # lo último que va pensando, para verlo en vivo (no se guarda)
+                                on_event(Event("thinking_live", text="".join(reasoning)[-THINKING_LIVE_CHARS:]))
             except httpx.TimeoutException:
                 on_event(Event("error", text=f"Tiempo agotado ({timeout_s:.0f} s)"))
                 return _out("timeout", time.monotonic() - t0)
@@ -147,6 +151,8 @@ class LocalAdapter(Adapter):
                 on_event(Event("text", text=json.dumps(structured, ensure_ascii=False)))
         tps = timings.get("predicted_per_second") or (_rate(tokens, time.monotonic() - t_first) if t_first else None)
         tps = round(tps, 1) if tps else None
+        if reasoning:
+            on_event(Event("thinking", text="".join(reasoning)[-THINKING_KEEP_CHARS:]))
         on_event(Event("usage", data={"cost_usd": 0.0, "turns": 1, "usage": usage, "local": True, "model": model,
                                       "tps": tps, "tokens": tokens or None, "finish_reason": finish,
                                       "reasoning_chars": len("".join(reasoning)) or None}))

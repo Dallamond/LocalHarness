@@ -11,6 +11,9 @@ import {
 } from "../api";
 
 const router = useRouter();
+const openThink = ref<number | null>(null); // agente con el pensamiento desplegado
+// plegado se ve el FINAL del pensamiento (lo que está pensando ahora)
+const tail = (t: string, n = 220) => (t.length > n ? "…" + t.slice(-n).trimStart() : t);
 
 // reloj para «hace X» y el tiempo que lleva cada agente
 const now = ref(Date.now());
@@ -219,6 +222,14 @@ const keyOf = (i: InboxItem) => `${i.type}-${i.plan_id ?? ""}-${i.task_id ?? ""}
             </RouterLink>
             <p class="member__doing">{{ describeActivity(live.activity[m.current.id]) }}</p>
             <p v-if="live.speed[m.current.id]" class="member__speed small">⚡ {{ speedText(live.speed[m.current.id]) }}</p>
+            <button
+              v-if="live.thinking[m.current.id]" class="member__think" :class="{ 'member__think--open': openThink === m.current.id }"
+              :title="openThink === m.current.id ? 'Plegar' : 'Ver el pensamiento completo'"
+              @click="openThink = openThink === m.current.id ? null : m.current.id"
+            >
+              <span class="member__think-label">💭 {{ live.thinking[m.current.id].live ? "pensando ahora" : "último pensamiento" }}</span>
+              {{ openThink === m.current.id ? live.thinking[m.current.id].text : tail(live.thinking[m.current.id].text) }}
+            </button>
             <p class="member__meta small muted">
               {{ projectName(m.current.project_id) }}
               <template v-if="m.current.plan_id"> · <RouterLink :to="`/planes/${m.current.plan_id}`">plan #{{ m.current.plan_id }}</RouterLink></template>
@@ -383,6 +394,30 @@ a.stat:hover {
   font-size: 14px;
   color: var(--ink-dim);
   overflow-wrap: anywhere;
+}
+.member__think {
+  display: block;
+  width: 100%;
+  margin: 6px 0 0;
+  padding: 6px 9px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel-raised);
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  white-space: pre-wrap;
+  cursor: pointer;
+}
+.member__think--open {
+  max-height: 320px;
+  overflow: auto;
+}
+.member__think-label {
+  display: block;
+  font-weight: 600;
+  color: var(--ink-faint);
 }
 .member__speed {
   margin: 0;
