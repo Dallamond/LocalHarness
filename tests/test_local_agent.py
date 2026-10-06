@@ -126,6 +126,47 @@ class LocalAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("FORMATO OBLIGATORIO", seen[0]["messages"][0]["content"])
         self.assertIn("RESULTADO DE buscar_texto", seen[1]["messages"][-1]["content"])
 
+    async def test_ejecutar_only_whitelisted_commands(self):
+        res, evs, seen, repo = await self.go([
+            {"content": "", "tool_calls": [tool_call("ejecutar", {"comando": "python -m unittest"}, 0),
+                                           tool_call("ejecutar", {"comando": "rm -rf ."}, 1),
+                                           tool_call("ejecutar", {"comando": "python -c 'print(1)'"}, 2)]},
+            {"content": "", "tool_calls": [tool_call("terminar", {"resumen": "tests ejecutados"})]},
+        ])
+        out = [m["content"] for m in seen[1]["messages"] if m["role"] == "tool"]
+        self.assertIn("código de salida", out[0]); self.assertIn("Ran", out[0])  # se ejecutó de verdad (el repo de prueba no tiene tests)
+        self.assertIn("orden no permitida", out[1]); self.assertIn("orden no permitida", out[2])
+        self.assertTrue((repo / "README.md").exists())
+        self.assertIn("Órdenes permitidas", seen[0]["messages"][0]["content"])
+        res, evs, seen, _ = await self.go([{"content": "", "tool_calls": [tool_call("terminar", {"resumen": "x"})]}],
+                                          commands=[])
+        self.assertNotIn("ejecutar", [t["function"]["name"] for t in seen[0]["tools"]])
+
+    async def test_preguntar_director_only_with_a_director_and_limited(self):
+        asked = []
+
+        async def director(q):
+            asked.append(q)
+            return "Usa la opción A", 0.004
+        ask = {"content": "", "tool_calls": [tool_call("preguntar_director", {"pregunta": "¿A o B?"})]}
+        script = [ask, {**ask, "tool_calls": [tool_call("preguntar_director", {"pregunta": "¿y C?"})]},
+                  {**ask, "tool_calls": [tool_call("preguntar_director", {"pregunta": "¿y D?"})]},
+                  {**ask, "tool_calls": [tool_call("preguntar_director", {"pregunta": "¿y E?"})]},
+                  {"content": "", "tool_calls": [tool_call("terminar", {"resumen": "elegí A"})]}]
+        seen, evs = [], []
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = make_repo(tmp)
+            a = LocalAgentAdapter(transport=llama(script, seen), http_get=web)
+            res = await run(a, RunSpec(prompt="t", cwd=str(repo), ask_director=director), evs.append)
+        self.assertEqual(res["status"], "done")
+        self.assertEqual(asked, ["¿A o B?", "¿y C?", "¿y D?"])  # la cuarta ya no llega al Director
+        out = [m["content"] for m in seen[-1]["messages"] if m["role"] == "tool"]
+        self.assertEqual(out[0], "Usa la opción A"); self.assertIn("Ya has preguntado 3 veces", out[3])
+        self.assertEqual(next(e for e in evs if e.kind == "usage").data["cost_usd"], 0.012)  # lo que costó el Director
+        self.assertEqual([e.kind for e in evs].count("director_answer"), 3)
+        res, evs, seen, _ = await self.go([{"content": "", "tool_calls": [tool_call("terminar", {"resumen": "x"})]}])
+        self.assertNotIn("preguntar_director", [t["function"]["name"] for t in seen[0]["tools"]])  # fuera de un plan
+
     def test_json_call_parser(self):
         self.assertEqual(_json_call('Voy a leer: {"name": "leer_archivo", "arguments": {"ruta": "a"}}')["name"],
                          "leer_archivo")
@@ -158,5 +199,44 @@ class LocalAgentInTaskTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(res["status"], "review")
                 self.assertIn("hola.txt", res["diff"])
                 self.assertFalse((repo / "hola.txt").exists())  # en su worktree, nunca en el repo
+        finally:
+            local_agent.LocalAgentAdapter.__init__ = orig
+
+
+@unittest.skipIf(httpx is None, "falta httpx (pip install -e .[server])")
+class LocalAgentInPlanTests(unittest.IsolatedAsyncioTestCase):
+    async def test_worker_asks_the_director_of_its_plan(self):
+        """Director = Claude falso; trabajador = agente local que pregunta y el Director (sesión reanudada) responde."""
+        from localharness.adapters import local_agent
+        from localharness.hierarchy import Hierarchy
+        from tests.test_hierarchy import FAKE
+        script = [{"content": "", "tool_calls": [tool_call("preguntar_director", {"pregunta": "¿A o B?"})]},
+                  {"content": "", "tool_calls": [tool_call("escribir_archivo", {"ruta": "paso1.txt", "contenido": "A"})]},
+                  {"content": "", "tool_calls": [tool_call("terminar", {"resumen": "hecho con A"})]}]
+        seen = []
+        orig = local_agent.LocalAgentAdapter.__init__
+
+        def patched(self, *a, **kw):
+            kw["transport"] = llama(script, seen)
+            orig(self, *a, **kw)
+        local_agent.LocalAgentAdapter.__init__ = patched
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                repo = make_repo(tmp)
+                store = Store()
+                p = store.add_project("demo", str(repo))
+                d = store.add_agent("director", "claude", role="director")
+                store.add_agent("qwen-agente", "local_agent")
+                plan = store.add_plan(p["id"], "haz algo", director_agent_id=d["id"])
+                h = Hierarchy(store, binaries={"claude": FAKE}, worktree_root=str(Path(tmp) / "wt"))
+                await h.plan(plan["id"])
+                await h.run(plan["id"])
+                worker = next(t for t in store.plan_tasks(plan["id"]) if t["kind"] == "worker" and t["seq"] == 1)
+                evs = store.list_events(worker["id"])
+                answer = next(e for e in evs if e["kind"] == "director_answer")
+                self.assertIn("Usa la opción A (Director, sesión sess-1)", answer["text"])
+                self.assertEqual(store.get_task(worker["id"])["cost_usd"], 0.003)
+                tool_out = [m for m in seen[1]["messages"] if m["role"] == "tool"][0]["content"]
+                self.assertIn("Usa la opción A", tool_out)
         finally:
             local_agent.LocalAgentAdapter.__init__ = orig

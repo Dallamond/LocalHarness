@@ -83,6 +83,10 @@ elif "--mcp-config" in sys.argv and "DELEGA" in prompt:
     res = rpc(3, "tools/call", {"name": "local_write_file", "arguments": args})["result"]
     srv.stdin.close(); srv.wait(timeout=10)
     finish(f"Herramientas MCP: {','.join(names)}. {res['content'][0]['text'][:80]}")
+elif "--resume" in sys.argv and "te pregunta:" in prompt:
+    # Director reanudado por `preguntar_director` de un agente local: responde sin tocar archivos
+    sid = sys.argv[sys.argv.index("--resume") + 1]
+    finish(f"Usa la opción A (Director, sesión {sid})", cost=0.003)
 else:
     out({"type": "assistant", "message": {"content": [{"type": "text", "text": "Voy a trabajar"}]}})
     if "BORRA" in prompt and os.path.exists("README.md"):

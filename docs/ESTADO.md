@@ -12,7 +12,10 @@ internet (p. ej. «¿qué versión de X…?»): debe salir «🦙 Modelo local i
 **Agente local con herramientas (objetivo 8, v1):** proveedor `local_agent` (`localharness/adapters/local_agent.py`).
 Probar: `sandbox` crea `qwen-agente`; arrancar Qwen3.5-9B y pedirle en el chat algo que necesite leer el repo e
 internet. Si no usa herramientas, en el agente poner `tool_mode: json`. Diseño completo en `docs/DISENO-OFICINA.md`.
-Siguiente: `ejecutar` (lista blanca) y `preguntar_director`; después objetivo 3 (plan editable en el Inicio), 4 y 5.
+Ya tiene `ejecutar` (lista blanca `DEFAULT_COMMANDS`, ampliable con `commands` en la config; sin shell; 120 s) y
+`preguntar_director` (dentro de un plan con Director de Claude: reanuda su sesión, máx. 3 preguntas, tope 0,2 $;
+el coste se suma a la tarea). Ojo: `ejecutar` NO aísla la red (los tests podrían usarla).
+Siguiente: objetivo 3 (plan editable en el Inicio), 4 y 5.
 
 ## SESIÓN ANTERIOR (06/10/2026, mediodía)
 

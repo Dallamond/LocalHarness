@@ -9,8 +9,9 @@ Qwen nunca toca nada directamente: cada herramienta la ejecuta y comprueba Local
 `tool` como los de Claude (la GUI lo muestra igual).
 
 Herramientas v1 (pocas a propósito; los modelos pequeños fallan más cuantas más hay): leer_archivo, listar,
-buscar_texto, escribir_archivo (si puede escribir), buscar_web, leer_url, avisar_progreso, terminar.
-Pendiente (docs/DISENO-OFICINA.md §4b): ejecutar (lista blanca), preguntar_director.
+buscar_texto, escribir_archivo (si puede escribir), ejecutar (solo comandos de la lista blanca, sin shell y con
+tiempo máximo), buscar_web, leer_url, preguntar_director (solo dentro de un plan; máx. 3 por tarea),
+avisar_progreso, terminar. Diseño: docs/DISENO-OFICINA.md §4b.
 
 Fiabilidad con modelos de 7–14B:
 - `tool_mode: native` (por defecto) usa `tools` de la API; `json` no manda `tools` y obliga a responder con un
@@ -21,20 +22,31 @@ Fiabilidad con modelos de 7–14B:
 
 Configuración (`config` del agente): las de `local` (base_url, temperature, max_tokens) más `max_turns`
 (por defecto 25), `tool_mode`, `max_tool_chars` (por defecto 6000), `max_context_chars` (por defecto 60000),
-`web` (True/False).
+`web` (True/False), `commands` (lista blanca: prefijos de orden permitidos; por defecto DEFAULT_COMMANDS),
+`command_timeout_s` (por defecto 120).
 """
 
+import asyncio
 import json
+import os
+import shlex
+import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
 
 from localharness.adapters.base import RunSpec
 from localharness.adapters.local import LocalAdapter, _out, _short
+from localharness.binaries import resolve
 from localharness.events import Event
 from localharness.mcp_local import SEARCH_URL, _http_get, page_text, parse_ddg
 
 MAX_SAME_CALL = 3
+MAX_DIRECTOR_QUESTIONS = 3
+# prefijos de orden permitidos para `ejecutar` (tests y linters); se amplían por agente con `commands`
+DEFAULT_COMMANDS = ["python -m unittest", "python -m pytest", "pytest", "npm test", "npm run test", "npm run lint",
+                    "ruff check", "node --test"]
+ENV_DROP = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "LH_LOCAL_KEY")
 MAX_BAD_REPLIES = 2
 SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build", ".mypy_cache"}
 
@@ -54,9 +66,14 @@ TOOLS = {
                         {"texto": S, "carpeta": S}, ["texto"]),
     "escribir_archivo": _fn("escribir_archivo", "Crea o reescribe ENTERO un archivo del repositorio.",
                             {"ruta": S, "contenido": S}, ["ruta", "contenido"]),
+    "ejecutar": _fn("ejecutar", "Ejecuta una orden de la lista blanca (tests, linter) en la raíz del repositorio "
+                                "y devuelve su salida y el código de salida.", {"comando": S}, ["comando"]),
     "buscar_web": _fn("buscar_web", "Busca en internet. Devuelve títulos, URL y resúmenes.", {"consulta": S},
                       ["consulta"]),
     "leer_url": _fn("leer_url", "Lee el texto de una página web (http/https).", {"url": S}, ["url"]),
+    "preguntar_director": _fn("preguntar_director", "Pregunta al Director del equipo cuando algo es ambiguo o "
+                                                    "tienes que elegir entre opciones. Úsalo poco (cuesta).",
+                              {"pregunta": S}, ["pregunta"]),
     "avisar_progreso": _fn("avisar_progreso", "Cuenta en una frase corta qué estás haciendo (lo ve el humano).",
                            {"texto": S}, ["texto"]),
     "terminar": _fn("terminar", "Termina la tarea. `resumen`: qué hiciste o tu respuesta final. "
@@ -86,16 +103,22 @@ class LocalAgentAdapter(LocalAdapter):
     def __init__(self, binary: str | None = None, base_url: str | None = None, temperature: float = 0.2,
                  max_tokens: int = 4096, api_key: str | None = None, transport=None, http_get=None,
                  tool_mode: str = "native", max_tool_chars: int = 6000, max_context_chars: int = 60_000,
-                 web: bool = True, **_):
+                 web: bool = True, commands: list[str] | None = None, command_timeout_s: float = 120, **_):
         super().__init__(binary, base_url, temperature, max_tokens, 0, api_key, transport)
         self.tool_mode = tool_mode if tool_mode in ("native", "json") else "native"
         self.max_tool_chars, self.max_context_chars, self.web = max_tool_chars, max_context_chars, web
         self.http_get = http_get or _http_get  # pruebas: sin red de verdad
+        self.commands = [c for c in (commands if commands is not None else DEFAULT_COMMANDS) if c.strip()]
+        self.command_timeout_s = command_timeout_s
 
-    def tool_names(self, read_only: bool) -> list[str]:
+    def tool_names(self, read_only: bool, director: bool = False) -> list[str]:
         names = list(TOOLS)
         if read_only:
             names.remove("escribir_archivo")
+        if not self.commands:
+            names.remove("ejecutar")
+        if not director:
+            names.remove("preguntar_director")
         if not self.web:
             names = [n for n in names if n not in ("buscar_web", "leer_url")]
         return names
@@ -119,8 +142,12 @@ class LocalAgentAdapter(LocalAdapter):
             return _out("failed", 0.0)
         t0 = time.monotonic()
         root = Path(spec.cwd).resolve()
-        names = self.tool_names(spec.read_only)
-        system = SYSTEM
+        names = self.tool_names(spec.read_only, director=spec.ask_director is not None)
+        if "ejecutar" in names:
+            system_cmds = "\nÓrdenes permitidas en `ejecutar`: " + "; ".join(self.commands)
+        else:
+            system_cmds = ""
+        system = SYSTEM + system_cmds
         if self.tool_mode == "json":
             system += JSON_MODE.format(tools="\n".join(
                 f"- {n}({', '.join(TOOLS[n]['function']['parameters']['properties'])}): "
@@ -130,6 +157,7 @@ class LocalAgentAdapter(LocalAdapter):
         totals = {"prompt_tokens": 0, "completion_tokens": 0}
         last_calls: list[str] = []
         bad, turns, model, tps = 0, 0, spec.model, None
+        director = {"asked": 0, "cost": 0.0}
         async with httpx.AsyncClient(transport=self.transport, headers=self.headers) as client:
             try:
                 r = await client.get(self.base_url + "/v1/models", timeout=5)
@@ -141,7 +169,7 @@ class LocalAgentAdapter(LocalAdapter):
                                             "tool_mode": self.tool_mode, "base_url": self.base_url}))
 
             def finish(status: str, text: str | None) -> dict:
-                on_event(Event("usage", data={"cost_usd": 0.0, "turns": turns, "usage": totals, "local": True,
+                on_event(Event("usage", data={"cost_usd": round(director["cost"], 6), "turns": turns, "usage": totals, "local": True,
                                               "model": model, "tps": tps, "agentic": True}))
                 if status == "done":
                     on_event(Event("result", text=text or "", data={"structured": None}))
@@ -212,7 +240,12 @@ class LocalAgentAdapter(LocalAdapter):
                             raise ToolFail(call["error"])
                         if call["name"] not in names:
                             raise ToolFail(f"herramienta desconocida: {call['name']} (hay: {', '.join(names)})")
-                        out = self.run_tool(root, call["name"], call["args"], on_event)
+                        if call["name"] == "ejecutar":
+                            out = await self.run_command(root, call["args"].get("comando"))
+                        elif call["name"] == "preguntar_director":
+                            out = await self.ask(spec, director, call["args"].get("pregunta"), on_event)
+                        else:
+                            out = self.run_tool(root, call["name"], call["args"], on_event)
                     except ToolFail as e:
                         out = f"ERROR: {e}"
                     except Exception as e:  # noqa: BLE001 — un fallo de herramienta no tumba el bucle
@@ -267,6 +300,54 @@ class LocalAgentAdapter(LocalAdapter):
             if (m["role"] == "tool" or c.startswith("RESULTADO DE")) and len(c) > 200:
                 m["content"] = c[:200] + "\n[… resultado antiguo recortado para ahorrar contexto]"
                 size -= len(c) - len(m["content"])
+
+    # --- herramientas asíncronas
+    def allowed(self, argv: list[str]) -> bool:
+        return any(argv[: len(p)] == p for p in (shlex.split(c) for c in self.commands))
+
+    async def run_command(self, root: Path, command) -> str:
+        if not isinstance(command, str) or not command.strip():
+            raise ToolFail("falta `comando`")
+        try:
+            argv = shlex.split(command)
+        except ValueError as e:
+            raise ToolFail(f"orden mal escrita: {e}") from None
+        if not self.allowed(argv):
+            raise ToolFail(f"orden no permitida. Permitidas: {'; '.join(self.commands)}")
+        if argv[0] in ("python", "python3"):  # el mismo intérprete que LocalHarness (en Windows `python` es la Store)
+            exe = [sys.executable]
+        else:
+            exe = resolve(argv[0])
+        env = {k: v for k, v in os.environ.items() if k not in ENV_DROP}
+        try:
+            proc = await asyncio.create_subprocess_exec(*exe, *argv[1:], cwd=root, stdin=asyncio.subprocess.DEVNULL,
+                                                        stdout=asyncio.subprocess.PIPE,
+                                                        stderr=asyncio.subprocess.STDOUT, env=env)
+        except OSError as e:
+            raise ToolFail(f"no se pudo lanzar {argv[0]}: {e}") from None
+        try:
+            raw, _ = await asyncio.wait_for(proc.communicate(), self.command_timeout_s)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise ToolFail(f"tardó más de {self.command_timeout_s:.0f} s y se paró") from None
+        text = raw.decode("utf-8", "replace").strip()
+        if len(text) > self.max_tool_chars:  # lo útil de unos tests suele estar al final
+            text = "[… principio recortado]\n" + text[-(self.max_tool_chars - 40):]
+        return f"código de salida {proc.returncode}\n{text or '(sin salida)'}"
+
+    async def ask(self, spec: RunSpec, director: dict, question, on_event: Callable[[Event], None]) -> str:
+        if not isinstance(question, str) or not question.strip():
+            raise ToolFail("falta `pregunta`")
+        if director["asked"] >= MAX_DIRECTOR_QUESTIONS:
+            return (f"Ya has preguntado {MAX_DIRECTOR_QUESTIONS} veces. Decide tú con lo que sabes y explica la "
+                    "decisión en `terminar`.")
+        director["asked"] += 1
+        on_event(Event("ask_director", text=question[:1000]))
+        answer, cost = await spec.ask_director(question)
+        director["cost"] += cost or 0.0
+        on_event(Event("director_answer", text=answer[:2000], data={"cost_usd": cost}))
+        return answer
 
     # --- herramientas (todas confinadas al worktree)
     def run_tool(self, root: Path, name: str, a: dict, on_event: Callable[[Event], None]) -> str:

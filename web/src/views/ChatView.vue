@@ -57,11 +57,15 @@ const messages = computed<Msg[]>(() => {
       spoke = true;
     } else if (e.kind === "tool") {
       const input = (e.data?.input ?? {}) as Record<string, unknown>;
-      const item = { name: e.text || "herramienta", target: String(input.file_path ?? input.pattern ?? input.command ?? input.path ?? input.ruta ?? input.url ?? input.consulta ?? input.texto ?? "") };
+      const item = { name: e.text || "herramienta", target: String(input.file_path ?? input.pattern ?? input.command ?? input.path ?? input.ruta ?? input.url ?? input.consulta ?? input.comando ?? input.pregunta ?? input.texto ?? "") };
       if (last.type === "tools") last.items.push(item);
       else out.push({ type: "tools", items: [item] });
     } else if (e.kind === "error") {
       out.push({ type: "note", text: e.text, tone: "crit" });
+    } else if (e.kind === "ask_director") {
+      out.push({ type: "note", text: `❓ Pregunta al Director: ${e.text}`, tone: "warn" });
+    } else if (e.kind === "director_answer") {
+      out.push({ type: "note", text: `🧭 Director: ${e.text}`, tone: "ok" });
     } else if (e.kind === "progress") {
       out.push({ type: "note", text: `📣 ${e.text}`, tone: "ok" });
     } else if (e.kind === "warning") {

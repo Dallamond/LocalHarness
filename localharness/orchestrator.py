@@ -68,7 +68,8 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
     extra = ({**config_kwargs({"base_url": settings.load(store)["local_base_url"], **cfg}), "api_key": llama.API_KEY}
              if agent["provider"] in ("local", "local_agent") else {})
     if agent["provider"] == "local_agent":  # el bucle de agente local tiene sus propios ajustes
-        extra.update({k: cfg[k] for k in ("tool_mode", "max_tool_chars", "max_context_chars", "web") if k in cfg})
+        extra.update({k: cfg[k] for k in ("tool_mode", "max_tool_chars", "max_context_chars", "web", "commands",
+                                          "command_timeout_s") if k in cfg})
     adapter = get_adapter(agent["provider"], binary=(binaries or {}).get(agent["provider"]) or cfg.get("binary"),
                           **extra)
 
@@ -118,7 +119,9 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
                    extra_tools=[SUBAGENT_TOOL] if cfg.get("subagents") and agent["provider"] == "claude" else [],
                    session_id=task["session_id"] if resume else None,
                    mcp_config=deleg["config"] if deleg else None, mcp_tools=deleg["tools"] if deleg else [],
-                   env=deleg["env"] if deleg else {})
+                   env=deleg["env"] if deleg else {},
+                   ask_director=(_director_line(store, task, ws, binaries)
+                                 if agent["provider"] == "local_agent" else None))
     if followup is not None:
         sink(Event("user", text=followup))
     sink(Event("status", text="running"))
@@ -150,6 +153,36 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
     sink(Event("status", text=status))
     return {**res, "status": status, "diff": ws.diff_range(base, head), "changes": changes,
             "stat": git_stat(ws, base, head)}
+
+
+def _director_line(store: Store, task: dict, ws: workspace.Workspace, binaries: dict[str, str] | None):
+    """Para un agente local dentro de un plan: `preguntar_director` reanuda la sesión de Claude del Director
+    (ya conoce la petición y el plan) con la pregunta. Solo lectura, pocos turnos y tope de gasto."""
+    if not task.get("plan_id"):
+        return None
+    d = next((t for t in store.plan_tasks(task["plan_id"]) if t["kind"] == "director"), None)
+    director = store.get_agent(d["agent_id"]) if d and d["agent_id"] else None
+    if not d or not d.get("session_id") or not director or director["provider"] != "claude":
+        return None
+    dcfg = json.loads(director["config"] or "{}")
+
+    async def ask(question: str) -> tuple[str, float]:
+        adapter = get_adapter("claude", binary=(binaries or {}).get("claude") or dcfg.get("binary"))
+        prompt = (f"Un trabajador del equipo (agente local) está con la subtarea «{task['title']}» de tu plan y te "
+                  f"pregunta:\n\n{question}\n\nResponde corto y concreto, con una decisión clara. No modifiques "
+                  "archivos ni rehagas el plan.")
+        spec = RunSpec(prompt=prompt, cwd=str(ws.path), model=director["model"], read_only=True, max_turns=3,
+                       max_budget_usd=0.2, session_id=d["session_id"])
+        got: dict = {"cost": 0.0}
+
+        def collect(ev: Event) -> None:
+            if ev.kind == "usage" and ev.data.get("cost_usd") is not None:
+                got["cost"] = ev.data["cost_usd"]
+        res = await run(adapter, spec, collect, timeout_s=300)
+        if res["status"] != "done" or not (res.get("final") or "").strip():
+            return "El Director no ha podido responder. Decide tú y explícalo en `terminar`.", got["cost"]
+        return res["final"].strip(), got["cost"]
+    return ask
 
 
 def _had_delegation(store: Store, task_id: int) -> bool:
