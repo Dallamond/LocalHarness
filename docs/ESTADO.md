@@ -1,6 +1,63 @@
 # Estado y traspaso — leer primero al retomar (también desde Claude Code en la web)
 
-Última actualización: 06/10/2026 (sesión 3: tareas 1–6 y 9 hechas, más M5-GUI, M6 y clave de llama-server). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
+Última actualización: 06/10/2026, mediodía (sesión 3 + delegación en Qwen + rumbo nuevo: oficina 3D y Atlas). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
+
+## ▶ SIGUIENTE SESIÓN — EMPEZAR AQUÍ (06/10/2026, mediodía)
+
+### Decisiones de Lucas de hoy
+- **GUI final = su prototipo** `docs/prototipos/localharness-gui-prototipo-v2_1.html` (ábrelo en el navegador): oficina
+  low-poly en three.js con un puesto por agente, cabecera con misión y Ejecutar, izquierda **Misión** + **Bandeja de
+  aprobaciones**, derecha **Recursos** (GPU, ventana de 5 h de Claude, tok/s, worktrees) + **Inspector** del agente,
+  abajo **Timeline / Terminal / Diff**, y **Catálogo** (Agentes · Skills · Servidores MCP, con importar JSON
+  `mcpServers`, `SKILL.md` y agentes). v2 es la versión anterior.
+- La oficina **sustituye al Inicio**; Chat, Planes, Modelos y Ajustes siguen como páginas.
+- **Nada de gamificación** (fuera XP, niveles, logros, sonidos y cámara cine del prototipo).
+- Ir **agente a agente**: crear uno, comprobar que todo funciona de punta a punta y pasar al siguiente.
+  Primero **Atlas** (Claude Director que delega en Qwen); luego Sentinel (jefe técnico), Forge (programador), Scout.
+- Lucas autorizó UNA ejecución real de verificación (hecha, ver abajo). Para más, preguntar.
+
+### Flujo de trabajo que quiere Lucas (visión)
+«Lo lógico es que se adapte a cada proyecto: lo analice, cree agentes específicos, sepa qué modelos locales elegir y
+qué skills usar y qué hace falta, y lo divida todo en tareas que yo pueda ir comprobando bien.»
+Propuesta: la primera tarea de Atlas es **Analizar proyecto** → devuelve una propuesta estructurada (`--json-schema`):
+agentes a crear (rol, Claude o local, qué GGUF de los suyos según tamaño/VRAM de la 3060 de 12 GB, skills y MCP de
+cada uno), qué falta (herramientas, tests, dependencias) y el trabajo partido en tareas pequeñas verificables. Lucas
+aprueba/quita cada pieza en la GUI y entonces se crean agentes y tareas (encaja con planes, catálogo y bandeja).
+La lectura gruesa del repo, delegada en Qwen para no gastar plan.
+
+### Prueba real de hoy (Haiku, 0,035 $, sandbox temporal, Qwen2.5-Coder-7B arrancado con clave)
+- Subagentes: con `--tools ...,Agent` el evento `init` lista **`Task`** → la CLI 2.1.287 acepta `Agent` como alias y
+  la herramienta existe. ✅ (punto 10 resuelto)
+- **Delegación: ❌ las herramientas `mcp__local__*` NO aparecen en `init.tools`**; Claude hizo la tarea solo (Glob,
+  Read ×3, Write). O `--safe-mode` desactiva también los servidores de `--mcp-config`, o `--tools` (lista de
+  integradas) filtra las MCP. Arreglo propuesto, por orden:
+  1. Con delegación, añadir también `mcp__local__local_ask,...` a `--tools`.
+  2. Si sigue sin salir: con delegación, NO pasar `--safe-mode` y aislar con `--setting-sources ""` +
+     `--strict-mcp-config` (+ comprobar que el contexto sigue en ~5k tokens, no 245k).
+  Cómo verificarlo casi gratis: lanzar `claude -p` y cortar en cuanto llegue el evento `init` (lista de tools y
+  `mcp_servers` con su estado) — pedir permiso a Lucas antes.
+  Script de la prueba: crear Store temporal + `sandbox.create` + `LlamaManager` + agente haiku con
+  `delegate_local`/`subagents`, `execute_task` imprimiendo `session.tools` y eventos.
+
+### Orden de trabajo propuesto
+1. Arreglar la carga del MCP (arriba) y repetir la prueba hasta ver encargos `delegate` reales.
+2. Esqueleto de la oficina en Vue (three.js por npm) con agentes REALES como puestos y datos reales en paneles
+   (bandeja = `/api/inbox`, timeline/terminal = eventos, diff = `/api/tasks/{id}/review`, recursos = `/api/llama`,
+   `/api/health` límite 5 h/7 d y tok/s, worktrees = `/api/maintenance`, inspector = agente + respuesta).
+3. Catálogo real: agentes (CRUD existente), skills (`/api/skills` + importar SKILL.md a `skills/`), registro de
+   servidores MCP en ajustes asignables por agente (el `local` de Qwen de serie) → `--mcp-config` por agente.
+4. Atlas «Analizar proyecto» (propuesta → aprobar → crear agentes y tareas). Después Sentinel, Forge (tarea 8), Scout.
+
+### Para trabajar desde otro PC (clase)
+```
+git clone https://github.com/Dallamond/LocalHarness.git && cd LocalHarness
+python -m venv .venv && .venv/Scripts/python -m pip install -e .[server]     # Linux: .venv/bin/python
+.venv/Scripts/python -m unittest discover -s tests -t .                       # 79 pruebas, NUNCA llaman a Claude real
+cd web && npm install && npm run build && cd .. && .venv/Scripts/python -m localharness serve   # :8095
+```
+Sin GPU ni llama-server, los agentes locales no responden (todo lo demás sí). Sin `claude` logueado, no lanzar
+tareas reales de Claude: las pruebas usan la CLI falsa `tests/fakes/claude`. La base de datos (`data/`) no se sube:
+el estado está en este documento.
 
 ## Dónde estamos
 | Hito | Estado |
@@ -185,7 +242,7 @@ Script: rehacer con `LlamaManager` + `reviewer_prompt` + `REVIEW_SCHEMA` y `tool
    - Resultado esperado: un documento corto con la opción recomendada, una prueba real con Qwen en el sandbox
      (`python -m localharness sandbox`) y el coste/tiempo medido.
 
-10. **Verificar `Agent`** (ver punto 1) con una ejecución real barata, cuando Lucas lo autorice.
+10. ~~Verificar `Agent`~~ hecho: la CLI lo acepta y lo lista como `Task`.
 
 ## Sesión 2 — feedback de Lucas y lo que se hizo
 Feedback tras probar la GUI: «la respuesta final se pone en un md que no puedo contestar». Pide:
