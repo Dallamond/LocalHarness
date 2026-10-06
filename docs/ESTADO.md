@@ -28,19 +28,20 @@ La lectura gruesa del repo, delegada en Qwen para no gastar plan.
 ### Prueba real de hoy (Haiku, 0,035 $, sandbox temporal, Qwen2.5-Coder-7B arrancado con clave)
 - Subagentes: con `--tools ...,Agent` el evento `init` lista **`Task`** → la CLI 2.1.287 acepta `Agent` como alias y
   la herramienta existe. ✅ (punto 10 resuelto)
-- **Delegación: ❌ las herramientas `mcp__local__*` NO aparecen en `init.tools`**; Claude hizo la tarea solo (Glob,
-  Read ×3, Write). O `--safe-mode` desactiva también los servidores de `--mcp-config`, o `--tools` (lista de
-  integradas) filtra las MCP. Arreglo propuesto, por orden:
-  1. Con delegación, añadir también `mcp__local__local_ask,...` a `--tools`.
-  2. Si sigue sin salir: con delegación, NO pasar `--safe-mode` y aislar con `--setting-sources ""` +
-     `--strict-mcp-config` (+ comprobar que el contexto sigue en ~5k tokens, no 245k).
-  Cómo verificarlo casi gratis: lanzar `claude -p` y cortar en cuanto llegue el evento `init` (lista de tools y
-  `mcp_servers` con su estado) — pedir permiso a Lucas antes.
-  Script de la prueba: crear Store temporal + `sandbox.create` + `LlamaManager` + agente haiku con
-  `delegate_local`/`subagents`, `execute_task` imprimiendo `session.tools` y eventos.
+- **Delegación: ✅ ARREGLADA (06/10/2026, tarde).** Causa verificada leyendo el evento `init` (cortando el proceso antes de
+  llamar al modelo, coste 0): `--safe-mode` desactiva también los servidores de `--mcp-config`. Ahora, SOLO cuando hay
+  delegación, el adaptador usa `--setting-sources "" --disable-slash-commands --strict-mcp-config` y el entorno
+  `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` (verificado: sin ella Claude leía el CLAUDE.md del vault y contestaba en español).
+  Contexto medido: ~11,6k tokens (4,6k con `--safe-mode`; los 245k de antes eran MCP/plugins del usuario). Sin
+  delegación se mantiene `--safe-mode`. Las herramientas MCP basta con ponerlas en `--allowedTools`.
+- **Prueba real tras el arreglo (Haiku, 0,048 $):** Claude delegó SOLO, sin pedírselo en la petición: `local_ask` para
+  explicar los 3 .py (Qwen los leyó), `local_write_file` para `tests/test_resta.py` (lo escribió Qwen) y un `Read` para
+  revisarlo. Ojo: en una tarea TAN pequeña cuesta más que sin delegar (0,035 $), porque el contexto base pasa de 4,6k
+  a 11,6k tokens. El ahorro llega con archivos grandes y mucho código generado. Idea pendiente: medirlo con una tarea
+  mediana y, si compensa, recortar contexto (p. ej. `--disallowedTools Task` si no hacen falta subagentes).
 
 ### Orden de trabajo propuesto
-1. Arreglar la carga del MCP (arriba) y repetir la prueba hasta ver encargos `delegate` reales.
+1. ~~Arreglar la carga del MCP~~ hecho. Medir el ahorro real con una tarea mediana (pedir permiso).
 2. Esqueleto de la oficina en Vue (three.js por npm) con agentes REALES como puestos y datos reales en paneles
    (bandeja = `/api/inbox`, timeline/terminal = eventos, diff = `/api/tasks/{id}/review`, recursos = `/api/llama`,
    `/api/health` límite 5 h/7 d y tok/s, worktrees = `/api/maintenance`, inspector = agente + respuesta).

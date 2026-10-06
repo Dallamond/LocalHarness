@@ -162,7 +162,8 @@ def _delegation(store: Store, root: Path, write: bool) -> dict:
     tools = [DELEGATE_TOOLS["local_ask"]] + ([DELEGATE_TOOLS["local_write_file"]] if write else [])
     # los encargos al modelo local pueden tardar minutos: el tope por defecto de la CLI para una herramienta MCP es corto
     return {"dir": d, "config": str(path), "log": log, "tools": tools, "seen": 0,
-            "env": {"MCP_TOOL_TIMEOUT": "900000", "MCP_TIMEOUT": "30000"}}
+            # sin --safe-mode (bloquea el MCP): el CLAUDE.md del usuario/vault se apaga con esta variable (verificado)
+            "env": {"MCP_TOOL_TIMEOUT": "900000", "MCP_TIMEOUT": "30000", "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1"}}
 
 
 async def _watch_delegations(deleg: dict, sink: Callable[[Event], None], every: float = 1.0) -> None:

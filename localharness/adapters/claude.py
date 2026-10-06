@@ -48,7 +48,12 @@ class ClaudeAdapter(Adapter):
 
     def build_command(self, spec: RunSpec) -> list[str]:
         cmd = [self.binary, "-p", "--output-format", "stream-json", "--verbose"]
-        if self.isolated:
+        if self.isolated and spec.mcp_config:
+            # --safe-mode desactiva TAMBIÉN los servidores de --mcp-config (verificado 06/10/2026: init sin
+            # mcp__local__*). Con MCP se aísla de otra forma: sin settings (hooks/plugins del usuario), sin skills y,
+            # vía env CLAUDE_CODE_DISABLE_CLAUDE_MDS=1, sin CLAUDE.md. Contexto medido: ~11,6k tokens (4,6k con safe-mode).
+            cmd += ["--setting-sources", "", "--disable-slash-commands", "--strict-mcp-config"]
+        elif self.isolated:
             cmd += ["--safe-mode", "--strict-mcp-config"]
         if spec.model:
             cmd += ["--model", spec.model]

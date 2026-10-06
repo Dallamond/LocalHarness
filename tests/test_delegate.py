@@ -93,6 +93,11 @@ class AdapterTests(unittest.TestCase):
                                                           mcp_tools=["mcp__local__local_ask"]))
         self.assertEqual(cmd[cmd.index("--mcp-config") + 1], "m.json")
         self.assertIn("--strict-mcp-config", cmd)  # solo nuestro servidor, nada del usuario
+        self.assertNotIn("--safe-mode", cmd)  # bloquea también los servidores de --mcp-config (verificado)
+        self.assertEqual(cmd[cmd.index("--setting-sources") + 1], "")
+        self.assertIn("--disable-slash-commands", cmd)
+        plain = get_adapter("claude").build_command(RunSpec(prompt="x", cwd="."))
+        self.assertIn("--safe-mode", plain)  # sin MCP, el aislamiento barato de siempre
         self.assertIn("mcp__local__local_ask", cmd[cmd.index("--allowedTools") + 1])
         self.assertNotIn("mcp__", cmd[cmd.index("--tools") + 1])  # --tools es solo para las integradas
 
