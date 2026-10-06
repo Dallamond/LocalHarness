@@ -47,6 +47,7 @@ export interface Task {
   level: string | null;
   approved_by: string | null;
   head_commit?: string | null;
+  skills?: string[];
 }
 
 /** Subtarea dentro del detalle de un plan (motivos y veredicto ya decodificados). */

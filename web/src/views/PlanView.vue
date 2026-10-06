@@ -118,6 +118,9 @@ function diffClass(l: string): string {
           <span class="muted small">{{ agentName(t.agent_id) }}<template v-if="t.approved_by"> · aprobó {{ t.approved_by }}</template></span>
           <span class="mono small">{{ usd(t.cost_usd) }}</span>
         </div>
+        <p v-if="t.skills?.length" class="small skills">Skills elegidas por el Director:
+          <span v-for="n in t.skills" :key="n" class="skilltag">{{ n }}</span>
+        </p>
         <ul v-if="t.kind === 'worker' && t.level_reasons?.length" class="reasons">
           <li v-for="(r, i) in t.level_reasons" :key="i">{{ r }}</li>
         </ul>
@@ -150,6 +153,21 @@ function diffClass(l: string): string {
 }
 .small {
   font-size: 12px;
+}
+.skills {
+  margin: 4px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-dim);
+}
+.skilltag {
+  padding: 1px 8px;
+  border-radius: 6px;
+  background: var(--accent-weak);
+  color: var(--accent);
+  font-weight: 600;
 }
 .reasons {
   margin: 6px 0 0 18px;

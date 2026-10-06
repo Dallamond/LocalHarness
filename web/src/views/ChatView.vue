@@ -7,7 +7,7 @@ import StatusChip from "../components/StatusChip.vue";
 import {
   ROLE_TEXT, STATUS_TEXT, agentName, ago, api, live, onTaskEvent, parseTs, pickPath, post, projectName,
   refreshAll, speedText, statusChip, taskList, usd,
-  type Plan, type Project, type Review, type Task, type TaskEvent,
+  type Plan, type Project, type Review, type Skill, type Task, type TaskEvent,
 } from "../api";
 
 const props = defineProps<{ id?: number }>();
@@ -141,7 +141,13 @@ async function act(path: string, body: unknown = {}, question?: string) {
 const draft = ref("");
 const sending = ref(false);
 const mode = ref<"agent" | "team">("agent");
-const form = reactive({ project_id: 0, agent_id: 0, director_agent_id: 0, reviewer_agent_id: 0 });
+const form = reactive({ project_id: 0, agent_id: 0, director_agent_id: 0, reviewer_agent_id: 0, skills: [] as string[] });
+
+// M5: skills para esta conversación (se suman a las que el agente ya lleva siempre)
+const skills = ref<Skill[]>([]);
+const showSkills = ref(false);
+api<Skill[]>("/api/skills").then((s) => (skills.value = s)).catch(() => {});
+const agentSkills = computed(() => live.agents.find((a) => a.id === form.agent_id)?.config.skills ?? []);
 
 watchEffect(() => {
   if (!form.project_id && live.projects.length) form.project_id = live.projects[live.projects.length - 1].id;
@@ -170,7 +176,11 @@ async function send() {
       });
       router.push(`/planes/${p.id}`);
     } else {
-      const t = await post<Task>("/api/tasks", { project_id: form.project_id, agent_id: form.agent_id, prompt: text });
+      const t = await post<Task>("/api/tasks", {
+        project_id: form.project_id, agent_id: form.agent_id, prompt: text,
+        skills: form.skills.filter((n) => !agentSkills.value.includes(n)),
+      });
+      form.skills = [];
       live.tasks[t.id] = t;
       router.push(`/chat/${t.id}`);
     }
@@ -354,6 +364,18 @@ const placeholder = computed(() => {
                   <span v-if="a.config.description" class="small">{{ a.config.description }}</span>
                 </span>
               </button>
+            </div>
+            <div v-if="skills.length" class="skillpick">
+              <button type="button" class="btn btn--small btn--ghost" @click="showSkills = !showSkills">
+                {{ showSkills ? "▾" : "▸" }} Skills para esta conversación<template v-if="form.skills.length"> ({{ form.skills.length }})</template>
+              </button>
+              <div v-if="showSkills" class="skillpick__list">
+                <label v-for="s in skills" :key="s.name" class="pick" :title="s.description">
+                  <input v-if="agentSkills.includes(s.name)" type="checkbox" checked disabled />
+                  <input v-else v-model="form.skills" type="checkbox" :value="s.name" />
+                  {{ s.name }}<span v-if="agentSkills.includes(s.name)" class="muted small"> (ya la lleva el agente)</span>
+                </label>
+              </div>
             </div>
           </template>
           <div v-else class="row">
@@ -557,6 +579,24 @@ const placeholder = computed(() => {
   white-space: pre-wrap;
   text-align: left;
   border-radius: var(--radius-sm);
+}
+.skillpick {
+  display: grid;
+  gap: 6px;
+}
+.skillpick > .btn {
+  justify-self: start;
+}
+.skillpick__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+.skillpick .pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
 }
 .typing {
   display: flex;

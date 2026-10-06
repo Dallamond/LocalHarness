@@ -102,6 +102,7 @@ class TaskIn(BaseModel):
     prompt: str = Field(min_length=1)
     title: str | None = None
     start: bool = True
+    skills: list[str] | None = None  # M5: skills inyectadas solo en esta tarea (además de las del agente)
 
 
 class MergeIn(BaseModel):
@@ -433,7 +434,7 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         if body.start and store.list_tasks(body.project_id, status="running"):
             raise HTTPException(409, "Ese proyecto ya tiene una tarea en marcha (una por repo a la vez)")
         title = (body.title or body.prompt.strip().splitlines()[0])[:80]
-        t = store.add_task(body.project_id, title, body.prompt, body.agent_id)
+        t = store.add_task(body.project_id, title, body.prompt, body.agent_id, skills=body.skills or [])
         request.app.state.hub.publish("task", task_out(t))
         if body.start:
             request.app.state.runner.start(t["id"])
@@ -636,7 +637,8 @@ def plan_out(p: dict) -> dict:
 
 def task_out(t: dict) -> dict:
     return {**t, "level_reasons": json.loads(t.get("level_reasons") or "[]"),
-            "review": json.loads(t["review"]) if t.get("review") else None}
+            "review": json.loads(t["review"]) if t.get("review") else None,
+            "skills": json.loads(t.get("skills") or "[]")}
 
 
 def _pick_dialog(kind: str, title: str | None) -> str:

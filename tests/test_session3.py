@@ -189,6 +189,16 @@ class AgentFieldsApiTests(unittest.TestCase):
             h = c.get("/api/health").json()
             self.assertIn("local", h)
 
+    def test_task_skills_from_api(self):
+        with tempfile.TemporaryDirectory() as tmp, TestClient(create_app(Path(tmp) / "lh.db", web_dist=None)) as c:
+            repo = make_repo(tmp)
+            pid = c.post("/api/projects", json={"name": "d", "repo_path": str(repo)}).json()["id"]
+            aid = c.post("/api/agents", json={"name": "w", "provider": "claude"}).json()["id"]
+            t = c.post("/api/tasks", json={"project_id": pid, "agent_id": aid, "prompt": "x", "start": False,
+                                           "skills": ["tests-primero"]}).json()
+            self.assertEqual(t["skills"], ["tests-primero"])  # decodificadas, no la cadena JSON
+            self.assertEqual(c.get(f"/api/tasks/{t['id']}").json()["skills"], ["tests-primero"])
+
 
 if __name__ == "__main__":
     unittest.main()
