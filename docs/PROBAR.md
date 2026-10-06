@@ -70,3 +70,10 @@ así llevan clave y barra de progreso.
 7. (Gasta plan, solo si quieres) Agente Claude con «Puede crear subagentes» + Haiku y tope 0,2 $, petición:
    «Usa un subagente para listar los archivos .py y resume qué hace cada uno». Si dice que no tiene la herramienta,
    pásame el número de tarea.
+
+## 5. Claude delega en el modelo local
+1. Modelos locales → arranca **qwen2.5-coder-7b** (rápido y no se queda pensando).
+2. Ajustes → Agentes → edita un agente Claude (mejor Haiku o Sonnet con tope) → marca **Puede delegar en el modelo local**.
+3. Chat con ese agente, en el sandbox: «Explícame qué hace cada archivo y escribe tests para calc.py».
+   Deberías ver tarjetas verdes «🦙 Modelo local respondió a… / escribió tests/…» y al final
+   «N encargos al modelo local · X tokens hechos gratis en local». Compara el coste con una tarea igual sin la casilla.

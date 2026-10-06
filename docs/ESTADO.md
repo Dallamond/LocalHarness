@@ -142,6 +142,22 @@ tarea 8 (agentes locales autónomos): con el llama-server actual y `--jinja`, **
 de verdad**; los Qwen2.5-Coder responden la llamada como texto JSON (se podría parsear como alternativa).
 Script: rehacer con `LlamaManager` + `reviewer_prompt` + `REVIEW_SCHEMA` y `tools` en /v1/chat/completions.
 
+**Claude delega en el modelo local (06/10/2026, tras el feedback «no se comunican, todo es un chat»)**
+- `localharness/mcp_local.py`: servidor MCP stdio propio (JSON-RPC a mano, sin dependencias) con `local_ask`
+  (el servidor lee los archivos del worktree y Qwen responde: Claude no gasta tokens leyéndolos) y `local_write_file`
+  (Qwen escribe el archivo entero; confinado al worktree, nunca `.git`). Solo lectura → solo `local_ask`.
+- Agente Claude con `config.delegate_local` («Puede delegar en el modelo local» en Ajustes): el orquestador crea
+  un `mcp.json` temporal (lleva la clave de llama-server; se borra al acabar), pasa `--mcp-config` (con
+  `--strict-mcp-config` solo carga ese), auto-aprueba `mcp__local__*`, sube `MCP_TOOL_TIMEOUT` y añade al prompt la
+  guía de cuándo delegar. El servidor se lanza POR RUTA (desde el worktree `-m localharness...` no se encuentra).
+- Eventos `delegate` (en vivo, leyendo `encargos.jsonl`) y `delegate_summary` (tokens hechos en local) → tarjetas
+  verdes «🦙 Modelo local» en el chat; el Inicio dice «Encargando al modelo local: …».
+- Real con Qwen2.5-Coder-7B (coste 0): `local_ask` encontró los dos fallos de calc.py en 2,7 s; `local_write_file`
+  escribió test_calc.py correcto en 3 s. La CLI falsa lanza el servidor MCP de verdad en `tests/test_delegate.py`.
+- ⚠ SIN VERIFICAR con la CLI real: que `--safe-mode` no bloquee los servidores de `--mcp-config` y que Claude use las
+  herramientas por iniciativa propia. Si `--safe-mode` los bloquea: quitarlo solo cuando hay delegación y aislar con
+  `--setting-sources ""` + `--strict-mcp-config`. Una ejecución con Haiku verifica esto y el nombre `Agent` a la vez.
+
 **Queda (necesita a Lucas)**
 7. **Repasar roles y skills** («creo que se puede optimizar mucho; tendremos que ver cómo lo acabamos
    configurando»). Decidir con Lucas antes de tocar: qué roles existen (Director, jefe técnico, trabajador,
