@@ -1,6 +1,6 @@
 # Estado y traspaso — leer primero al retomar (también desde Claude Code en la web)
 
-Última actualización: 05/10/2026 (fin de la sesión 2; tareas de la 3 apuntadas). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
+Última actualización: 06/10/2026 (sesión 3: tareas 1–6 y 9 hechas, más M5-GUI, M6 y clave de llama-server). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
 
 ## Dónde estamos
 | Hito | Estado |
@@ -10,10 +10,10 @@
 | M1 CLI | ✅ |
 | M2 API + GUI | ✅ probado con CLI falsa (también en navegador) |
 | M3 Jerarquía | ✅ Director + jefe técnico + N0/N1/N2 + bandeja; CLI y API. Probado real con Haiku (0,087 $) |
-| M4 Modelos locales | 🔄 proveedor `local` probado real con Qwen2.5-Coder 7B Q8 (Director y jefe, coste 0) |
+| M4 Modelos locales | 🔄 proveedor `local` probado real (Qwen2.5-Coder 7B, Qwen3.5 4B/9B, Coder 14B); progreso, tok/s, config por modelo |
 | GUI de M3 | ✅ Pendiente de ti, Planes, detalle de plan; probada en navegador con agentes locales |
-| M5 Skills y memoria | ✅ núcleo, CLI y pruebas (aceptación cubierta). Falta en la GUI |
-| M6 Flujo Git | ⏳ pendiente |
+| M5 Skills y memoria | ✅ núcleo, CLI, pruebas y GUI (skills por conversación, skills del Director en el plan) |
+| M6 Flujo Git | 🔄 conflictos de merge seguros + limpieza de huérfanos. Falta rama de integración por proyecto |
 | Pruebas de Lucas | ⏳ con `sandbox` + `docs/PROBAR.md`; esperar su feedback |
 
 ## Decisiones de Lucas (05/10/2026)
@@ -85,35 +85,54 @@ qwen-director, qwen-jefe (local), haiku-director, haiku-jefe, sonnet-trabajador 
   consulta de solo lectura correcta en 28 s; plan con Director y jefe locales en 14 s; el jefe local detectó que
   el trabajador (falso) no hizo lo pedido y escaló a N2. Todo coste 0.
 
-## Sesión 3 — TAREAS PENDIENTES (EMPEZAR POR AQUÍ)
-Feedback de Lucas tras probar el chat y los modelos locales (05/10/2026). Nada de esto está implementado aún.
-Funciona: el chat con Claude (conversación con respuestas) y, bastante bien, la página de modelos locales.
+## Sesión 3 (06/10/2026) — QUÉ SE HIZO Y QUÉ QUEDA (EMPEZAR POR AQUÍ)
+Lucas pidió seguir implementando mientras él investiga con NotebookLM cómo crear agentes (tarea 8). Hecho, con
+pruebas (71 en verde) y GUI compilada; nada probado aún por Lucas en el navegador (lista en `docs/PROBAR.md` §4).
 
-1. **Subagentes en Claude.** Le pidió al agente que creara subagentes y respondió que no tiene esa herramienta.
-   Causa (verificada en la tarea #3 de su base de datos): la CLI hija va con `--tools` limitado a
-   `Read,Glob,Grep,Edit,Write` (`adapters/claude.py`, `WRITE_TOOLS`); falta la herramienta de subagentes `Agent`.
-   Propuesta: opción por agente `config.subagents` (casilla «Puede crear subagentes» en Ajustes → Agentes, solo
-   claude) que añade `Agent` a `--tools`/`--allowedTools` (p. ej. campo `extra_tools` en `RunSpec`). Desactivada por
-   defecto: multiplica el gasto del plan. Comprobar con la CLI real que el nombre es `Agent` (antes `Task`) con
-   `--safe-mode`, con Haiku y topes.
-2. **Barra de progreso al cargar un modelo** en Modelos locales. llama.cpp imprime un `.` por cada 1 % de tensores
-   cargados (callback de progreso por defecto): contar los puntos de la línea tras `load_tensors` en
-   `data/llama-server.log` → % (p. ej. 90 % tensores + etapas contexto/calentamiento hasta «listo»). Añadirlo a
-   `LlamaManager.status()` como `progress {pct, stage}`.
-3. **Mostrar siempre 1–2 líneas del log de llama-server** en la tarjeta de estado (las últimas no vacías y que no sean
-   solo puntos), para ver que va bien sin abrir el log entero.
-4. **Medidor de tokens por segundo.** El adaptador local ya manda `tps` (`timings.predicted_per_second`) en el evento
-   `usage` al final. Añadir: evento `speed` cada ~1,5 s durante el streaming (tokens/s, tokens, fase «pensando» si son
-   `reasoning_content` —DeepSeek-R1 piensa mucho: la tarea #4 tardó 10 min— o «escribiendo»), mostrarlo en vivo en el
-   chat (burbuja «escribiendo…»), en la tarjeta del agente del Inicio y la última velocidad en Modelos locales.
-5. **Configuración pequeña por modelo local**: por cada GGUF, contexto, capas en GPU y argumentos extra
-   (p. ej. `-fa on -t 8`), guardado en ajustes (`llama.per_model[path]`) y usado al arrancar. En los agentes locales,
-   exponer en Ajustes `temperature`, `max_tokens` y `repo_context` (ya existen en `config_kwargs`, no en la GUI).
-6. **Tarea «colgada».** Era la #3: aprobada pero sin integrar (estado `approved`), así que se queda esperando en
-   «Pendiente de ti». Lucas quiere poder aceptar o no directamente desde el Inicio: botones en «Te toca a ti»
-   (tarea por revisar → Aprobar e integrar / Descartar; plan → Aprobar / Rechazar; integrar plan → Integrar /
-   Rechazar; subtarea N2 → Aprobar y seguir / Rechazar, o abrir el plan para ver el diff). Revisar además que las
-   subtareas `pending` de planes que acaban (failed/cancelled/rejected) no se queden pendientes para siempre.
+**Hecho**
+1. **Subagentes en Claude** — `config.subagents` (casilla «Puede crear subagentes» en Ajustes → Agentes, solo
+   claude) añade `Agent` a `--tools`/`--allowedTools` vía `RunSpec.extra_tools`. Desactivado por defecto.
+   ⚠ SIN VERIFICAR con la CLI real que la herramienta se llama `Agent` (antes `Task`): pedir permiso a Lucas para
+   una ejecución con Haiku y topes (`claude -p --tools Agent,Read ...` y mirar `tools` del evento `init`).
+2. **Barra de progreso al cargar un modelo** — `LlamaManager.status()` → `progress {pct, stage, source, eta_s}`.
+   Hallazgo: el llama-server b11379 (verbosidad 3) YA NO imprime los puntos de progreso. Fuentes, por orden: puntos
+   tras `load_tensors` (versiones antiguas), lo que tardó ese GGUF la última vez (`data/llama-load-times.json`; se
+   guarda la carga MÁS LENTA, la de en frío) o barra indeterminada con la etapa (leyendo del disco / contexto…).
+3. **1–2 líneas del log** siempre visibles en la tarjeta de estado (`log_lines`, sin las de solo puntos).
+4. **Tokens por segundo** — evento `speed` cada 1,5 s (`SPEED_EVERY_S`) con tps, tokens y fase pensando/escribiendo;
+   NO se guarda en la BD (`orchestrator.EPHEMERAL`). Se ve en la burbuja «escribiendo…» del chat, en la tarjeta del
+   agente del Inicio y la última velocidad en Modelos locales (`runner.last_speed`, también en `/api/health`).
+   Real: Qwen3.5-4B ~73 tok/s en la 3060.
+   Hallazgo: un modelo que razona puede gastar TODOS los tokens pensando y devolver respuesta vacía (pasó con
+   Qwen3.5-4B y 400 tokens; es lo de DeepSeek). Ahora eso es `failed` con un mensaje claro (subir «Tokens de respuesta»).
+5. **Configuración por modelo** — `llama.per_model[ruta] = {ctx, ngl, extra}` («⚙ Arranque de este modelo» en cada
+   tarjeta; `settings.llama_launch`). En Ajustes → Agentes locales: temperatura, tokens de respuesta, contexto del repo.
+6. **Decidir desde el Inicio** — botones en «Te toca a ti»: tarea por revisar → Aprobar e integrar / Descartar
+   (aprobada → Integrar); plan → Aprobar / Rechazar; integrar plan → Integrar / Rechazar; subtarea N2 → Aprobar y
+   seguir / Rechazar; y «Ver diff». Las subtareas `pending` de planes que acaban mal pasan a `cancelled`
+   (`hierarchy.close_pending`, y al arrancar en `store.mark_interrupted`).
+9. **Modelo real en agentes locales** — el evento `session` lleva el modelo ARRANCADO (de `/v1/models`, sin ruta ni
+   `.gguf`) y `requested`; aviso si el agente pide otro; ya no se manda `model` al servidor. «+ Crear agente local»
+   crea agentes por rol sin modelo (`local-jefe`, `local-director`, `local-consultas`). Chat, Inicio y Modelos
+   muestran «usa: <modelo arrancado>»; los agentes antiguos con otro modelo avisan y ofrecen «Arrancar <ese>».
+
+**Además (de «Pendiente después»)**
+- M5 GUI: skills por conversación al abrir un chat (`POST /api/tasks` acepta `skills`; `task_out` las decodifica) y
+  las skills elegidas por el Director visibles en cada subtarea del plan.
+- M6: `Workspace.merge` detecta conflictos ANTES con `git merge-tree --write-tree` (git ≥ 2.38; aquí 2.52) y, si aun
+  así falla, aborta y vuelve a tu rama: nunca deja el repo a medio merge (`MergeConflict` con los archivos).
+  Limpieza (`maintenance.py`): al arrancar el servidor y con `python -m localharness cleanup [--dry-run]` borra
+  worktrees/ramas de tareas integradas/rechazadas/descartadas/`done` y planes integrados/rechazados/`done`; conserva
+  fallidas/canceladas/aprobadas e informa de las ramas desconocidas (nunca las borra). Ajustes → Ejecución →
+  Mantenimiento. En los datos de Lucas (simulación): borraría task-1, 2, 4 y 5 (`done`), conserva task-3 (aprobada).
+- llama-server lanzado desde la GUI con `--api-key` aleatoria por arranque (`llama.API_KEY`): cierra el CORS abierto
+  (cualquier web podía usar la GPU por 127.0.0.1). Real: sin clave 401, con clave responde, la clave no sale en el log.
+  Uno lanzado a mano (`llama serve`) sigue sin clave.
+- Pruebas sin ruido de asyncio (`tests/__init__.py`).
+
+BENCH_PLACEHOLDER
+
+**Queda (necesita a Lucas)**
 7. **Repasar roles y skills** («creo que se puede optimizar mucho; tendremos que ver cómo lo acabamos
    configurando»). Decidir con Lucas antes de tocar: qué roles existen (Director, jefe técnico, trabajador,
    consultas…), qué skills lleva cada uno por defecto, si el rol fija herramientas y límites (p. ej. jefe = solo
@@ -140,14 +159,7 @@ Funciona: el chat con Claude (conversación con respuestas) y, bastante bien, la
    - Resultado esperado: un documento corto con la opción recomendada, una prueba real con Qwen en el sandbox
      (`python -m localharness sandbox`) y el coste/tiempo medido.
 
-9. **El agente local muestra el nombre del modelo anterior.** Lucas apagó DeepSeek y arrancó otro; responde más rápido
-   (sí usa el nuevo) pero sigue saliendo «DeepSeek». No está colgado: llama-server sirve el modelo arrancado, y la
-   etiqueta sale de `agent.model`, que «+ Crear agente» rellena con el nombre del GGUF (`ModelsView.vue`, `createAgent`).
-   En `adapters/local.py:73-76` el evento `session` usa `spec.model` y solo pregunta a `/v1/models` si está vacío; el
-   nombre del agente también lleva el modelo. Arreglo propuesto: el evento `session` siempre con el modelo REAL de
-   `/v1/models` (y no mandar `model` al servidor salvo que haga falta); crear agentes locales sin modelo fijo, con
-   nombres por rol (p. ej. `local-jefe`); en el chat, el Inicio y Ajustes mostrar «usa: <modelo arrancado>», y avisar si
-   el agente pide un modelo concreto y el arrancado es otro (o permitir arrancar ese modelo desde ahí).
+10. **Verificar `Agent`** (ver punto 1) con una ejecución real barata, cuando Lucas lo autorice.
 
 ## Sesión 2 — feedback de Lucas y lo que se hizo
 Feedback tras probar la GUI: «la respuesta final se pone en un md que no puedo contestar». Pide:
@@ -196,14 +208,10 @@ Feedback tras probar la GUI: «la respuesta final se pone en un md que no puedo 
 
 ## Pendiente (después de lo anterior)
 1. Recoger el feedback de Lucas de `docs/PROBAR.md` y arreglar lo que salga.
-2. GUI de M5 (resto): elegir skills al crear una tarea suelta, ver el evento `context` y las skills elegidas por el
-   Director en el detalle del plan. (Skills por agente, memoria del proyecto y `GET /api/skills` ya están en Ajustes.)
-3. M6: limpieza de worktrees/ramas huérfanos al arrancar, rama de integración por proyecto, conflictos de merge
-   (parar y avisar), checkpoints.
-4. M4: comparar revisor local vs Claude con el mismo diff; probar Qwen3.5-9B y Qwen-2.5-Coder-14B.
-5. llama-server avisa de CORS abierto: valorar `--api-key` (solo escucha en 127.0.0.1).
-6. Ruido de pruebas: IsolatedAsyncioTestCase imprime avisos «Executing <Task…> took» (modo debug); silenciar.
-7. Estética: la oficina simulada cuando Lucas decida el estilo (de momento, el estilo cálido de la sesión 2).
+2. M6 (resto): rama de integración por proyecto; tras un conflicto, botón «rehacer sobre la rama actual» (rebase de
+   la rama de la tarea o pedírselo al agente).
+3. M4: comparar revisor local vs Claude con el mismo diff (gasta plan: pedir permiso).
+4. Estética: la oficina simulada cuando Lucas decida el estilo (de momento, el estilo cálido de la sesión 2).
 
 ## Hallazgos técnicos clave (no repetir)
 - La CLI hija va aislada: `--safe-mode --strict-mcp-config` (sin eso, 245k tokens por «ok»). `--bare` prohíbe OAuth.

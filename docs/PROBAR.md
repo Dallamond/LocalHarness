@@ -51,3 +51,22 @@ Molesto / confuso: …  (textos, botones, esperas)
 ```
 Útil también: `lh plan show <n>` y `lh plan inbox` en la terminal, o el `#` del plan que se ve en la web.
 Los datos de tus pruebas están en `data/localharness.db` (no se sube a GitHub).
+
+## 4. Novedades de la sesión 3 (06/10/2026) — todo gratis salvo el punto 7
+Antes: `cd web; npm run build; cd ..` y reinicia `serve`. Arranca los modelos desde **Modelos locales** (no a mano):
+así llevan clave y barra de progreso.
+1. **Modelos locales → Arrancar** un modelo que no hayas cargado nunca desde aquí: barra «moviéndose» (sin %) con la
+   etapa y 1–2 líneas del log debajo. Párala y vuelve a arrancarla: ahora debe salir **% y «faltan ~X s»**.
+2. En la tarjeta de un modelo, **⚙ Arranque de este modelo** → pon contexto 8192 y `-fa on` → Guardar. Debe verse
+   «ctx 8192 · -fa on» en la tarjeta y aplicarse al arrancarlo.
+3. **Agentes locales → + Crear agente local** (rol jefe): se llama `local-jefe` y dice «usa <modelo arrancado>».
+   Si tienes agentes viejos con nombre de modelo (p. ej. DeepSeek) y arrancas otro, deben avisar y ofrecer arrancar el suyo.
+4. **Chat** con un agente local: la burbuja «escribiendo…» muestra **pensando/escribiendo · N tok/s · tokens**; la
+   cabecera dice qué modelo usa. Con un modelo que razona y pocos tokens debe salir el aviso «se quedó pensando».
+5. **Inicio → Te toca a ti**: la tarea #3 (aprobada sin integrar) tiene **Integrar / Descartar**. Pruébalo con una
+   tarea del sandbox, no con algo que te importe.
+6. **Ajustes → Agentes → Editar** un agente local: temperatura, tokens de respuesta, contexto del repo. Uno Claude:
+   casilla «Puede crear subagentes». **Ajustes → Ejecución → Mantenimiento**: «Ver qué borraría».
+7. (Gasta plan, solo si quieres) Agente Claude con «Puede crear subagentes» + Haiku y tope 0,2 $, petición:
+   «Usa un subagente para listar los archivos .py y resume qué hace cada uno». Si dice que no tiene la herramienta,
+   pásame el número de tarea.
