@@ -81,7 +81,9 @@ así llevan clave y barra de progreso.
 ## 6. Oficina y Catálogo (sesión 4) — gratis
 Antes: `git pull`, `.venv\Scripts\python -m pip install -e .[server]` (ya no falla), `cd web; npm install; npm run build; cd ..`
 y reinicia `serve`. Abre http://127.0.0.1:8095 (va a la **Oficina**).
-1. Cada agente tiene su puesto; arrastra para girar, rueda para zoom, clic en un puesto o en su placa → inspector.
+1. Al principio solo estás tú: cada agente entra en la oficina cuando le encargas algo (o lo llamas desde «Fuera de
+   la oficina», abajo a la izquierda del 3D) y se queda 2 h tras su último trabajo. El rack del modelo local aparece al
+   arrancar uno en Modelos locales. Cada puesto: arrastra para girar, rueda para zoom, clic en un puesto o en su placa → inspector.
    La barra de arriba del 3D enfoca cada puesto y el rack del modelo local.
 2. **Misión → ＋ Nueva**: proyecto sandbox, un agente local, «¿Qué fallos ves en calc.py?» → Ejecutar. Mira la burbuja
    del muñeco, los pasos, el Timeline y Terminal. Con un modelo arrancado, el rack se enciende.

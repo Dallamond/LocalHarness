@@ -26,8 +26,18 @@ let clock: ReturnType<typeof setInterval>;
 const ROLE_ORDER: Record<string, number> = { director: 0, jefe: 1, trabajador: 2, consultas: 3 };
 const agentsSorted = computed(() => [...live.agents].sort((a, b) =>
   (ROLE_ORDER[a.role ?? ""] ?? 9) - (ROLE_ORDER[b.role ?? ""] ?? 9) || a.id - b.id));
-const shown = computed(() => agentsSorted.value.slice(0, MAX_STATIONS));
-const hidden = computed(() => agentsSorted.value.slice(MAX_STATIONS));
+// En la oficina solo está quien tiene algo que ver con el trabajo: trabajando, esperando tu decisión, que trabajó hace
+// poco (PRESENCE_MS) o que llamaste tú (Catálogo → «En la oficina»). Los demás aparecen cuando se les encarga algo.
+const PRESENCE_MS = 2 * 3600e3;
+const summoned = ref(new Set<number>());
+function lastSeen(aid: number): number {
+  return Math.max(0, ...mine(aid).map((t) => Math.max(parseTs(t.created_at) || 0, parseTs(t.finished_at) || 0)));
+}
+const present = computed(() => agentsSorted.value.filter((a) => runningOf(a.id) || waitingOf(a.id) ||
+  summoned.value.has(a.id) || now.value - lastSeen(a.id) < PRESENCE_MS));
+const shown = computed(() => present.value.slice(0, MAX_STATIONS));
+const hidden = computed(() => present.value.slice(MAX_STATIONS));
+const away = computed(() => agentsSorted.value.filter((a) => !present.value.includes(a)));
 const kindOf = (a: Agent): StationKind =>
   (["director", "jefe", "trabajador", "consultas"].includes(a.role ?? "") ? a.role : "otro") as StationKind;
 const ICON: Record<string, string> = {
@@ -195,6 +205,7 @@ async function launch() {
   try {
     const t = await post<Task>("/api/tasks", { project_id: form.project_id, agent_id: form.agent_id, prompt: form.prompt.trim() });
     live.tasks[t.id] = t;
+    summoned.value = new Set([...summoned.value, form.agent_id]);
     chosen.value = `t${t.id}`;
     form.prompt = "";
     composing.value = false;
@@ -374,6 +385,12 @@ function goView(k: string) {
   office?.view(k);
   if (k !== "iso") sel.value = k;
 }
+/** Trae a un agente a la oficina (aunque no tenga trabajo) y lo enfoca. */
+function callIn(aid: number) {
+  summoned.value = new Set([...summoned.value, aid]);
+  setTimeout(() => pick(`a${aid}`), 50);
+}
+const localOn = computed(() => live.local.state !== "off");
 function pick(id: string) {
   sel.value = id;
   view.value = id;
@@ -395,7 +412,7 @@ onMounted(() => {
     webglError.value = (e as Error).message || "WebGL no disponible";
   }
   syncScene();
-  if (ui.focusAgent) { pick(`a${ui.focusAgent}`); ui.focusAgent = null; }
+  if (ui.focusAgent) { callIn(ui.focusAgent); ui.focusAgent = null; }
   offEvents = onTaskEvent((ev) => {
     if (missionTaskIds.value.has(ev.task_id) && ev.kind !== "speed") events.value.push({ ...ev, ts: undefined });
     // paquetes entre puestos: encargos al modelo local, arranques y entregas
@@ -426,9 +443,10 @@ function syncScene() {
   for (const a of shown.value) office.setState(`a${a.id}`, stateOf(a));
   office.setState("you", live.inbox.length ? "waiting" : "idle");
   office.pending = live.inbox.length > 0;
+  office.setRackVisible(localOn.value);
   office.selected = sel.value;
 }
-watch(() => [specs.value.map((s) => `${s.id}${s.color}${s.kind}`).join(), live.inbox.length, sel.value,
+watch(() => [specs.value.map((s) => `${s.id}${s.color}${s.kind}`).join(), live.inbox.length, sel.value, localOn.value,
   shown.value.map((a) => stateOf(a)).join()], syncScene);
 watch(() => [missionTitle.value, JSON.stringify(steps.value.map((s) => [s.label, s.who, s.state])), progress.value],
   () => office?.drawBoard(missionTitle.value, steps.value, progress.value), { immediate: true, flush: "post" });
@@ -554,7 +572,7 @@ watch(() => [gpus.value, live.local.state, tpsNow.value > 0], () =>
               <span v-if="agentOf(s.id)" class="pdot" :class="`pdot--${agentOf(s.id)!.provider}`" :title="PROVIDER_TEXT[agentOf(s.id)!.provider] ?? agentOf(s.id)!.provider" />
             </button>
           </div>
-          <div class="lbl" data-lbl="rack">
+          <div v-if="localOn" class="lbl" data-lbl="rack">
             <button class="tag tag--btn" @click="pick('rack')">
               <i class="fa-solid fa-server" /> Modelo local · {{ live.local.model ?? LOCAL_TEXT[live.local.state] ?? live.local.state }}
             </button>
@@ -567,12 +585,20 @@ watch(() => [gpus.value, live.local.state, tpsNow.value > 0], () =>
           <button v-for="s in specs" :key="s.id" :class="{ on: view === s.id }" :style="{ '--c': s.color }" @click="goView(s.id)">
             <i class="d" />{{ s.name }}
           </button>
-          <button :class="{ on: view === 'rack' }" :style="{ '--c': LOCAL }" @click="goView('rack')"><i class="d" />Modelo local</button>
+          <button v-if="localOn" :class="{ on: view === 'rack' }" :style="{ '--c': LOCAL }" @click="goView('rack')"><i class="d" />Modelo local</button>
         </div>
-        <p v-if="hidden.length" class="more">
-          {{ hidden.length }} agente{{ hidden.length === 1 ? "" : "s" }} sin puesto (caben {{ MAX_STATIONS }}): {{ hidden.map((a) => a.name).join(", ") }}
-        </p>
+        <div v-if="away.length || hidden.length" class="more">
+          <template v-if="hidden.length">{{ hidden.length }} sin puesto (caben {{ MAX_STATIONS }}) · </template>
+          <span>Fuera de la oficina:</span>
+          <button v-for="a in away" :key="a.id" class="away" :style="{ '--c': agentColor(a) }" :title="`Llamar a ${a.name} a la oficina`" @click="callIn(a.id)">
+            <i class="d" />{{ a.name }}
+          </button>
+        </div>
         <p v-if="webglError" class="more more--err">No se puede dibujar la oficina 3D: {{ webglError }}</p>
+        <p v-else-if="live.agents.length && !shown.length && !webglError" class="hint">
+          <i class="fa-solid fa-door-open" /> La oficina está vacía: los agentes entran cuando les encargas algo
+          (Misión → Nueva) o cuando los llamas desde abajo.
+        </p>
         <p v-if="!live.agents.length" class="hint">
           <i class="fa-solid fa-user-plus" /> Aún no hay agentes. Créalos en <RouterLink to="/ajustes">Ajustes</RouterLink> o en
           <RouterLink to="/modelos">Modelos locales</RouterLink>.
@@ -1183,6 +1209,35 @@ watch(() => [gpus.value, live.local.state, tpsNow.value > 0], () =>
   color: #4a505c;
   font-size: 11.5px;
   font-weight: 600;
+}
+.more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(100% - 24px);
+}
+.away {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border: 1px solid #cbc6ba;
+  border-radius: 99px;
+  background: #eeebe4;
+  color: #1e232d;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.away:hover {
+  background: #d6d2c8;
+}
+.away i.d {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--c);
 }
 .more--err {
   color: #be123c;

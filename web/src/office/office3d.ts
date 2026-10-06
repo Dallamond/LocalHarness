@@ -89,7 +89,7 @@ export class Office {
   private links: { line: THREE.Line; mat: THREE.LineDashedMaterial; flash: number; color: string; a: string; b: string }[] = [];
   private packets: { m: THREE.Mesh; s: THREE.Vector3; e: THREE.Vector3; p: number }[] = [];
   private boards: Record<string, { ctx: CanvasRenderingContext2D; tex: THREE.CanvasTexture }> = {};
-  private rack: { fans: THREE.Mesh[]; leds: THREE.Mesh<THREE.BoxGeometry, THREE.MeshBasicMaterial>[][]; lamp?: THREE.MeshStandardMaterial } = { fans: [], leds: [] };
+  private rack: { group?: THREE.Group; fans: THREE.Mesh[]; leds: THREE.Mesh<THREE.BoxGeometry, THREE.MeshBasicMaterial>[][]; lamp?: THREE.MeshStandardMaterial } = { fans: [], leds: [] };
   private beacon: THREE.Mesh<THREE.SphereGeometry, THREE.MeshStandardMaterial> | null = null;
   private beaconLight: THREE.PointLight | null = null;
   private camGoal: THREE.Vector3 | null = null;
@@ -234,25 +234,31 @@ export class Office {
   }
 
   // ---------- puestos
+  /** Puestos presentes. Cada agente conserva su sitio mientras esté; los nuevos entran en el primer sitio libre
+   *  (el director, en el central si está libre) y aparecen con una pequeña animación. */
   setStations(specs: StationSpec[]): void {
     const want = new Set(specs.map((s) => s.id));
     for (const [id, st] of this.stations) {
       const spec = specs.find((s) => s.id === id);
       if (!want.has(id) || !spec || spec.color !== st.spec.color || spec.kind !== st.spec.kind) this.removeStation(id);
     }
-    let slot = 0;
+    const taken = (p: [number, number]) => [...this.stations.values()].some((st) => st.pos[0] === p[0] && st.pos[1] === p[1]);
     for (const spec of specs) {
-      const pos = spec.kind === "you" ? YOU_POS : SLOTS[slot++];
-      if (!pos) break;
       const st = this.stations.get(spec.id);
-      if (st && st.pos[0] === pos[0] && st.pos[1] === pos[1]) {
-        st.spec = spec;
-        continue;
-      }
-      if (st) this.removeStation(spec.id);
+      if (st) { st.spec = spec; continue; }
+      const pos = spec.kind === "you" ? YOU_POS
+        : spec.kind === "director" && !taken(SLOTS[0]) ? SLOTS[0] : SLOTS.find((p, i) => i > 0 && !taken(p)) ?? (!taken(SLOTS[0]) ? SLOTS[0] : undefined);
+      if (!pos) continue;
       this.buildStation(spec, pos);
     }
     this.buildLinks();
+  }
+
+  /** El rack del modelo local solo está en la sala mientras llama-server está encendido (o cargando). */
+  setRackVisible(on: boolean): void {
+    if (!this.rack.group || this.rack.group.visible === on) return;
+    this.rack.group.visible = on;
+    if (on) this.rack.group.scale.setScalar(0.01);
   }
 
   private removeStation(id: string): void {
@@ -272,6 +278,7 @@ export class Office {
     const me = spec.kind === "you", acc = spec.color, accL = mix(acc, "#ffffff", 0.5);
     const g = new THREE.Group();
     g.position.set(pos[0], 0, pos[1]);
+    g.scale.setScalar(0.01); // entra creciendo (animate)
     this.scene.add(g);
     const own: THREE.Object3D[] = [];
     const P = <T extends THREE.BufferGeometry>(geo: T, mat: THREE.Material, parent: THREE.Object3D, x = 0, y = 0, z = 0, sh = true) => {
@@ -444,6 +451,8 @@ export class Office {
   private buildRack(): void {
     const g = new THREE.Group();
     g.position.copy(RACK_POS);
+    g.visible = false;
+    this.rack.group = g;
     this.scene.add(g);
     const body = put(B(1.2, 2.7, 1.5), M(0x1e293b), g, 0, 1.35, 0);
     body.userData.station = "rack";
@@ -584,7 +593,7 @@ export class Office {
       const r = cv.getBoundingClientRect();
       v.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
       ray.setFromCamera(v, this.camera);
-      const h = ray.intersectObjects(this.clickable, false);
+      const h = ray.intersectObjects(this.clickable.filter((o) => o.userData.station !== "rack" || this.rack.group?.visible), false);
       return h.length ? (h[0].object.userData.station as string) : null;
     };
     cv.addEventListener("pointerdown", (e) => (down = [e.clientX, e.clientY]));
@@ -606,7 +615,7 @@ export class Office {
 
   // ---------- paquetes: un encargo que viaja de un puesto a otro ("rack" = el modelo local)
   private anchor(id: string): THREE.Vector3 | null {
-    if (id === "rack") return RACK_POS.clone().add(new THREE.Vector3(0.4, 2.9, 0));
+    if (id === "rack") return this.rack.group?.visible ? RACK_POS.clone().add(new THREE.Vector3(0.4, 2.9, 0)) : null;
     const st = this.stations.get(id);
     return st ? st.group.position.clone().add(new THREE.Vector3(0, 1.9, -0.4)) : null;
   }
@@ -667,7 +676,7 @@ export class Office {
       const id = el.dataset.lbl!;
       const st = this.stations.get(id);
       if (st) this._v.set(st.pos[0], 2.95, st.pos[1] - 0.8);
-      else if (id === "rack") this._v.set(RACK_POS.x, 3.3, RACK_POS.z);
+      else if (id === "rack" && this.rack.group?.visible) this._v.set(RACK_POS.x, 3.3, RACK_POS.z);
       else if (id === "wb") this._v.set(-5.4, 3.95, -7.2);
       else if (id === "git") this._v.set(5.4, 3.95, -7.2);
       else { el.style.display = "none"; continue; }
@@ -688,7 +697,12 @@ export class Office {
       if (this.camera.position.distanceTo(this.camGoal) < 0.08) { this.camGoal = null; this.targetGoal = null; }
     }
     let i = 0;
+    const grow = (o: THREE.Object3D) => {
+      if (o.scale.x < 1) o.scale.setScalar(Math.min(1, o.scale.x + (1.05 - o.scale.x) * 0.12));
+    };
+    if (this.rack.group?.visible) grow(this.rack.group);
     for (const st of this.stations.values()) {
+      grow(st.group);
       const ch = st.char, busy = st.state === "working", waiting = st.state === "waiting";
       ch.L.rotation.x += ((busy ? -1.15 + Math.sin(t * 14 + i) * 0.12 : -0.85 + Math.sin(t * 1.5 + i) * 0.03) - ch.L.rotation.x) * 0.2;
       const rt = waiting ? Math.PI * 0.92 + Math.sin(t * 7) * 0.12 : busy ? -1.15 + Math.cos(t * 16 + i) * 0.12 : -0.85 + Math.sin(t * 1.6 + i) * 0.03;

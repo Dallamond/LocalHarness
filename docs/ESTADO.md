@@ -15,7 +15,10 @@
 ### Sesión 4 — hecho (85 pruebas en verde, GUI compilada y probada en Chromium con la CLI falsa)
 - **Oficina** (`/oficina`, sustituye al Inicio; `/` e `/inicio` redirigen): `OfficeView.vue` + `office/office3d.ts`
   (three.js por npm, se carga aparte) + `office/OfficeDock.vue`. Sin gamificación (sin XP, logros, sonidos ni cámara cine).
-  - Un puesto por agente REAL (máx. 9; el resto se lista), el tuyo al fondo con la baliza que parpadea si algo espera
+  - Puestos solo para quien tiene que ver con el trabajo (feedback de Lucas): trabajando, esperando tu decisión, que
+    trabajó en las últimas 2 h (`PRESENCE_MS`) o que llamas tú (abajo «Fuera de la oficina» o Catálogo → «En la
+    oficina»). Entran creciendo y conservan su sitio; el director, al centro. El rack del modelo local solo está con
+    llama-server encendido. Máx. 9 puestos; el tuyo al fondo con la baliza que parpadea si algo espera
     tu decisión, el rack del **modelo local** (LED = memoria de cada GPU, lámpara = llama-server listo/cargando) y dos
     pizarras: la misión y los worktrees. Accesorio del muñeco por rol (director antena, jefe casco verde, trabajador
     casco de obra, consultas gafas); color por rol. Paquetes volando: tú → agente al arrancar, agente → tú al terminar,
