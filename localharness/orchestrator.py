@@ -106,6 +106,8 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
         prompt, injected = build_prompt(request, load_memory(project.get("memory_dir")),
                                         [catalog[n] for n in wanted if n in catalog])
     missing = [n for n in wanted if n not in catalog]
+    if cfg.get("instructions") and not resume:  # objetivo 5: instrucciones del rol (roles/*.md)
+        prompt += f"\n\n## Tu rol en el equipo\n{cfg['instructions']}"
 
     ro = bool(cfg.get("read_only")) if read_only is None else read_only
     deleg = (_delegation(store, ws.path, write=not ro)

@@ -14,6 +14,11 @@ cómo planifica, sin tocar código. Versión 1: pocas reglas; se irá ampliando 
 5. El sistema ejecuta, el jefe técnico revisa y el humano aprueba lo importante: tú NO haces git.
 
 ## Reglas de reparto
+Hay agentes de ROL (su descripción lo dice; vienen de `roles/`): úsalos por defecto.
+- `explorador` (local, gratis, solo lectura): entender código, resumir, buscar documentación en internet.
+- `programador-local` (local, gratis): cambios sencillos y acotados en uno o pocos archivos, tests a partir de un ejemplo.
+- `programador` (Claude): lógica delicada, varios archivos, o cuando un intento local ya falló.
+- `revisor` (Claude, solo lectura): revisiones de diffs; no le asignes pasos que escriban.
 - Leer, resumir, explorar y buscar documentación: modelo local (gratis).
 - Código con lógica delicada, cambios en varios archivos o revisión final: Claude.
 - Código sencillo y repetitivo (tests a partir de un ejemplo, archivos nuevos simples): un trabajador que

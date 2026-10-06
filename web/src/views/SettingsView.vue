@@ -379,8 +379,10 @@ watch(look, applyLook, { deep: true });
               <span class="agent__limits small muted">{{ limits(a) }}</span>
               <span v-if="a.config.description" class="small desc">{{ a.config.description }}</span>
               <span v-if="a.config.skills?.length" class="small tagline">{{ a.config.skills.join(", ") }}</span>
+              <span v-if="a.config.from_role" class="small rolefile" title="Agente de rol: se cambia editando su archivo; al arrancar LocalHarness lo vuelve a leer">
+                rol · <code>roles/{{ a.config.from_role }}.md</code></span>
               <div class="row agent__actions">
-                <button class="btn btn--small" @click="editing === a.id ? (editing = null) : startEdit(a)">
+                <button v-if="!a.config.from_role" class="btn btn--small" @click="editing === a.id ? (editing = null) : startEdit(a)">
                   {{ editing === a.id ? "Cerrar" : "Editar" }}
                 </button>
                 <button class="btn btn--small btn--ghost" title="Solo si no tiene historial" @click="removeAgent(a)">Borrar</button>
@@ -639,6 +641,12 @@ watch(look, applyLook, { deep: true });
 </template>
 
 <style scoped>
+.rolefile {
+  padding: 1px 8px;
+  border-radius: 6px;
+  background: var(--info-weak);
+  color: var(--info);
+}
 .chipcode {
   display: inline-block;
   margin: 2px 4px 2px 0;

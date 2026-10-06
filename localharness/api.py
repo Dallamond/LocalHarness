@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from localharness import actions, llama, maintenance, settings, workspace
+from localharness import actions, llama, maintenance, roles, settings, workspace
 from localharness.adapters import ADAPTERS
 from localharness.context import load_skills
 from localharness.events import Event
@@ -266,6 +266,7 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         store = Store(db_path)
         store.mark_interrupted()
         settings.apply(store)
+        app.state.roles_log = roles.sync_roles(store)  # objetivo 5: los roles de roles/*.md son agentes listos
         app.state.store = store
         app.state.hub = EventHub()
         app.state.runner = Runner(store, app.state.hub, binaries, worktree_root)
@@ -473,6 +474,11 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         return [s.summary() for s in (await asyncio.to_thread(load_skills)).values()]
 
     # --- inicio: qué hace cada agente ahora y qué ha cambiado últimamente
+    @app.get("/api/roles")
+    async def get_roles(request: Request) -> dict:
+        return {"roles": [r.summary() for r in roles.load_roles().values()],
+                "log": getattr(request.app.state, "roles_log", [])}
+
     @app.get("/api/activity")
     async def activity(request: Request, limit: int = 12) -> dict:
         store = st(request)

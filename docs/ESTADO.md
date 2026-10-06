@@ -22,7 +22,11 @@ rehaga» (reanuda su sesión con tu comentario) y «Aprobar todo y ejecutar». A
 **Ver a los subagentes (objetivo 4, v1):** eventos `thinking` (bloques de pensamiento de Claude; razonamiento de
 los modelos locales al terminar) y `thinking_live` (efímero, cada 1,5 s mientras un modelo local razona). En el
 Inicio, «💭 pensando ahora» en la tarjeta del agente (clic = completo); en el chat, plegado.
-Siguiente: objetivo 5 (catálogo de roles) y pensamiento profundo activable (DISENO-OFICINA §5).
+**Roles (objetivo 5, v1):** `roles/*.md` → agentes `explorador` (local_agent, solo lectura), `programador-local`
+(local_agent), `programador` (Claude Sonnet, delega en local), `revisor` (Claude Haiku, jefe). Se crean/actualizan al
+arrancar el servidor y al planificar (`config.from_role`; el archivo manda; un agente tuyo con el mismo nombre no se
+toca). `GET /api/roles`. Las pruebas los apagan con `LOCALHARNESS_ROLES_DIR=""` (tests/__init__.py).
+Siguiente: pensamiento profundo activable (DISENO-OFICINA §5), bucle continuo (objetivo 7).
 
 ## SESIÓN ANTERIOR (06/10/2026, mediodía)
 
@@ -75,7 +79,7 @@ La lectura gruesa del repo, delegada en Qwen para no gastar plan.
 ```
 git clone https://github.com/Dallamond/LocalHarness.git && cd LocalHarness
 python -m venv .venv && .venv/Scripts/python -m pip install -e .[server]     # Linux: .venv/bin/python
-.venv/Scripts/python -m unittest discover -s tests -t .                       # 104 pruebas, NUNCA llaman a Claude real
+.venv/Scripts/python -m unittest discover -s tests -t .                       # 107 pruebas, NUNCA llaman a Claude real
 cd web && npm install && npm run build && cd .. && .venv/Scripts/python -m localharness serve   # :8095
 ```
 Sin GPU ni llama-server, los agentes locales no responden (todo lo demás sí). Sin `claude` logueado, no lanzar

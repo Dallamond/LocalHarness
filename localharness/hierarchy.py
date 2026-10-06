@@ -18,6 +18,7 @@ from localharness.adapters import ADAPTERS
 from localharness.context import load_skills
 from localharness.events import Event
 from localharness.orchestrator import execute_task
+from localharness.roles import sync_roles
 from localharness.policy import N0, N1, N2, LEVEL_NAME, RISK_LEVEL, Policy, assess_changes, combine
 from localharness.store import Store
 
@@ -231,6 +232,7 @@ class Hierarchy:
     async def plan(self, pid: int) -> dict:
         plan = self.store.get_plan(pid)
         project = self.store.get_project(plan["project_id"])
+        sync_roles(self.store)  # los roles de roles/*.md, al día (también desde la CLI, sin servidor)
         workers = self._workers(plan)
         if not workers:
             return self._fail(pid, "No hay agentes capaces de modificar archivos (claude/codex) para las subtareas")
