@@ -10,6 +10,11 @@ apruebe. ✅ = decidido por Lucas · 💡 = propuesta de Claude, pendiente · �
   lleva cada paso, en qué estado está el proyecto y qué pasos faltan.
 - ✅ **Pensamiento profundo** activable y desactivable a mano, y además según la tarea y la importancia del agente.
 - ✅ Puede haber **varias misiones activas a la vez en el mismo proyecto**.
+- ✅ **Límite de tiempo por tarea** (por paso), además de los topes que ya hay.
+- ✅ **Bucle continuo** también cuando se seleccione o cuando la misión lo requiera (no solo agentes locales).
+- ✅ Si dos misiones coinciden en archivos, **una espera a la otra** (sin preguntar).
+- ✅ Prioridad de Lucas: **cómo tienen funciones de agente los modelos locales** (internet, archivos) y **cómo se
+  comunican con el Director** → sección 4b.
 - ✅ (anteriores) Sin gamificación. Chat, Planes, Modelos y Ajustes siguen como páginas. Empezar con pocos roles y skills.
 
 ## 1. Conceptos (el vocabulario de todo lo demás)
@@ -65,6 +70,42 @@ ver, parar y repetir). Canales:
 6. 💡 **Agente → tú**: herramienta MCP `ask_human(pregunta, opciones)`: el paso se pausa y la pregunta va a
    la bandeja; tu respuesta vuelve al agente. Evita que adivine cuando algo es ambiguo.
 
+## 4b. Modelos locales como agentes (internet + hablar con el Director)
+💡 **Bucle de agente propio en LocalHarness** (Python, sin dependencias), en vez de una CLI externa: controlamos
+eventos, tok/s, límites y Windows, y reutiliza el código de `mcp_local.py` (lectura confinada, DuckDuckGo).
+```
+LocalHarness ──(prompt del paso + herramientas)──► llama-server (Qwen)
+     ▲                                                  │ responde con tool_calls
+     └──── resultado de la herramienta ◄── ejecuta LocalHarness (confinado al worktree)
+                 … repite hasta `terminar` o un tope (turnos, tiempo, tokens)
+```
+Herramientas v1 (pocas a propósito: los modelos pequeños fallan más cuantas más hay):
+| Grupo | Herramientas | Límites |
+|---|---|---|
+| Archivos | `leer`, `listar`, `buscar`, `escribir`, `editar` | solo dentro del worktree, nunca `.git` |
+| Comandos | `ejecutar` | lista blanca por proyecto (tests, linter), tiempo máximo, sin red |
+| Internet | `buscar_web`, `leer_url` | DuckDuckGo; texto recortado por página |
+| Equipo | `preguntar_director`, `avisar_progreso`, `terminar` | ver abajo |
+
+**Hablar con el Director.** El Director no está «siempre encendido» (cada llamada a Claude es un proceso), así que:
+- `preguntar_director(pregunta)`: el agente local se pausa; LocalHarness reanuda la sesión del Director
+  (`--resume`, que ya conoce el plan) con la pregunta y el diario de la misión; la respuesta vuelve al agente
+  como resultado de la herramienta. Gasta plan → 💡 máximo 3 preguntas por paso; después va a tu bandeja.
+- Si el Director no puede responder, la pregunta pasa a ti (`ask_human`).
+- `avisar_progreso(texto)`: frase corta para el bocadillo y el diario, sin gastar nada.
+- `terminar(resumen, cómo_lo_comprobé)`: cierra el paso → comprobación (tests) → revisor (jefe técnico).
+- Del Director/revisor al agente: el revisor puede devolver el paso con notas («sigue con esto»): el bucle
+  continúa con la misma conversación + las notas, hasta «completado» o el tope de vueltas.
+
+**Fiabilidad con modelos de 7–14B** (el riesgo real; hoy solo Qwen3.5-9B devuelve `tool_calls`):
+- Validar cada llamada (nombre y argumentos); si viene mal, se le devuelve el error y reintenta (💡 máx. 2).
+- Plan B si el modelo no hace `tool_calls`: forzar la salida con JSON de esquema fijo (`response_format` /
+  gramática de llama-server; por verificar) con la forma `{"herramienta": ..., "argumentos": ...}`.
+- Contexto corto (12 GB de VRAM): recortar las salidas de herramientas y resumir los turnos viejos.
+- Detectar bucles (misma llamada 3 veces seguidas) → parar y avisar.
+- Cada herramienta es un evento como los de Claude: la oficina lo muestra igual para todos.
+- 💡 Más adelante: que el bucle sea **cliente MCP**, para dar a los agentes locales cualquier servidor MCP del catálogo.
+
 ## 5. Pensamiento profundo
 💡 Tres niveles: **apagado · normal · profundo**.
 - Por defecto según el rol: Director = profundo, Revisor = normal, Programador = normal, Explorador local = apagado.
@@ -78,8 +119,9 @@ ver, parar y repetir). Canales:
 
 ## 6. Subagentes en bucle
 💡 Cada rol tiene una **cola**. Al terminar un paso, el agente coge el siguiente de su cola (de cualquier misión).
-Paradas: cola vacía, tope de la misión (tiempo, gasto, pasos), ventana de Claude, o tú (botón Parar en el
-puesto o en la pizarra). Al principio, en bucle continuo solo agentes locales.
+Se activa por misión o por rol cuando lo eliges, o lo pide el plan. Paradas: cola vacía, **límite de tiempo
+del paso**, tope de la misión (tiempo, gasto, pasos), ventana de Claude (75 %), o tú (botón Parar en el puesto
+o en la pizarra).
 
 ## 7. Cómo se ve
 | Elemento | Representación |
