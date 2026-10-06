@@ -5,6 +5,7 @@ proceso (un único servidor local): `apply()` los vuelca en context y quien ejec
 """
 
 import copy
+import re
 from typing import Any
 
 from localharness import context, llama
@@ -33,7 +34,39 @@ DEFAULTS: dict[str, Any] = {
     # Valores que propone el formulario de nuevo agente
     "agent_defaults": {"provider": "claude", "model": "sonnet", "role": "trabajador", "max_turns": 10,
                        "max_budget_usd": 1.0},
+    # Catálogo de servidores MCP (formato `mcpServers` de Claude/Cursor): {nombre: {command, args, env} | {url}}.
+    # Cada agente Claude elige los suyos (config.mcps); `local` (el modelo local) es de serie y no va aquí.
+    "mcp_servers": {},
 }
+FREE_DICTS = ("mcp_servers",)  # se guardan enteros (las claves son nombres, no campos fijos)
+MCP_NAME = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
+
+
+def clean_mcp_servers(v: Any) -> dict[str, dict]:
+    """Valida el catálogo de servidores MCP: stdio (`command`, `args`, `env`) o remoto (`url`, `type` http|sse)."""
+    if not isinstance(v, dict):
+        raise ValueError("mcp_servers debe ser un objeto {nombre: servidor}")
+    out = {}
+    for name, c in v.items():
+        if not MCP_NAME.match(str(name)) or name == "local":
+            raise ValueError(f"Nombre de servidor MCP no válido: {name!r} (letras, números, - y _; «local» es reservado)")
+        if not isinstance(c, dict):
+            raise ValueError(f"El servidor {name} debe ser un objeto")
+        if c.get("url"):
+            kind = c.get("type") if c.get("type") in ("http", "sse") else "http"
+            srv = {"type": kind, "url": str(c["url"])}
+            if isinstance(c.get("headers"), dict):
+                srv["headers"] = {str(a): str(b) for a, b in c["headers"].items()}
+        elif c.get("command"):
+            srv = {"command": str(c["command"]), "args": [str(a) for a in c.get("args") or []]}
+            if isinstance(c.get("env"), dict) and c["env"]:
+                srv["env"] = {str(a): str(b) for a, b in c["env"].items()}
+        else:
+            raise ValueError(f"El servidor {name} necesita `command` (stdio) o `url` (http)")
+        if c.get("description"):
+            srv["description"] = str(c["description"])[:300]
+        out[str(name)] = srv
+    return out
 
 
 def load(store: Store) -> dict[str, Any]:
@@ -42,7 +75,8 @@ def load(store: Store) -> dict[str, Any]:
     for k, v in store.get_settings().items():
         if k not in out:
             continue
-        out[k] = {**out[k], **v} if isinstance(out[k], dict) and isinstance(v, dict) else v
+        mix = isinstance(out[k], dict) and isinstance(v, dict) and k not in FREE_DICTS
+        out[k] = {**out[k], **v} if mix else v
     return out
 
 
@@ -52,7 +86,9 @@ def save(store: Store, changes: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"Ajustes desconocidos: {', '.join(unknown)}")
     current = load(store)
     for k, v in changes.items():
-        if isinstance(DEFAULTS[k], dict):
+        if k in FREE_DICTS:
+            v = clean_mcp_servers(v)
+        elif isinstance(DEFAULTS[k], dict):
             if not isinstance(v, dict):
                 raise ValueError(f"{k} debe ser un objeto")
             v = {kk: vv for kk, vv in {**current[k], **v}.items() if kk in DEFAULTS[k]}
@@ -62,7 +98,11 @@ def save(store: Store, changes: dict[str, Any]) -> dict[str, Any]:
 
 
 def reset(store: Store) -> dict[str, Any]:
+    """Valores por defecto en todo salvo el catálogo de servidores MCP (son datos tuyos, no preferencias)."""
+    keep = store.get_settings().get("mcp_servers")
     store.clear_settings()
+    if keep:
+        store.set_setting("mcp_servers", keep)
     apply(store)
     return load(store)
 

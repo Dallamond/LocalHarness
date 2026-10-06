@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 BUILTIN_SKILLS = Path(__file__).resolve().parent.parent / "skills"
+IMPORTED_SKILLS = Path(__file__).resolve().parent.parent / "data" / "skills"  # importadas desde el Catálogo (no se suben)
 MAX_MEMORY_CHARS = 20_000
 MAX_SKILL_CHARS = 30_000
 EXTRA_SKILL_DIRS: list[str] = []  # Ajustes → Skills (settings.apply)
@@ -28,7 +29,15 @@ class Skill:
     body: str
 
     def summary(self) -> dict:
-        return {"name": self.name, "description": self.description, "path": str(self.path), "chars": len(self.body)}
+        return {"name": self.name, "description": self.description, "path": str(self.path), "chars": len(self.body),
+                "imported": is_imported(self.path)}
+
+
+def is_imported(path: Path) -> bool:
+    try:
+        return path.resolve().is_relative_to(IMPORTED_SKILLS.resolve())
+    except (OSError, ValueError):
+        return False
 
 
 _FRONT = re.compile(r"^---\s*\n(.*?)\n---\s*\n?", re.S)
@@ -52,7 +61,7 @@ def parse_skill(path: Path) -> Skill | None:
 
 
 def skill_dirs() -> list[Path]:
-    dirs = [BUILTIN_SKILLS, *(Path(d) for d in EXTRA_SKILL_DIRS)]
+    dirs = [BUILTIN_SKILLS, IMPORTED_SKILLS, *(Path(d) for d in EXTRA_SKILL_DIRS)]
     env = os.environ.get("LOCALHARNESS_SKILL_DIRS")
     if env:
         dirs += [Path(d) for d in env.split(os.pathsep) if d]
@@ -112,3 +121,37 @@ def build_prompt(prompt: str, memory: list[tuple[str, str]], skills: list[Skill]
     text = "\n\n".join(parts) + "\n\n## Tarea\n" + prompt
     info["chars"] = len(text) - len(prompt)
     return text, info
+
+
+def import_skill(text: str, overwrite: bool = False) -> Skill:
+    """Guarda un SKILL.md pegado en el Catálogo como `data/skills/<nombre>/SKILL.md`."""
+    m = _FRONT.match(text.lstrip("\ufeff"))
+    name = ""
+    if m:
+        for line in m.group(1).splitlines():
+            if line.startswith("name:"):
+                name = line.split(":", 1)[1].strip().strip('"').strip("'")
+    if not name:
+        raise ValueError("El SKILL.md necesita frontmatter con `name:`")
+    slug = re.sub(r"[^a-z0-9_-]+", "-", name.lower()).strip("-")[:60]
+    if not slug:
+        raise ValueError(f"Nombre de skill no válido: {name!r}")
+    existing = load_skills().get(name)
+    if existing and not (overwrite and is_imported(existing.path)):
+        raise FileExistsError(f"Ya existe una skill llamada {name!r}" + ("" if is_imported(existing.path) else
+                                                                           " (de serie: no se sobrescribe)"))
+    path = IMPORTED_SKILLS / slug / "SKILL.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text.replace("\r\n", "\n"), encoding="utf-8", newline="\n")
+    return parse_skill(path)
+
+
+def delete_skill(name: str) -> None:
+    """Solo las importadas: las de serie y las de otras carpetas no se tocan."""
+    s = load_skills().get(name)
+    if not s:
+        raise LookupError(f"No existe la skill {name!r}")
+    if not is_imported(s.path):
+        raise PermissionError("Solo se pueden borrar las skills importadas desde el Catálogo")
+    import shutil
+    shutil.rmtree(s.path.parent)

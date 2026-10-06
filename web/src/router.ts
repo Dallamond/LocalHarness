@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from "vue-router";
-import HomeView from "./views/HomeView.vue";
+const OfficeView = () => import("./views/OfficeView.vue"); // three.js va en su propio trozo
 import SettingsView from "./views/SettingsView.vue";
 import ChatView from "./views/ChatView.vue";
 import ModelsView from "./views/ModelsView.vue";
@@ -11,8 +11,9 @@ import InboxView from "./views/InboxView.vue";
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: "/", redirect: "/inicio" },
-    { path: "/inicio", component: HomeView, meta: { title: "Inicio" } },
+    { path: "/", redirect: "/oficina" },
+    { path: "/inicio", redirect: "/oficina" },
+    { path: "/oficina", component: OfficeView, meta: { title: "Oficina", full: true } },
     { path: "/chat", component: ChatView, meta: { title: "Chat" } },
     { path: "/chat/:id", component: ChatView, props: (r) => ({ id: Number(r.params.id) }), meta: { title: "Chat" } },
     { path: "/modelos", component: ModelsView, meta: { title: "Modelos locales" } },
@@ -22,6 +23,7 @@ export const router = createRouter({
     { path: "/proyectos", redirect: { path: "/ajustes", query: { s: "proyectos" } } },
     { path: "/planes", component: PlansView, meta: { title: "Planes" } },
     { path: "/planes/:id", component: PlanView, props: (r) => ({ id: Number(r.params.id) }), meta: { title: "Plan" } },
+    // Planes y «Pendiente de ti» ya no están en el menú (la bandeja vive en la Oficina); las rutas siguen para los enlaces
     { path: "/bandeja", component: InboxView, meta: { title: "Pendiente de ti" } },
   ],
 });

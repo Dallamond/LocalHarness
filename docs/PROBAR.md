@@ -77,3 +77,18 @@ así llevan clave y barra de progreso.
 3. Chat con ese agente, en el sandbox: «Explícame qué hace cada archivo y escribe tests para calc.py».
    Deberías ver tarjetas verdes «🦙 Modelo local respondió a… / escribió tests/…» y al final
    «N encargos al modelo local · X tokens hechos gratis en local». Compara el coste con una tarea igual sin la casilla.
+
+## 6. Oficina y Catálogo (sesión 4) — gratis
+Antes: `git pull`, `.venv\Scripts\python -m pip install -e .[server]` (ya no falla), `cd web; npm install; npm run build; cd ..`
+y reinicia `serve`. Abre http://127.0.0.1:8095 (va a la **Oficina**).
+1. Cada agente tiene su puesto; arrastra para girar, rueda para zoom, clic en un puesto o en su placa → inspector.
+   La barra de arriba del 3D enfoca cada puesto y el rack del modelo local.
+2. **Misión → ＋ Nueva**: proyecto sandbox, un agente local, «¿Qué fallos ves en calc.py?» → Ejecutar. Mira la burbuja
+   del muñeco, los pasos, el Timeline y Terminal. Con un modelo arrancado, el rack se enciende.
+3. Con una tarea que cambie archivos: la **Bandeja** muestra «Revisar cambios» → «Ver» abre su Diff abajo; Aprobar e
+   integrar / Descartar como antes.
+4. **Catálogo → Importar → Ejemplos → Servidores MCP → Importar**. Luego Agentes → **Asignar** en un agente Claude:
+   marca `fetch` o `internet`. Comprueba que el chip aparece en el inspector. (Ejecutarlo gasta plan: pregunta antes.)
+5. **Catálogo → Importar → Skill** (ejemplo) → aparece en Skills como «importada»; asígnala y bórrala.
+6. Inspector de un agente → «Instrucción directa»: si tiene una conversación abierta la continúa; si no, crea tarea.
+7. Abre una conversación del Chat desde la bandeja o pegando `/chat/<n>` en la barra: antes se quedaba en blanco.

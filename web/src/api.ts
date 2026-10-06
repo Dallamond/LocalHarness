@@ -18,6 +18,7 @@ export interface Agent {
   config: {
     max_turns?: number; max_budget_usd?: number; read_only?: boolean; tools?: string[];
     skills?: string[]; base_url?: string; description?: string; subagents?: boolean; delegate_local?: boolean;
+    web?: boolean; mcps?: string[];
     temperature?: number; max_tokens?: number; repo_context?: number;
   };
 }
@@ -92,6 +93,7 @@ export interface TaskEvent {
   kind: string;
   text: string;
   data: Record<string, unknown>;
+  ts?: string;
 }
 
 export interface Limit {
@@ -127,6 +129,34 @@ export interface Skill {
   description: string;
   path: string;
   chars: number;
+  imported?: boolean;
+}
+
+/** Servidor MCP del Catálogo (formato mcpServers de Claude/Cursor). */
+export interface McpServer {
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  type?: string;
+  description?: string;
+}
+
+export interface Gpu {
+  index: number;
+  name: string;
+  mem_used_mb: number | null;
+  mem_total_mb: number | null;
+  util: number | null;
+  temp: number | null;
+}
+
+export interface Worktree {
+  kind: "task" | "plan";
+  id: number;
+  branch: string;
+  status: string;
+  project: string | null;
 }
 
 export interface Settings {
@@ -142,6 +172,7 @@ export interface Settings {
     per_model: Record<string, ModelLaunch>;
   };
   agent_defaults: { provider: string; model: string; role: string; max_turns: number | null; max_budget_usd: number | null };
+  mcp_servers: Record<string, McpServer>;
 }
 
 /** Arranque propio de un GGUF (vacío = valores generales). */
@@ -414,9 +445,39 @@ export const ROLE_TEXT: Record<string, string> = {
   trabajador: "Trabajador",
 };
 
+const ROLE_HEX: Record<string, string> = {
+  director: "#5b5bf0", jefe: "#10b981", trabajador: "#f97316", consultas: "#0ea5e9",
+};
+const EXTRA_HEX = ["#8b5cf6", "#ec4899", "#14b8a6", "#eab308", "#06b6d4", "#f43f5e", "#84cc16"];
+
 export function roleColor(a: Agent | undefined): string {
-  const r = a?.role ?? "";
-  return r === "director" || r === "jefe" || r === "trabajador" ? `var(--role-${r})` : "var(--role-otro)";
+  return agentColor(a);
+}
+
+/** Color fijo de un agente (oficina 3D, avatares): el de su rol; sin rol conocido, uno de la paleta por id. */
+export function agentColor(a: Agent | undefined): string {
+  if (!a) return "#868b96";
+  return ROLE_HEX[a.role ?? ""] ?? EXTRA_HEX[a.id % EXTRA_HEX.length];
+}
+
+export const PROVIDER_TEXT: Record<string, string> = {
+  claude: "Suscripción", local: "Local · GPU", codex: "Codex", human: "Humano",
+};
+
+/** Qué modelo usa de verdad: los locales, el que esté arrancado en llama-server. */
+export function modelText(a: Agent): string {
+  if (a.provider === "local") return live.local.model ? `${live.local.model} (arrancado)` : "ningún modelo arrancado";
+  return [a.provider === "claude" ? "Claude" : a.provider, a.model].filter(Boolean).join(" ");
+}
+
+// --- estado de la interfaz compartido entre vistas (el Catálogo se abre desde cualquier página)
+export const ui = reactive({
+  catalog: null as null | { tab: "agents" | "skills" | "mcp"; open?: number | null },
+  focusAgent: null as number | null, // la oficina enfoca este agente al abrirse
+});
+
+export function openCatalog(tab: "agents" | "skills" | "mcp" = "agents", open: number | null = null): void {
+  ui.catalog = { tab, open };
 }
 
 /** Frase corta de lo que está haciendo un agente a partir de su último evento. */

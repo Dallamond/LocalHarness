@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { live, pct, pendingForYou } from "./api";
+import { useRoute } from "vue-router";
+import CatalogOverlay from "./components/CatalogOverlay.vue";
+import { live, openCatalog, pct, ui } from "./api";
+
+const route = useRoute();
+const full = computed(() => !!route.meta.full); // la oficina ocupa toda la ventana, sin scroll de página
 
 // Uso del plan de Claude (rate_limit_event): aviso desde el 75 %, crítico desde el 90 %
 const usage = computed(() => {
@@ -14,167 +19,166 @@ const usage = computed(() => {
 });
 
 const links = [
-  { to: "/inicio", text: "Inicio", icon: "M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" },
-  { to: "/chat", text: "Chat", icon: "M4 5h16v11H9l-5 4z" },
-  { to: "/bandeja", text: "Pendiente de ti", icon: "M4 13h4l2 3h4l2-3h4M5 5h14l1 8v6H4v-6z", badge: true },
-  { to: "/planes", text: "Planes", icon: "M6 4h12v16H6zM9 9h6M9 13h6M9 17h3" },
-  { to: "/modelos", text: "Modelos locales", icon: "M5 5h14v6H5zM5 13h14v6H5zM8 8h.01M8 16h.01" },
-  { to: "/ajustes", text: "Ajustes", icon: "M4 7h9m4 0h3M4 17h3m4 0h9M15 4v6M9 14v6" },
+  { to: "/oficina", text: "Oficina", icon: "fa-building" },
+  { to: "/chat", text: "Chat", icon: "fa-comments" },
+  { to: "/modelos", text: "Modelos locales", icon: "fa-microchip" },
+  { to: "/ajustes", text: "Ajustes", icon: "fa-sliders" },
 ];
 </script>
 
 <template>
-  <div class="shell">
-    <aside class="side">
-      <RouterLink to="/inicio" class="brand">
-        <span class="brand__mark" aria-hidden="true">LH</span>
-        <span>LocalHarness</span>
+  <div class="shell" :class="{ 'shell--full': full }">
+    <header class="top card">
+      <RouterLink to="/oficina" class="brand">
+        <span class="logo" aria-hidden="true"><i class="fa-solid fa-cubes" /></span>
+        <span><b>LocalHarness</b><small>Oficina de agentes</small></span>
       </RouterLink>
+      <span class="sep" />
       <nav class="nav">
         <RouterLink v-for="l in links" :key="l.to" :to="l.to">
-          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path :d="l.icon" /></svg>
+          <i class="fa-solid" :class="l.icon" aria-hidden="true" />
           <span class="nav__text">{{ l.text }}</span>
-          <span v-if="l.badge && pendingForYou.length" class="badge">{{ pendingForYou.length }}</span>
+          <span v-if="l.to === '/oficina' && live.inbox.length" class="badge" title="Esperan tu decisión">{{ live.inbox.length }}</span>
         </RouterLink>
       </nav>
-      <div class="foot">
-        <div class="foot__item" :class="`is-${usage.state}`" title="Uso de la suscripción de Claude">
-          <span class="foot__label">Plan de Claude</span>
-          <span class="foot__value mono">{{ usage.text }}</span>
-          <span v-if="live.limit" class="meter"><span :style="{ width: `${Math.min(100, usage.worst * 100)}%` }" /></span>
-        </div>
-        <div class="foot__item">
-          <span class="conn" :class="`conn--${live.connection}`" aria-hidden="true" />
-          <span class="foot__value">{{
-            live.connection === "open" ? "Conectado" : live.connection === "connecting" ? "Conectando…" : "Sin conexión"
-          }}</span>
-        </div>
+      <span class="spacer" />
+      <button class="btn" title="Agentes, skills y servidores MCP" @click="openCatalog()">
+        <i class="fa-solid fa-boxes-stacked" /> <span class="hide-sm">Catálogo</span>
+      </button>
+      <span class="sep hide-sm" />
+      <div class="usage hide-sm" :class="`is-${usage.state}`" title="Uso de la suscripción de Claude (ventana de 5 h y semanal)">
+        <span class="usage__label">Plan de Claude</span>
+        <span class="usage__value mono">{{ usage.text }}</span>
+        <span v-if="live.limit" class="meter"><span :style="{ width: `${Math.min(100, usage.worst * 100)}%` }" /></span>
       </div>
-    </aside>
+      <span
+        class="conn" :class="`conn--${live.connection}`"
+        :title="live.connection === 'open' ? 'Conectado' : live.connection === 'connecting' ? 'Conectando…' : 'Sin conexión'"
+      />
+    </header>
     <main id="main" class="main">
       <RouterView />
     </main>
+    <CatalogOverlay v-if="ui.catalog" />
   </div>
 </template>
 
 <style scoped>
 .shell {
   display: grid;
-  grid-template-columns: var(--side-w) minmax(0, 1fr);
+  grid-template-rows: var(--top-h) minmax(0, 1fr);
+  gap: 12px;
   min-height: 100vh;
+  padding: 12px;
 }
-.side {
+@media (min-width: 981px) {
+  .shell--full {
+    height: 100vh;
+    overflow: hidden;
+  }
+}
+.top {
   position: sticky;
-  top: 0;
-  height: 100vh;
+  top: 12px;
+  z-index: 40;
   display: flex;
-  flex-direction: column;
-  gap: 22px;
-  padding: 22px 14px 18px;
-  border-right: 1px solid var(--line);
-  background: var(--panel-raised);
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  min-width: 0;
 }
 .brand {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 8px;
   color: var(--ink);
   text-decoration: none;
-  font-weight: 700;
-  font-size: 17px;
-  letter-spacing: -0.01em;
 }
-.brand__mark {
+.brand b {
+  display: block;
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+}
+.brand small {
+  color: var(--ink-faint);
+  font-weight: 600;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.logo {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 10px;
-  background: var(--accent);
-  color: var(--accent-ink);
-  font-size: 13px;
-  font-weight: 800;
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #fff;
+  box-shadow: 0 6px 14px -4px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.sep {
+  width: 1px;
+  height: 26px;
+  background: var(--line);
+}
+.spacer {
+  flex: 1;
 }
 .nav {
-  display: grid;
-  gap: 2px;
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
 }
 .nav a {
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 9px 10px;
-  border-radius: 10px;
+  gap: 7px;
+  padding: 7px 11px;
+  border-radius: 11px;
   color: var(--ink-dim);
   text-decoration: none;
-  font-weight: 550;
+  font-weight: 700;
+  white-space: nowrap;
   transition: background 0.15s, color 0.15s;
 }
 .nav a:hover {
-  background: var(--panel);
+  background: var(--panel-hover);
   color: var(--ink);
 }
 .nav a.router-link-active {
-  background: var(--panel);
-  color: var(--ink);
-  box-shadow: var(--shadow);
-}
-.nav svg {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  flex-shrink: 0;
-}
-.nav a.router-link-active svg {
-  stroke: var(--accent);
+  background: var(--ink);
+  color: var(--panel);
 }
 .badge {
-  margin-left: auto;
-  min-width: 22px;
-  padding: 1px 7px;
+  min-width: 20px;
+  padding: 0 6px;
   border-radius: 999px;
   background: var(--warn);
   color: #fff;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 11px;
+  font-weight: 800;
   text-align: center;
 }
-.foot {
-  margin-top: auto;
+.usage {
   display: grid;
-  gap: 12px;
-  padding: 0 8px;
-  font-size: 13px;
+  gap: 2px;
+  min-width: 150px;
+  font-size: 11.5px;
 }
-.foot__item {
-  display: grid;
-  gap: 3px;
-}
-.foot__item:last-child {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.foot__label {
+.usage__label {
   color: var(--ink-faint);
-  font-weight: 600;
+  font-weight: 700;
 }
-.foot__value {
+.usage__value {
   color: var(--ink-dim);
 }
-.meter {
+.usage .meter {
   height: 5px;
-  border-radius: 999px;
-  background: var(--line);
-  overflow: hidden;
 }
-.meter span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
+.usage .meter span {
   background: var(--ok);
 }
 .is-warn .meter span {
@@ -183,14 +187,15 @@ const links = [
 .is-crit .meter span {
   background: var(--crit);
 }
-.is-crit .foot__value {
+.is-crit .usage__value {
   color: var(--crit);
 }
 .conn {
-  width: 8px;
-  height: 8px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
   background: var(--warn);
+  flex-shrink: 0;
 }
 .conn--open {
   background: var(--ok);
@@ -199,38 +204,25 @@ const links = [
   background: var(--crit);
 }
 .main {
-  padding: 30px 36px 60px;
   min-width: 0;
+  min-height: 0;
+  padding: 18px 8px 48px;
 }
-@media (max-width: 820px) {
-  .shell {
-    grid-template-columns: 1fr;
-  }
-  .side {
-    position: static;
-    height: auto;
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 16px;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-  }
-  .nav {
-    display: flex;
-    flex-wrap: wrap;
-    order: 3;
-    width: 100%;
-  }
+.shell--full .main {
+  padding: 0;
+}
+@media (max-width: 980px) {
+  .hide-sm,
   .nav__text {
-    font-size: 14px;
-  }
-  .foot {
     display: none;
   }
-  .main {
-    padding: 20px 16px 48px;
+}
+@media (max-width: 640px) {
+  .shell {
+    padding: 8px;
+  }
+  .brand span:last-child {
+    display: none;
   }
 }
 </style>

@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from localharness import actions, llama, maintenance, settings, workspace
+from localharness import actions, context, llama, maintenance, settings, workspace
 from localharness.adapters import ADAPTERS
 from localharness.context import load_skills
 from localharness.events import Event
@@ -68,6 +68,8 @@ class AgentIn(BaseModel):
     description: str | None = None  # en qué es bueno: el Director lo lee para repartir subtareas
     subagents: bool = False  # solo claude: puede lanzar subagentes (herramienta Agent; gasta más)
     delegate_local: bool = False  # solo claude: puede encargar trabajo al modelo local (MCP local_ask/local_write_file)
+    web: bool = False  # solo claude: WebFetch y WebSearch
+    mcps: list[str] | None = None  # solo claude: servidores MCP del Catálogo (Ajustes → mcp_servers)
     temperature: float | None = Field(default=None, ge=0, le=2)  # solo local
     max_tokens: int | None = Field(default=None, ge=64, le=131_072)  # solo local
     repo_context: int | None = Field(default=None, ge=0, le=2_000_000)  # solo local: caracteres del repo
@@ -85,13 +87,20 @@ class AgentPatch(BaseModel):
     description: str | None = None
     subagents: bool | None = None
     delegate_local: bool | None = None
+    web: bool | None = None
+    mcps: list[str] | None = None
     temperature: float | None = Field(default=None, ge=0, le=2)
     max_tokens: int | None = Field(default=None, ge=64, le=131_072)
     repo_context: int | None = Field(default=None, ge=0, le=2_000_000)
 
 
 AGENT_CFG = ("max_turns", "max_budget_usd", "read_only", "skills", "base_url", "description", "subagents",
-             "delegate_local", "temperature", "max_tokens", "repo_context")
+             "delegate_local", "web", "mcps", "temperature", "max_tokens", "repo_context")
+
+
+class SkillIn(BaseModel):
+    content: str = Field(min_length=10, max_length=200_000)  # el SKILL.md entero, con frontmatter `name`
+    overwrite: bool = False
 
 
 class ProjectPatch(BaseModel):
@@ -116,6 +125,33 @@ class PlanIn(BaseModel):
     request: str = Field(min_length=1)
     director_agent_id: int
     reviewer_agent_id: int | None = None
+
+
+_GPU_CACHE: dict[str, Any] = {"at": 0.0, "data": []}
+
+
+def gpus() -> list[dict]:
+    """Uso de las GPU NVIDIA (nvidia-smi), cacheado 2 s. Lista vacía si no hay nvidia-smi."""
+    import shutil
+    import subprocess
+    if time.time() - _GPU_CACHE["at"] < 2:
+        return _GPU_CACHE["data"]
+    out: list[dict] = []
+    exe = shutil.which("nvidia-smi")
+    if exe:
+        try:
+            r = subprocess.run([exe, "--query-gpu=index,name,memory.used,memory.total,utilization.gpu,temperature.gpu",
+                                "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=5)
+            for line in r.stdout.strip().splitlines():
+                f = [x.strip() for x in line.split(",")]
+                if len(f) >= 6:
+                    num = lambda v: float(v) if v.replace(".", "", 1).isdigit() else None  # noqa: E731 — «[N/A]»
+                    out.append({"index": int(f[0]), "name": f[1], "mem_used_mb": num(f[2]), "mem_total_mb": num(f[3]),
+                                "util": num(f[4]), "temp": num(f[5])})
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            out = []
+    _GPU_CACHE.update(at=time.time(), data=out)
+    return out
 
 
 class DecideIn(BaseModel):
@@ -304,6 +340,7 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
                                  "skills": body.skills or None, "base_url": body.base_url or None,
                                  "description": (body.description or "").strip() or None,
                                  "subagents": body.subagents or None, "delegate_local": body.delegate_local or None,
+                                 "web": body.web or None, "mcps": body.mcps or None,
                                  "temperature": body.temperature,
                                  "max_tokens": body.max_tokens, "repo_context": body.repo_context}.items()
                if v is not None}
@@ -426,6 +463,45 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
     @app.get("/api/skills")
     async def skills() -> list[dict]:
         return [s.summary() for s in (await asyncio.to_thread(load_skills)).values()]
+
+    @app.post("/api/skills", status_code=201)
+    async def add_skill(body: SkillIn) -> dict:
+        """Importar un SKILL.md desde el Catálogo (se guarda en data/skills, fuera de git)."""
+        try:
+            return (await asyncio.to_thread(context.import_skill, body.content, body.overwrite)).summary()
+        except FileExistsError as e:
+            raise HTTPException(409, str(e)) from None
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+
+    @app.delete("/api/skills/{name}", status_code=204)
+    async def delete_skill(name: str) -> None:
+        try:
+            await asyncio.to_thread(context.delete_skill, name)
+        except LookupError as e:
+            raise HTTPException(404, str(e)) from None
+        except PermissionError as e:
+            raise HTTPException(409, str(e)) from None
+
+    # --- recursos para la oficina: GPU (nvidia-smi), worktrees abiertos
+    @app.get("/api/resources")
+    async def resources(request: Request) -> dict:
+        store = st(request)
+
+        def gather() -> dict:
+            names = {p["id"]: p["name"] for p in store.list_projects()}
+            wts = []
+            for t in store.list_tasks():
+                if t["plan_id"] is None and t["worktree"] and t["status"] not in maintenance.CLOSED_TASK \
+                        and Path(t["worktree"]).is_dir():
+                    wts.append({"kind": "task", "id": t["id"], "branch": t["branch"], "status": t["status"],
+                                "project": names.get(t["project_id"])})
+            for p in store.list_plans():
+                if p["branch"] and p["status"] not in maintenance.CLOSED_PLAN:
+                    wts.append({"kind": "plan", "id": p["id"], "branch": p["branch"], "status": p["status"],
+                                "project": names.get(p["project_id"])})
+            return {"gpus": gpus(), "worktrees": wts}
+        return await asyncio.to_thread(gather)
 
     # --- inicio: qué hace cada agente ahora y qué ha cambiado últimamente
     @app.get("/api/activity")

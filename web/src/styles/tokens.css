@@ -1,106 +1,118 @@
 /*
- * Estilo provisional «taller»: cálido, redondeado y con aire, hasta que llegue la oficina simulada.
+ * Estilo «oficina» (prototipo v2.1 de Lucas): piedra cálida, tarjetas redondeadas, índigo de acento.
  * Claro y oscuro; por defecto sigue al sistema (Ajustes → Apariencia lo fija con data-theme).
  */
 :root {
-  --bg: #f4f1ec;
-  --panel: #fffdf9;
-  --panel-raised: #f9f6f0;
-  --line: #e6e0d6;
-  --line-strong: #cfc6b8;
-  --ink: #2b2723;
-  --ink-dim: #6b635a;
-  --ink-faint: #8f877d;
+  --bg: #d8d4cb;
+  --bg-glow-a: #e4e0d6;
+  --bg-glow-b: #bfc9d2;
+  --panel: #eeebe4;
+  --panel-raised: #e2ded5;
+  --panel-hover: #d6d2c8;
+  --line: #cbc6ba;
+  --ink: #1e232d;
+  --ink-dim: #4a505c;
+  --ink-faint: #868b96;
   --data-ink: var(--ink);
+  --meter: #cfcbc0;
 
-  --accent: #2f7a5f;
+  --accent: #5b5bf0;
+  --accent-2: #22c1c3;
   --accent-ink: #ffffff;
-  --accent-weak: #e2f0ea;
-  --ok: #2f8a4e;
-  --ok-weak: #e3f2e7;
-  --warn: #b26a00;
-  --warn-weak: #fbf0dc;
-  --crit: #c2413b;
-  --crit-weak: #f9e4e2;
-  --info: #3d6fb6;
-  --info-weak: #e5edf8;
+  --accent-weak: #dcdcf6;
+  --ok: #16a34a;
+  --ok-weak: #dcfce7;
+  --warn: #d97706;
+  --warn-weak: #f6ecc9;
+  --crit: #e11d48;
+  --crit-weak: #ffe4e6;
+  --info: #0369a1;
+  --info-weak: #e0f2fe;
 
-  /* colores de los avatares de agente (por rol) */
-  --role-director: #7a5ac8;
-  --role-jefe: #c0723a;
-  --role-trabajador: #2f7a5f;
-  --role-otro: #6b7a8f;
+  /* terminal y diff (siempre oscuros) */
+  --term-bg: #0b1220;
+  --term-ink: #cbd5e1;
 
-  --shadow: 0 1px 2px rgba(60, 45, 25, 0.05), 0 4px 16px rgba(60, 45, 25, 0.05);
-  --font-sans: "Figtree Variable", "Segoe UI", system-ui, sans-serif;
+  /* colores de agente por rol */
+  --role-director: #5b5bf0;
+  --role-jefe: #10b981;
+  --role-trabajador: #f97316;
+  --role-consultas: #0ea5e9;
+  --role-otro: #8b5cf6;
+  --you: #eab308;
+
+  --shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px -12px rgba(15, 23, 42, 0.12);
+  --font-sans: "Plus Jakarta Sans Variable", "Segoe UI", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
   --font-data: var(--font-sans);
 
-  --radius: 14px;
-  --radius-sm: 9px;
-  --gap: 18px;
-  --side-w: 220px;
+  --radius: 18px;
+  --radius-sm: 12px;
+  --gap: 16px;
+  --top-h: 56px;
   --zoom: 1;
 }
+:root { --line-strong: #b5afa2; }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="claro"]) {
-    --bg: #1a1916;
-    --panel: #23211d;
-    --panel-raised: #2b2924;
-    --line: #36332d;
-    --line-strong: #4a463e;
-    --ink: #ede7dd;
-    --ink-dim: #b0a798;
-    --ink-faint: #8a8275;
-    --accent: #5cc29a;
-    --accent-ink: #10231b;
-    --accent-weak: #22382f;
-    --ok: #6fcf8f;
-    --ok-weak: #213528;
-    --warn: #f0b04a;
-    --warn-weak: #3a2f1c;
-    --crit: #ef7d75;
-    --crit-weak: #3d2422;
-    --info: #86aee8;
-    --info-weak: #232f40;
-    --role-director: #a88bf0;
-    --role-jefe: #e39a62;
-    --role-trabajador: #5cc29a;
-    --role-otro: #93a2b8;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.25), 0 6px 20px rgba(0, 0, 0, 0.18);
+    --bg: #15171c;
+    --bg-glow-a: #1d2028;
+    --bg-glow-b: #1a2230;
+    --panel: #1f222a;
+    --panel-raised: #272b34;
+    --panel-hover: #30343f;
+    --line: #343946;
+    --line-strong: #474d5c;
+    --ink: #e8e6e1;
+    --ink-dim: #aab0bb;
+    --ink-faint: #7e8491;
+    --meter: #343946;
+    --accent: #8d8dfa;
+    --accent-ink: #11122a;
+    --accent-weak: #2b2c55;
+    --ok: #4ade80;
+    --ok-weak: #18301f;
+    --warn: #fbbf24;
+    --warn-weak: #3a3018;
+    --crit: #fb7185;
+    --crit-weak: #3d1d25;
+    --info: #7cc4f0;
+    --info-weak: #18303f;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px -12px rgba(0, 0, 0, 0.5);
   }
 }
 
 :root[data-theme="oscuro"] {
-  --bg: #1a1916;
-  --panel: #23211d;
-  --panel-raised: #2b2924;
-  --line: #36332d;
-  --line-strong: #4a463e;
-  --ink: #ede7dd;
-  --ink-dim: #b0a798;
-  --ink-faint: #8a8275;
-  --accent: #5cc29a;
-  --accent-ink: #10231b;
-  --accent-weak: #22382f;
-  --ok: #6fcf8f;
-  --ok-weak: #213528;
-  --warn: #f0b04a;
-  --warn-weak: #3a2f1c;
-  --crit: #ef7d75;
-  --crit-weak: #3d2422;
-  --info: #86aee8;
-  --info-weak: #232f40;
-  --role-director: #a88bf0;
-  --role-jefe: #e39a62;
-  --role-trabajador: #5cc29a;
-  --role-otro: #93a2b8;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.25), 0 6px 20px rgba(0, 0, 0, 0.18);
+  --bg: #15171c;
+  --bg-glow-a: #1d2028;
+  --bg-glow-b: #1a2230;
+  --panel: #1f222a;
+  --panel-raised: #272b34;
+  --panel-hover: #30343f;
+  --line: #343946;
+  --line-strong: #474d5c;
+  --ink: #e8e6e1;
+  --ink-dim: #aab0bb;
+  --ink-faint: #7e8491;
+  --meter: #343946;
+  --accent: #8d8dfa;
+  --accent-ink: #11122a;
+  --accent-weak: #2b2c55;
+  --ok: #4ade80;
+  --ok-weak: #18301f;
+  --warn: #fbbf24;
+  --warn-weak: #3a3018;
+  --crit: #fb7185;
+  --crit-weak: #3d1d25;
+  --info: #7cc4f0;
+  --info-weak: #18303f;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px -12px rgba(0, 0, 0, 0.5);
 }
 
 /* Densidad compacta: menos aire entre bloques */
 :root[data-density="compacta"] {
-  --gap: 12px;
-  --radius: 10px;
+  --gap: 10px;
+  --radius: 12px;
+  --radius-sm: 9px;
 }

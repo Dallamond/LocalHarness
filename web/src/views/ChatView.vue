@@ -94,6 +94,9 @@ function toBottom() {
   nextTick(() => scroller.value?.scrollTo({ top: scroller.value.scrollHeight, behavior: "smooth" }));
 }
 
+const review = ref<Review | null>(null);
+const acting = ref(false);
+
 async function load() {
   events.value = [];
   review.value = null;
@@ -123,9 +126,7 @@ const off = onTaskEvent((ev) => {
 onUnmounted(off);
 watch(() => props.id, load, { immediate: true });
 
-// --- cambios y decisión cuando el agente termina
-const review = ref<Review | null>(null);
-const acting = ref(false);
+// --- cambios y decisión cuando el agente termina (review se declara arriba: load() la usa al montar)
 
 async function loadReview() {
   const t = props.id ? live.tasks[props.id] : undefined;

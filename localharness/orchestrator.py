@@ -11,7 +11,7 @@ from pathlib import Path
 from localharness import llama, mcp_local, settings, workspace
 from localharness.adapters import get_adapter
 from localharness.adapters.base import RunSpec
-from localharness.adapters.claude import SUBAGENT_TOOL
+from localharness.adapters.claude import SUBAGENT_TOOL, WEB_TOOLS
 from localharness.adapters.local import config_kwargs
 from localharness.context import build_prompt, load_memory, load_skills
 from localharness.events import Event
@@ -22,22 +22,24 @@ EPHEMERAL = ("speed",)  # en vivo para la GUI, no se guardan (llegan cada ~1,5 s
 
 DELEGATE_TOOLS = {"local_ask": "mcp__local__local_ask", "local_write_file": "mcp__local__local_write_file"}
 DELEGATE_GUIDE = """
-DELEGACIÓN EN EL MODELO LOCAL (ahorra tu cuota; úsala siempre que encaje):
-Tienes un modelo local GRATUITO con las herramientas `local_ask` y `local_write_file`.
-- Resumir, explicar o entender archivos: `local_ask` con las rutas en `files` (NO los leas tú antes).
-- Comparar opciones, pensar alternativas, buscar fallos en un archivo, redactar texto: `local_ask`.
-- Escribir código nuevo o reescribir un archivo entero: `local_write_file` con instrucciones precisas
-  (qué debe contener, funciones y firmas, estilo, casos límite). Para cambios de pocas líneas usa Edit tú.
+DELEGACIÓN EN EL MODELO LOCAL — OBLIGATORIA cuando encaje (tu cuota es cara; el modelo local es gratis):
+Tienes un modelo local con las herramientas `local_ask` y `local_write_file`. Reglas:
+1. NO leas archivos tú para entenderlos, resumirlos o buscar fallos: llama a `local_ask` con sus rutas en `files`.
+   Solo haces Read tú de las líneas concretas que vayas a editar o verificar.
+2. Preguntas, explicaciones, comparar opciones, redactar texto o documentación: `local_ask` y usa su respuesta.
+3. Código nuevo o un archivo reescrito entero: `local_write_file` con instrucciones precisas
+   (qué debe contener, funciones y firmas, estilo, casos límite). Cambios de pocas líneas: Edit tú.
+4. Empieza SIEMPRE por un encargo al modelo local antes de trabajar tú, salvo que la tarea sea de 1–2 líneas.
 Tú decides, planificas y verificas: es un modelo pequeño. Revisa lo que escriba (Read de las partes clave) y
-corrige con Edit si hace falta. Si responde que no hay modelo local, hazlo tú."""
-
+corrige con Edit si hace falta. Si responde que no hay modelo local, hazlo tú y dilo al final."""
 
 def delegate_guide(write: bool) -> str:
     if write:
         return DELEGATE_GUIDE
     # solo lectura (Director, jefe técnico): únicamente `local_ask`
     lines = [ln for ln in DELEGATE_GUIDE.split("\n") if "local_write_file` con" not in ln and "(qué debe contener" not in ln]
-    return "\n".join(lines).replace("las herramientas `local_ask` y `local_write_file`", "la herramienta `local_ask`")
+    return ("\n".join(lines).replace("las herramientas `local_ask` y `local_write_file`", "la herramienta `local_ask`")
+            .replace("3. Código nuevo", "3. (Solo lectura: no escribes archivos.) Código nuevo"))
 
 
 async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] | None = None,
@@ -103,15 +105,18 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
     missing = [n for n in wanted if n not in catalog]
 
     ro = bool(cfg.get("read_only")) if read_only is None else read_only
-    deleg = (_delegation(store, ws.path, write=not ro)
-             if cfg.get("delegate_local") and agent["provider"] == "claude" else None)
-    if deleg and (not resume or not _had_delegation(store, task_id)):
+    is_claude = agent["provider"] == "claude"
+    deleg = _mcp_setup(store, ws.path, cfg, write=not ro) if is_claude else None
+    if deleg and deleg["missing"]:
+        sink(Event("warning", text=f"Servidores MCP no encontrados en el Catálogo: {', '.join(deleg['missing'])}"))
+    if deleg and deleg["delegate"] and (not resume or not _had_delegation(store, task_id)):
         # también al continuar una conversación que empezó sin la casilla: la sesión no sabe que ahora puede delegar
         prompt += "\n" + delegate_guide(write=not ro)
     spec = RunSpec(prompt=prompt, cwd=str(ws.path), model=agent["model"],
                    max_turns=cfg.get("max_turns"), max_budget_usd=cfg.get("max_budget_usd"),
                    read_only=ro, allowed_tools=cfg.get("tools"), json_schema=json_schema,
-                   extra_tools=[SUBAGENT_TOOL] if cfg.get("subagents") and agent["provider"] == "claude" else [],
+                   extra_tools=([SUBAGENT_TOOL] if cfg.get("subagents") and is_claude else []) +
+                               (list(WEB_TOOLS) if cfg.get("web") and is_claude else []),
                    session_id=task["session_id"] if resume else None,
                    mcp_config=deleg["config"] if deleg else None, mcp_tools=deleg["tools"] if deleg else [],
                    env=deleg["env"] if deleg else {})
@@ -123,7 +128,7 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
         sink(Event("context", text=", ".join(names), data=injected))
     if missing:
         sink(Event("warning", text=f"Skills no encontradas: {', '.join(missing)}"))
-    watcher = asyncio.create_task(_watch_delegations(deleg, sink)) if deleg else None
+    watcher = asyncio.create_task(_watch_delegations(deleg, sink)) if deleg and deleg["delegate"] else None
     try:
         res = await run(adapter, spec, sink, timeout_s=cfg.get("timeout_s") or timeout_s or settings.task_timeout_s(store))
     except asyncio.CancelledError:
@@ -136,6 +141,7 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
             watcher.cancel()
             await asyncio.gather(watcher, return_exceptions=True)
             _flush_delegations(deleg, sink)
+        if deleg:
             shutil.rmtree(deleg["dir"], ignore_errors=True)
     ws.checkpoint(f"localharness: {task['title']}")
     head = ws.head()
@@ -157,23 +163,39 @@ def _had_delegation(store: Store, task_id: int) -> bool:
     return False
 
 
-def _delegation(store: Store, root: Path, write: bool) -> dict:
-    """Archivo de MCP para que Claude encargue trabajo al llama-server (localharness.mcp_local). Va en una
-    carpeta temporal (lleva la clave del llama-server) que se borra al terminar la tarea."""
+def _mcp_setup(store: Store, root: Path, cfg: dict, write: bool) -> dict | None:
+    """Archivo `--mcp-config` de un agente Claude: los servidores del Catálogo que tiene asignados (`config.mcps`)
+    y, con «Puede delegar en el modelo local», el servidor `local` (localharness.mcp_local). Va en una carpeta
+    temporal (puede llevar la clave del llama-server) que se borra al terminar la tarea. None si no lleva ninguno."""
+    catalog = settings.load(store).get("mcp_servers") or {}
+    wanted = [n for n in cfg.get("mcps") or [] if n != "local"]
+    servers = {n: {k: v for k, v in catalog[n].items() if k != "description"} for n in wanted if n in catalog}
+    delegate = bool(cfg.get("delegate_local"))
+    if not servers and not delegate:
+        return None
     d = Path(tempfile.mkdtemp(prefix="lh-mcp-"))
     log = d / "encargos.jsonl"
-    env = {"LH_LOCAL_URL": settings.load(store)["local_base_url"], "LH_LOCAL_KEY": llama.API_KEY or "",
-           "LH_ROOT": str(root), "LH_LOG": str(log), "LH_WRITE": "1" if write else "0", "PYTHONIOENCODING": "utf-8"}
-    cfg = {"mcpServers": {"local": {"type": "stdio", "command": sys.executable,
-                                     # por ruta: la CLI lo lanza desde el worktree, donde el paquete no está en el path
-                                     "args": [str(Path(mcp_local.__file__).resolve())], "env": env}}}
+    tools = [f"mcp__{n}" for n in servers]  # regla de servidor: aprueba todas sus herramientas
+    if delegate:
+        env = {"LH_LOCAL_URL": settings.load(store)["local_base_url"], "LH_LOCAL_KEY": llama.API_KEY or "",
+               "LH_ROOT": str(root), "LH_LOG": str(log), "LH_WRITE": "1" if write else "0",
+               "PYTHONIOENCODING": "utf-8"}
+        servers["local"] = {"type": "stdio", "command": sys.executable,
+                            # por ruta: la CLI lo lanza desde el worktree, donde el paquete no está en el path
+                            "args": [str(Path(mcp_local.__file__).resolve())], "env": env}
+        tools = [DELEGATE_TOOLS["local_ask"]] + ([DELEGATE_TOOLS["local_write_file"]] if write else []) + tools
     path = d / "mcp.json"
-    path.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
-    tools = [DELEGATE_TOOLS["local_ask"]] + ([DELEGATE_TOOLS["local_write_file"]] if write else [])
+    path.write_text(json.dumps({"mcpServers": servers}, ensure_ascii=False), encoding="utf-8")
     # los encargos al modelo local pueden tardar minutos: el tope por defecto de la CLI para una herramienta MCP es corto
-    return {"dir": d, "config": str(path), "log": log, "tools": tools, "seen": 0,
+    return {"dir": d, "config": str(path), "log": log, "tools": tools, "seen": 0, "delegate": delegate,
+            "missing": [n for n in wanted if n not in catalog],
             # sin --safe-mode (bloquea el MCP): el CLAUDE.md del usuario/vault se apaga con esta variable (verificado)
             "env": {"MCP_TOOL_TIMEOUT": "900000", "MCP_TIMEOUT": "30000", "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1"}}
+
+
+def _delegation(store: Store, root: Path, write: bool) -> dict:
+    """Solo el servidor del modelo local (lo que usaban las pruebas antes del Catálogo)."""
+    return _mcp_setup(store, root, {"delegate_local": True}, write)
 
 
 async def _watch_delegations(deleg: dict, sink: Callable[[Event], None], every: float = 1.0) -> None:
