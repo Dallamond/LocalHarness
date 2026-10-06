@@ -2,7 +2,8 @@ import json, tempfile, unittest
 from pathlib import Path
 
 from localharness.actions import ActionError
-from localharness.hierarchy import Hierarchy, PlanError, inbox, validate_plan
+from localharness import hierarchy
+from localharness.hierarchy import Hierarchy, PlanError, director_prompt, inbox, validate_plan
 from localharness.policy import N0, N1, N2, FileChange, Policy, assess_changes, parse_numstat
 from localharness.store import Store
 from localharness.workspace import git
@@ -38,6 +39,21 @@ class PolicyTests(unittest.TestCase):
             validate_plan({"risk": "low", "subtasks": [{"title": "t", "prompt": "p", "agent": "otro", "risk": "low"}]}, agents)
         with self.assertRaises(PlanError):
             validate_plan(None, agents)
+
+
+class ManualTests(unittest.TestCase):
+    def test_director_follows_the_editable_manual(self):
+        agents = [{"name": "sonnet-w", "provider": "claude", "model": "sonnet", "role": None}]
+        self.assertIn("Ciclo que sigues siempre", director_prompt("haz X", agents))  # manual/director.md
+        with tempfile.TemporaryDirectory() as tmp:
+            old = hierarchy.MANUAL
+            try:
+                hierarchy.MANUAL = Path(tmp) / "director.md"
+                self.assertIn("Reglas del plan", director_prompt("haz X", agents))  # sin manual: reglas de serie
+                hierarchy.MANUAL.write_text("Regla única: una subtarea.", encoding="utf-8")
+                self.assertIn("Regla única: una subtarea.", director_prompt("haz X", agents))
+            finally:
+                hierarchy.MANUAL = old
 
 
 class HierarchyTests(unittest.IsolatedAsyncioTestCase):

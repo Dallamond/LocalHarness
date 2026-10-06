@@ -7,7 +7,7 @@ from pathlib import Path
 from localharness import llama, settings
 from localharness.adapters import get_adapter
 from localharness.adapters.base import RunSpec
-from localharness.mcp_local import Server, read_log, strip_fence
+from localharness.mcp_local import Server, page_text, parse_ddg, read_log, strip_fence
 from localharness.orchestrator import execute_task
 from localharness.store import Store
 from tests.test_core import FAKES, make_repo
@@ -43,9 +43,10 @@ class McpServerTests(unittest.TestCase):
             self.assertEqual(init["result"]["protocolVersion"], "2025-03-26")  # se adapta al cliente
             self.assertIsNone(s.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}))
             names = [t["name"] for t in s.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]]
-            self.assertEqual(names, ["local_ask", "local_write_file"])
+            self.assertEqual(names, ["local_ask", "local_write_file", "local_research"])
             ro = server(tmp, write=False).handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
-            self.assertEqual([t["name"] for t in ro["result"]["tools"]], ["local_ask"])  # Director / jefe: solo pensar
+            # Director / jefe: pensar e investigar, nunca escribir
+            self.assertEqual([t["name"] for t in ro["result"]["tools"]], ["local_ask", "local_research"])
             self.assertIn("error", s.handle({"jsonrpc": "2.0", "id": 3, "method": "otra/cosa"}))
 
     def test_ask_reads_files_itself(self):
@@ -117,6 +118,64 @@ class FakeLlama(BaseHTTPRequestHandler):
 
     def log_message(self, *a):
         pass
+
+
+DDG = """
+<div class="result"><a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fdocs.python.org%2F3%2Flibrary%2Ftomllib.html&amp;rut=x">tomllib &mdash; <b>TOML</b></a>
+<a class="result__snippet" href="#">Parse <b>TOML</b> files.</a></div>
+<div class="result"><a class="result__a" href="https://duckduckgo.com/y.js?ad=1">Anuncio</a><a class="result__snippet">ad</a></div>
+<div class="result"><a class="result__a" href="https://peps.python.org/pep-0680/">PEP 680</a>
+<a class="result__snippet" href="#">tomllib en la stdlib</a></div>
+"""
+PAGE = "<html><head><style>x{}</style><script>var a</script></head><body><nav>menú</nav><h1>tomllib</h1>" \
+       "<p>Nuevo en la versión 3.11.</p></body></html>"
+
+
+class ResearchTests(unittest.TestCase):
+    def web(self, tmp, seen_urls, seen_bodies, fail=()):
+        def get(url, data):
+            seen_urls.append((url, data))
+            if url in fail:
+                raise OSError("caída")
+            return DDG if data else PAGE
+        def llm(body):
+            seen_bodies.append(body)
+            return reply("Desde Python 3.11 [1].")
+        return Server({"LH_ROOT": tmp, "LH_LOG": str(Path(tmp) / "log.jsonl"), "LH_WRITE": "0"},
+                      transport=llm, http_get=get)
+
+    def test_parse_ddg(self):
+        r = parse_ddg(DDG)
+        self.assertEqual([x["url"] for x in r], ["https://docs.python.org/3/library/tomllib.html",
+                                                 "https://peps.python.org/pep-0680/"])  # sin anuncio, sin redirección
+        self.assertEqual((r[0]["title"], r[0]["snippet"]), ("tomllib — TOML", "Parse TOML files."))
+
+    def test_page_text_drops_scripts_and_menus(self):
+        self.assertEqual(page_text(PAGE), "tomllib\nNuevo en la versión 3.11.")
+
+    def test_research_reads_pages_and_cites_sources(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            urls, bodies = [], []
+            s = self.web(tmp, urls, bodies, fail={"https://peps.python.org/pep-0680/"})
+            r = call(s, "local_research", {"question": "¿Desde qué versión hay tomllib?", "query": "python tomllib"})
+            text = r["result"]["content"][0]["text"]
+            self.assertIn("Desde Python 3.11 [1].", text)
+            self.assertIn("[1] tomllib — TOML — https://docs.python.org/3/library/tomllib.html", text)
+            self.assertEqual(urls[0][1], {"q": "python tomllib"})
+            prompt = bodies[0]["messages"][1]["content"]
+            self.assertIn("Nuevo en la versión 3.11.", prompt)       # leyó la página
+            self.assertIn("tomllib en la stdlib", prompt)            # la caída se sustituye por el resumen del buscador
+            log = read_log(Path(tmp) / "log.jsonl")[0]
+            self.assertEqual((log["tool"], log["ok"], len(log["sources"])), ("local_research", True, 2))
+
+    def test_research_without_results_tells_claude_to_do_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            s = Server({"LH_ROOT": tmp}, transport=lambda b: reply("x"), http_get=lambda u, d: "<html></html>")
+            r = call(s, "local_research", {"question": "algo"})
+            self.assertTrue(r["result"]["isError"])
+            self.assertIn("hazlo tú", r["result"]["content"][0]["text"])
+            off = Server({"LH_ROOT": tmp, "LH_WEB": "0"}, transport=lambda b: reply("x"))
+            self.assertNotIn("local_research", [t["name"] for t in off.tools()])
 
 
 class EndToEndTests(unittest.IsolatedAsyncioTestCase):

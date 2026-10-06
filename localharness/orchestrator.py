@@ -20,7 +20,8 @@ from localharness.store import Store
 
 EPHEMERAL = ("speed",)  # en vivo para la GUI, no se guardan (llegan cada ~1,5 s)
 
-DELEGATE_TOOLS = {"local_ask": "mcp__local__local_ask", "local_write_file": "mcp__local__local_write_file"}
+DELEGATE_TOOLS = {"local_ask": "mcp__local__local_ask", "local_write_file": "mcp__local__local_write_file",
+                  "local_research": "mcp__local__local_research"}
 DELEGATE_GUIDE = """
 DELEGACIÓN EN EL MODELO LOCAL (ahorra tu cuota; úsala siempre que encaje):
 Tienes un modelo local GRATUITO con las herramientas `local_ask` y `local_write_file`.
@@ -28,6 +29,7 @@ Tienes un modelo local GRATUITO con las herramientas `local_ask` y `local_write_
 - Comparar opciones, pensar alternativas, buscar fallos en un archivo, redactar texto: `local_ask`.
 - Escribir código nuevo o reescribir un archivo entero: `local_write_file` con instrucciones precisas
   (qué debe contener, funciones y firmas, estilo, casos límite). Para cambios de pocas líneas usa Edit tú.
+- Buscar en internet (documentación, errores, versiones, APIs): `local_research`; te devuelve respuesta y fuentes.
 Tú decides, planificas y verificas: es un modelo pequeño. Revisa lo que escriba (Read de las partes clave) y
 corrige con Edit si hace falta. Si responde que no hay modelo local, hazlo tú."""
 
@@ -169,7 +171,8 @@ def _delegation(store: Store, root: Path, write: bool) -> dict:
                                      "args": [str(Path(mcp_local.__file__).resolve())], "env": env}}}
     path = d / "mcp.json"
     path.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
-    tools = [DELEGATE_TOOLS["local_ask"]] + ([DELEGATE_TOOLS["local_write_file"]] if write else [])
+    tools = ([DELEGATE_TOOLS["local_ask"]] + ([DELEGATE_TOOLS["local_write_file"]] if write else [])
+             + [DELEGATE_TOOLS["local_research"]])
     # los encargos al modelo local pueden tardar minutos: el tope por defecto de la CLI para una herramienta MCP es corto
     return {"dir": d, "config": str(path), "log": log, "tools": tools, "seen": 0,
             # sin --safe-mode (bloquea el MCP): el CLAUDE.md del usuario/vault se apaga con esta variable (verificado)

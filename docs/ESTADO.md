@@ -2,7 +2,16 @@
 
 Última actualización: 06/10/2026, mediodía (sesión 3 + delegación en Qwen + rumbo nuevo: oficina 3D y Atlas). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
 
-## ▶ SIGUIENTE SESIÓN — EMPEZAR AQUÍ (06/10/2026, mediodía)
+## ▶ RUMBO NUEVO (06/10/2026, tarde) — LEER PRIMERO `docs/OBJETIVOS.md`
+Lucas cambia el enfoque: Claude con un **manual** (`manual/director.md`, editable) y un **catálogo** decide el equipo,
+en vez de crear agentes a mano. Hecho hoy: manual v1 inyectado en el Director y `local_research` (búsqueda web
+DuckDuckGo para el modelo local, MCP). Objetivos nuevos de Lucas: plan editable/aprobable en el Inicio, subagentes
+en bucle siempre trabajando y ver su tarea, pensamiento y tok/s. Empezar con pocas skills y roles.
+**Probar en el PC de Lucas:** un agente con «Puede delegar en el modelo local» y una petición que necesite
+internet (p. ej. «¿qué versión de X…?»): debe salir «🦙 Modelo local investigó en la web…» en el chat.
+Siguiente: objetivo 3 (plan editable en el Inicio), luego 4 y 5.
+
+## SESIÓN ANTERIOR (06/10/2026, mediodía)
 
 ### Decisiones de Lucas de hoy
 - **GUI final = su prototipo** `docs/prototipos/localharness-gui-prototipo-v2_1.html` (ábrelo en el navegador): oficina

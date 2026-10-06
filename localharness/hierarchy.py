@@ -80,14 +80,25 @@ SKILLS DISPONIBLES (procedimientos que se inyectan al agente; pon en `skills` la
 por su nombre exacto, o ninguna):
 {catalog}
 
-Reglas del plan:
-- Divide la petición en subtareas pequeñas y verificables que se ejecutarán EN ORDEN sobre la misma rama
-  (cada una ve los cambios de las anteriores). Si la petición es pequeña, una sola subtarea.
+{director_manual()}"""
+
+
+MANUAL = Path(__file__).resolve().parent.parent / "manual" / "director.md"
+FALLBACK_MANUAL = """Reglas del plan:
+- Divide la petición en subtareas pequeñas y verificables que se ejecutarán EN ORDEN sobre la misma rama.
 - El `prompt` de cada subtarea debe ser autocontenido: el agente no verá esta conversación.
-- Riesgo de cada subtarea: low (cambio pequeño y local), medium (lógica no trivial o varios archivos),
-  high (borra archivos, dependencias, migraciones, configuración/CI, secretos o cambios grandes).
-- `risk` global: el mayor de las subtareas o mayor si el conjunto lo justifica.
+- Riesgo: low (pequeño y local), medium (lógica no trivial o varios archivos), high (borra, dependencias,
+  migraciones, configuración/CI, secretos o cambios grandes). `risk` global: el mayor de las subtareas.
 - No incluyas pasos de git (commit/push/merge): de eso se encarga el sistema."""
+
+
+def director_manual() -> str:
+    """El «algoritmo» del Director vive en manual/director.md (editable sin tocar código)."""
+    try:
+        text = MANUAL.read_text(encoding="utf-8").strip()
+    except OSError:
+        text = ""
+    return text or FALLBACK_MANUAL
 
 
 def _desc(agent: dict) -> str:

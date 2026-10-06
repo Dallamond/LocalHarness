@@ -314,7 +314,7 @@ const placeholder = computed(() => {
             </div>
             <div v-else-if="m.type === 'delegate'" class="deleg" :class="{ 'deleg--bad': !m.ok }">
               <span class="deleg__who">🦙 Modelo local</span>
-              <span>{{ m.tool === "local_write_file" ? "escribió" : "respondió a" }} <strong>{{ m.what }}</strong></span>
+              <span>{{ m.tool === "local_write_file" ? "escribió" : m.tool === "local_research" ? "investigó en la web" : "respondió a" }} <strong>{{ m.what }}</strong></span>
               <span class="muted small">{{ m.detail }}</span>
             </div>
             <p v-else class="note" :class="`note--${m.tone}`">{{ m.text }}</p>

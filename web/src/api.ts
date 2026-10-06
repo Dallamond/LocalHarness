@@ -428,6 +428,7 @@ export function describeActivity(a: Activity | undefined): string {
     const short = target.split(/[\\/]/).slice(-2).join("/");
     if (a.text === "mcp__local__local_ask") return `Encargando al modelo local: ${String(input.task ?? "").slice(0, 110)}`;
     if (a.text === "mcp__local__local_write_file") return `El modelo local escribe ${String(input.path ?? "")}`;
+    if (a.text === "mcp__local__local_research") return `El modelo local investiga en la web: ${String(input.question ?? "").slice(0, 100)}`;
     const verb: Record<string, string> = {
       Read: "Leyendo", Edit: "Editando", Write: "Escribiendo", MultiEdit: "Editando",
       Grep: "Buscando", Glob: "Buscando archivos", Bash: "Ejecutando",
