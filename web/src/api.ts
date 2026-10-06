@@ -424,7 +424,7 @@ export function describeActivity(a: Activity | undefined): string {
   if (!a) return "arrancando…";
   if (a.kind === "tool") {
     const input = (a.data.input ?? {}) as Record<string, unknown>;
-    const target = String(input.file_path ?? input.pattern ?? input.command ?? input.path ?? "");
+    const target = String(input.file_path ?? input.pattern ?? input.command ?? input.path ?? input.ruta ?? input.url ?? input.consulta ?? input.texto ?? "");
     const short = target.split(/[\\/]/).slice(-2).join("/");
     if (a.text === "mcp__local__local_ask") return `Encargando al modelo local: ${String(input.task ?? "").slice(0, 110)}`;
     if (a.text === "mcp__local__local_write_file") return `El modelo local escribe ${String(input.path ?? "")}`;
@@ -432,6 +432,8 @@ export function describeActivity(a: Activity | undefined): string {
     const verb: Record<string, string> = {
       Read: "Leyendo", Edit: "Editando", Write: "Escribiendo", MultiEdit: "Editando",
       Grep: "Buscando", Glob: "Buscando archivos", Bash: "Ejecutando",
+      leer_archivo: "Leyendo", listar: "Mirando", buscar_texto: "Buscando", escribir_archivo: "Escribiendo",
+      buscar_web: "Buscando en la web:", leer_url: "Leyendo la página",
     };
     return `${verb[a.text] ?? a.text} ${short}`.trim();
   }

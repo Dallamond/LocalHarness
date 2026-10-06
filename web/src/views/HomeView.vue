@@ -208,7 +208,7 @@ const keyOf = (i: InboxItem) => `${i.type}-${i.plan_id ?? ""}-${i.task_id ?? ""}
             <div class="member__who">
               <strong>{{ m.agent.name }}</strong>
               <span class="muted small">{{ ROLE_TEXT[m.agent.role ?? ""] ?? m.agent.role ?? "sin rol" }} ·
-                <template v-if="m.agent.provider === 'local'">local · usa {{ live.local.model ?? "(nada arrancado)" }}</template>
+                <template v-if="m.agent.provider.startsWith('local')">local · usa {{ live.local.model ?? "(nada arrancado)" }}</template>
                 <template v-else>{{ m.agent.provider }}{{ m.agent.model ? ` ${m.agent.model}` : "" }}</template></span>
             </div>
           </div>

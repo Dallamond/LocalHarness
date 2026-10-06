@@ -183,7 +183,7 @@ const blank = (): AgentForm => ({
 // lo propio de cada proveedor: subagentes solo en Claude; temperatura, tokens y contexto solo en local
 const num = (v: number | null | string) => (v === null || v === "" ? null : Number(v));
 function providerFields(f: AgentForm, provider: string) {
-  return provider === "local"
+  return provider.startsWith("local")
     ? { base_url: f.base_url || null, temperature: num(f.temperature), max_tokens: num(f.max_tokens),
         repo_context: num(f.repo_context) }
     : provider === "claude" ? { subagents: f.subagents, delegate_local: f.delegate_local } : {};
@@ -318,7 +318,7 @@ watch(look, applyLook, { deep: true });
             <span class="label">Descripción</span>
             <input v-model.trim="newAgent.description" placeholder="En qué es bueno (el Director lo lee para repartir trabajo)" />
           </label>
-          <label v-if="newAgent.provider === 'local'" class="field wide">
+          <label v-if="newAgent.provider.startsWith('local')" class="field wide">
             <span class="label">URL del llama-server</span>
             <input v-model.trim="newAgent.base_url" :placeholder="saved?.local_base_url" class="code" />
           </label>
@@ -328,7 +328,7 @@ watch(look, applyLook, { deep: true });
               <input v-model="newAgent.skills" type="checkbox" :value="s.name" /> {{ s.name }}
             </label>
           </fieldset>
-          <template v-if="newAgent.provider === 'local'">
+          <template v-if="newAgent.provider.startsWith('local')">
             <label class="field"><span class="label">Temperatura</span><input v-model.number="newAgent.temperature" type="number" min="0" max="2" step="0.05" placeholder="0.2" /></label>
             <label class="field"><span class="label">Tokens de respuesta</span><input v-model.number="newAgent.max_tokens" type="number" min="64" step="256" placeholder="4096" /></label>
             <label class="field" title="Cuántos caracteres del repo se meten en el prompt (0 = nada)">
@@ -382,7 +382,7 @@ watch(look, applyLook, { deep: true });
                 <span class="label">Descripción</span>
                 <input v-model.trim="edit.description" placeholder="En qué es bueno (el Director lo lee para repartir trabajo)" />
               </label>
-              <label v-if="a.provider === 'local'" class="field wide">
+              <label v-if="a.provider.startsWith('local')" class="field wide">
                 <span class="label">URL del llama-server</span>
                 <input v-model.trim="edit.base_url" :placeholder="saved?.local_base_url" class="code" />
               </label>
@@ -392,7 +392,7 @@ watch(look, applyLook, { deep: true });
                   <input v-model="edit.skills" type="checkbox" :value="s.name" /> {{ s.name }}
                 </label>
               </fieldset>
-              <template v-if="a.provider === 'local'">
+              <template v-if="a.provider.startsWith('local')">
                 <label class="field"><span class="label">Temperatura</span><input v-model.number="edit.temperature" type="number" min="0" max="2" step="0.05" placeholder="0.2" /></label>
                 <label class="field"><span class="label">Tokens de respuesta</span><input v-model.number="edit.max_tokens" type="number" min="64" step="256" placeholder="4096" /></label>
                 <label class="field" title="Cuántos caracteres del repo se meten en el prompt (0 = nada)">

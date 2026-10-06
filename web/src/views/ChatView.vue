@@ -18,7 +18,7 @@ const conversations = computed(() => taskList.value.filter((t) => t.plan_id == n
 const task = computed<Task | undefined>(() => (props.id ? live.tasks[props.id] : undefined));
 const agent = computed(() => live.agents.find((a) => a.id === task.value?.agent_id));
 // un agente local responde con el modelo ARRANCADO en llama-server, se llame como se llame
-const localModel = computed(() => (agent.value?.provider === "local" ? live.local.model : null));
+const localModel = computed(() => (agent.value?.provider?.startsWith("local") ? live.local.model : null));
 const speed = computed(() => (task.value ? live.speed[task.value.id] : undefined));
 
 const CLOSED = ["merged", "rejected", "discarded"];
@@ -57,11 +57,13 @@ const messages = computed<Msg[]>(() => {
       spoke = true;
     } else if (e.kind === "tool") {
       const input = (e.data?.input ?? {}) as Record<string, unknown>;
-      const item = { name: e.text || "herramienta", target: String(input.file_path ?? input.pattern ?? input.command ?? input.path ?? "") };
+      const item = { name: e.text || "herramienta", target: String(input.file_path ?? input.pattern ?? input.command ?? input.path ?? input.ruta ?? input.url ?? input.consulta ?? input.texto ?? "") };
       if (last.type === "tools") last.items.push(item);
       else out.push({ type: "tools", items: [item] });
     } else if (e.kind === "error") {
       out.push({ type: "note", text: e.text, tone: "crit" });
+    } else if (e.kind === "progress") {
+      out.push({ type: "note", text: `📣 ${e.text}`, tone: "ok" });
     } else if (e.kind === "warning") {
       out.push({ type: "note", text: e.text, tone: "warn" });
     } else if (e.kind === "delegate") {
@@ -277,7 +279,7 @@ const placeholder = computed(() => {
         <AgentAvatar :agent="agent" :busy="busy" :size="34" />
         <div class="room__who">
           <strong>{{ task.title }}</strong>
-          <span class="muted small">{{ agentName(task.agent_id) }}<template v-if="agent?.provider === 'local'"> · usa
+          <span class="muted small">{{ agentName(task.agent_id) }}<template v-if="agent?.provider?.startsWith('local')"> · usa
             <strong>{{ localModel ?? "ningún modelo arrancado" }}</strong></template>
             <template v-if="agent?.provider === 'claude'"> ·
               <span v-if="agent.config.delegate_local" title="Puede encargar trabajo al modelo arrancado">🦙 delega en {{ live.local.model ?? "local (nada arrancado)" }}</span>

@@ -157,7 +157,7 @@ async function stop() {
 
 // Agentes locales por ROL y sin modelo fijo: llama-server sirve uno a la vez y todos usan el que esté arrancado.
 // Cambiar de modelo no obliga a crear otro agente.
-const localAgents = computed(() => live.agents.filter((a) => a.provider === "local"));
+const localAgents = computed(() => live.agents.filter((a) => a.provider.startsWith("local")));
 const newRole = ref("jefe");
 const ROLE_DESC: Record<string, string> = {
   jefe: "Jefe técnico local: revisa diffs y decide si se aprueban, sin coste.",

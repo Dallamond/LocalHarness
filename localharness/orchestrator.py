@@ -66,7 +66,9 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
     cfg = json.loads(agent["config"] or "{}")
     # la URL del llama-server del agente manda; si no tiene, la de Ajustes
     extra = ({**config_kwargs({"base_url": settings.load(store)["local_base_url"], **cfg}), "api_key": llama.API_KEY}
-             if agent["provider"] == "local" else {})
+             if agent["provider"] in ("local", "local_agent") else {})
+    if agent["provider"] == "local_agent":  # el bucle de agente local tiene sus propios ajustes
+        extra.update({k: cfg[k] for k in ("tool_mode", "max_tool_chars", "max_context_chars", "web") if k in cfg})
     adapter = get_adapter(agent["provider"], binary=(binaries or {}).get(agent["provider"]) or cfg.get("binary"),
                           **extra)
 

@@ -9,7 +9,10 @@ DuckDuckGo para el modelo local, MCP). Objetivos nuevos de Lucas: plan editable/
 en bucle siempre trabajando y ver su tarea, pensamiento y tok/s. Empezar con pocas skills y roles.
 **Probar en el PC de Lucas:** un agente con «Puede delegar en el modelo local» y una petición que necesite
 internet (p. ej. «¿qué versión de X…?»): debe salir «🦙 Modelo local investigó en la web…» en el chat.
-Siguiente: objetivo 3 (plan editable en el Inicio), luego 4 y 5.
+**Agente local con herramientas (objetivo 8, v1):** proveedor `local_agent` (`localharness/adapters/local_agent.py`).
+Probar: `sandbox` crea `qwen-agente`; arrancar Qwen3.5-9B y pedirle en el chat algo que necesite leer el repo e
+internet. Si no usa herramientas, en el agente poner `tool_mode: json`. Diseño completo en `docs/DISENO-OFICINA.md`.
+Siguiente: `ejecutar` (lista blanca) y `preguntar_director`; después objetivo 3 (plan editable en el Inicio), 4 y 5.
 
 ## SESIÓN ANTERIOR (06/10/2026, mediodía)
 
