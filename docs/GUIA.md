@@ -279,7 +279,7 @@ Solo escucha en 127.0.0.1 y no tiene autenticación. Con `web/dist` compilada si
 | `ChatView` | `/chat`, `/chat/:id` | conversaciones; burbujas con markdown, herramientas plegadas, tarjetas «🦙» de encargos, preguntas al Director, «escribiendo…» con tok/s, tarjeta de cambios. Nueva: «Un agente» o «Equipo (Director)», vincular carpeta, skills por conversación |
 | `InboxView` | `/bandeja` | decisiones N2 con nivel, tipo y motivos |
 | `PlansView` | `/planes` | nueva petición al Director (proyecto, Director, jefe técnico) e historial |
-| `PlanView` | `/planes/:id` | petición, nivel y motivos, subtareas con estado, quién aprobó y skills; aprobar, integrar, cancelar, rechazar, decidir pasos |
+| `PlanView` | `/planes/:id` | petición, nivel y motivos, subtareas con estado, quién aprobó y skills; aprobar, integrar, cancelar, rechazar, decidir pasos; editar un paso o pedir que se rehaga (objetivo 3, en desarrollo) |
 | `TaskView` | `/tareas/:id` | detalle de ejecución: eventos, respuesta final, diff y aprobar/rechazar/integrar |
 | `ModelsView` | `/modelos` | estado de llama-server con progreso y log, GGUF por carpeta, arranque por modelo, agentes locales, rutas |
 | `SettingsView` | `/ajustes?s=…` | agentes, proyectos, aprobaciones, ejecución y mantenimiento, skills y memoria, apariencia |
@@ -355,7 +355,7 @@ para la web. `tests/fixtures_reales/` guarda salidas reales de Claude para compr
 |---|---|
 | `test_core.py` | adaptadores Claude y Codex (comando y parseo, fixtures reales, `--tools`), shims de npm, worktree/diff/merge, UTF-8, restos, `node_modules`, quitar la API key, runner (metacaracteres, fallos), extremo a extremo |
 | `test_cli.py` | ciclo `run` → `show` → `merge`; no integra sobre un repo con cambios |
-| `test_api.py` | ciclo completo por API, rechazar, cancelar, planes, validación, conversación, `init_git`, modelos, ajustes y actividad |
+| `test_api.py` | ciclo completo por API, rechazar, cancelar, planes, editar y rehacer pasos, validación, conversación, `init_git`, modelos, ajustes y actividad |
 | `test_hierarchy.py` | niveles, numstat, `validate_plan`, el manual en el prompt, plan pequeño con jefe, plan grande, borrar = N2 y rechazar deshace, el revisor solo sube, sin revisor N1 → tú, plan que te espera, editar pasos, rehacer un paso |
 | `test_context.py` | skills (con y sin frontmatter), `build_prompt`, memoria, misma tarea con y sin skill |
 | `test_local.py` | streaming, contexto del repo, JSON, servidor caído, el Director no da trabajo a `local` |
@@ -369,7 +369,8 @@ para la web. `tests/fixtures_reales/` guarda salidas reales de Claude para compr
 Resumen; el detalle está en `docs/OBJETIVOS.md` y `docs/DISENO-OFICINA.md`.
 - **Manual + catálogo** en vez de agentes a mano: el Director decide el equipo con `manual/director.md` (v1 hecha)
   y un catálogo de roles, skills y servidores MCP **(futuro)**.
-- **Plan editable** (objetivo 3): editar y rehacer pasos ya existen en el núcleo y la API; falta en el Inicio.
+- **Plan editable** (objetivo 3, en curso): editar y rehacer pasos ya existen en el núcleo, la API y el detalle
+  del plan; la GUI se está terminando (Inicio incluido).
 - **Ver a los subagentes trabajando** (4): tarea, pensamiento en vivo, tok/s, tokens y coste **(futuro)**.
 - **Catálogo de roles** (5: Explorador local, Programador, Revisor) y de skills con metadatos (6) **(futuro)**.
 - **Subagentes en bucle** (7) con topes duros y parada a partir del 75 % de la ventana de 5 h **(futuro)**.
