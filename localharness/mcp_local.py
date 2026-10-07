@@ -236,6 +236,13 @@ ROLE_TEXT = {"fuerte": "escribir código y tareas enteras", "rapido": "preguntas
 SERVER_TOOLS = ("local_ask", "local_write_file", "local_execute_plan", "local_research", "local_agent")
 
 
+def thinking_body(level: str | None) -> dict:
+    """Pensamiento del servidor (Ajustes → servidores locales) en cada petición; igual que adapters.local."""
+    if level in ("apagado", "profundo"):
+        return {"chat_template_kwargs": {"enable_thinking": level == "profundo"}}
+    return {}
+
+
 class ToolError(Exception):
     pass
 
@@ -658,8 +665,10 @@ class Server:
         start = [f for f in files if isinstance(f, str)]
         prompt = task + (f"\n\nEmpieza leyendo: {', '.join(start)}" if start else "") + self.skills_text()
         before = self.snapshot()
-        self.use(self.first_up(self.order or self.servers))
+        srv = self.first_up(self.order or self.servers)
+        self.use(srv)
         self.current["server"] = self.server_id
+        thinking = srv.get("thinking") if srv.get("thinking") in ("apagado", "profundo") else None
         adapter = LocalAgentAdapter(base_url=self.url, api_key=self.key or None, transport=self._httpx(),
                                     http_get=self.http_get, web=self.web,
                                     commands=CHECK_COMMANDS if self.commands is None else self.commands,
@@ -684,8 +693,8 @@ class Server:
             elif ev.kind == "usage":
                 seen["usage"] = ev.data.get("usage") or {}
                 seen["model"] = ev.data.get("model")
-        res = asyncio.run(adapter.execute(RunSpec(prompt=prompt, cwd=str(self.root), max_turns=turns), on_event,
-                                          self.agent_timeout))
+        res = asyncio.run(adapter.execute(RunSpec(prompt=prompt, cwd=str(self.root), max_turns=turns,
+                                                  thinking=thinking), on_event, self.agent_timeout))
         self._live("\n\n".join(seen["thinking"]), res.get("final") or "", done=True)
         changed = self.changed(before, self.snapshot())
         stats = {"prompt_tokens": seen["usage"].get("prompt_tokens"), "completion_tokens":
@@ -811,13 +820,14 @@ class Server:
     def _post_any(self, body: dict) -> dict:
         """Al servidor elegido; si está apagado, a los siguientes del orden (un 401 no: fallarían igual)."""
         if self.transport:
-            return self.transport(body)
+            srv = next((x for x in self.servers if x["id"] == self.server_id), self.servers[0])
+            return self.transport({**body, **thinking_body(srv.get("thinking"))})
         order = self.order or [next(srv for srv in self.servers if srv["id"] == self.server_id)]
         for i, srv in enumerate(order):
             self.use(srv)
             self.current["server"] = srv["id"]
             try:
-                return self._post(body)
+                return self._post({**body, **thinking_body(srv.get("thinking"))})
             except NoModel as e:
                 if i == len(order) - 1 or "401" in str(e):
                     raise

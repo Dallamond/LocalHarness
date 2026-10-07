@@ -10,7 +10,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from localharness import llama, mcp_local, settings, workspace
+from localharness import llama, local_servers, mcp_local, settings, workspace
 from localharness.adapters import get_adapter
 from localharness.adapters.base import THINKING_LEVELS, RunSpec
 from localharness.adapters.claude import READ_TOOLS, SUBAGENT_TOOL, WEB_TOOLS, thinking_env
@@ -122,6 +122,11 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
     if busy and ws is None:  # conflictos de merge entre tareas: por ahora, una tarea por repo a la vez
         raise ValueError(f"El proyecto ya tiene una tarea en curso: #{busy[0]['id']}")
     cfg = json.loads(agent["config"] or "{}")
+    # agente local con su servidor apagado: se arranca solo (antes de crear el adaptador, que necesita su clave)
+    pre_warn: list[str] = []
+    if agent["provider"] in ("local", "local_agent") and not cfg.get("base_url"):
+        await asyncio.to_thread(local_servers.ensure_for_task, store, [cfg.get("server") or llama.PRINCIPAL], 180,
+                                pre_warn.append)
     # la URL del llama-server del agente manda (o su servidor local, `config.server`); si no, la de Ajustes
     extra = {}
     if agent["provider"] in ("local", "local_agent"):
@@ -174,6 +179,11 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
     # modo coordinador: Claude planifica, encarga y revisa; todo lo que se escribe lo genera el modelo local. Sin
     # llama-server no tendría con qué trabajar: entonces trabaja él solo esta vez (con aviso) en vez de gastar en vano
     coord = is_claude and bool(cfg.get("coordinator")) and not ro
+    # modelos locales apagados que esta tarea va a usar: se arrancan solos con el último modelo de cada servidor
+    if is_claude and (coord or cfg.get("delegate_local")):
+        await asyncio.to_thread(local_servers.ensure_for_task, store, None, 180, lambda t: sink(Event("warning", text=t)))
+    for text in pre_warn:
+        sink(Event("warning", text=text))
     if coord and not await asyncio.to_thread(any_llama_up, store):
         coord = False
         sink(Event("warning", text="Modo coordinador sin modelo local arrancado: Claude trabaja solo esta vez "
@@ -185,6 +195,9 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
     system = (delegate_guide(write=not ro, coordinator=coord, servers=settings.local_servers(store))
               if deleg and deleg["delegate"] else None)
     thinking = task.get("thinking") or cfg.get("thinking")
+    if not thinking and agent["provider"] in ("local", "local_agent"):  # si no, el de su servidor local
+        srv = next((s for s in settings.local_servers(store) if s["id"] == (cfg.get("server") or llama.PRINCIPAL)), None)
+        thinking = srv and srv.get("thinking")
     thinking = thinking if thinking in THINKING_LEVELS else None
     if thinking and agent["provider"] == "claude":
         deleg_env = {**(deleg["env"] if deleg else {}), **thinking_env(thinking)}
@@ -303,7 +316,7 @@ def local_endpoints(store: Store) -> list[dict]:
         if srv["id"] == llama.PRINCIPAL:
             url = settings.load(store)["local_base_url"] or url
         out.append({"id": srv["id"], "name": srv["name"], "role": srv["role"], "device": srv["device"],
-                    "url": url, "key": llama.key_for_url(url) or ""})
+                    "thinking": srv.get("thinking") or "normal", "url": url, "key": llama.key_for_url(url) or ""})
     return out
 
 

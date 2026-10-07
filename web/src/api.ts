@@ -254,6 +254,7 @@ export interface Settings {
     autostart: boolean;
     last?: { model?: string; options?: ModelLaunch };
     last_by_server?: Record<string, { model?: string; options?: ModelLaunch }>;
+    autostart_on_task?: boolean;
     servers: LocalServerCfg[];
   };
   agent_defaults: { provider: string; model: string; role: string; max_turns: number | null; max_budget_usd: number | null };
@@ -296,6 +297,7 @@ export interface LocalServerCfg {
   port: number;
   device: string; // -dev de llama.cpp: CUDA0, CUDA1, CUDA0,CUDA1… ("" = lo decide llama.cpp)
   role: ServerRole;
+  thinking?: "normal" | "apagado" | "profundo"; // en cada encargo (apagado = contesta al momento)
 }
 export interface LocalServer extends LocalServerCfg {
   url: string;

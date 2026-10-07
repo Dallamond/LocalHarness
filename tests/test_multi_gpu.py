@@ -120,7 +120,7 @@ class ServersSettingsTests(unittest.TestCase):
     def test_default_is_one_principal_server(self):
         store = Store(":memory:")
         self.assertEqual(settings.local_servers(store), [{"id": "principal", "name": "Principal", "port": 8080,
-                                                          "device": "", "role": "general"}])
+                                                          "device": "", "role": "general", "thinking": "normal"}])
 
     def test_two_servers_and_validation(self):
         store = Store(":memory:")
@@ -146,8 +146,8 @@ class ServersSettingsTests(unittest.TestCase):
     @unittest.skipIf(TestClient is None, "falta fastapi (pip install -e .[server])")
     def test_suggest_one_server_per_gpu(self):
         sug = suggest_servers(DEVICES, [])
-        self.assertEqual([(s["id"], s["device"], s["role"], s["port"]) for s in sug],
-                         [("principal", "CUDA0", "fuerte", 8080), ("rapido", "CUDA1", "rapido", 8081)])
+        self.assertEqual([(s["id"], s["device"], s["role"], s["port"], s["thinking"]) for s in sug],
+                         [("principal", "CUDA0", "fuerte", 8080, "normal"), ("rapido", "CUDA1", "rapido", 8081, "apagado")])
         self.assertIsNone(suggest_servers(DEVICES[:1], []))
         self.assertIsNone(suggest_servers(DEVICES, sug))  # ya configurado
 
@@ -265,6 +265,15 @@ class RoutingTests(unittest.TestCase):
                 h.shutdown()
                 h.server_close()
 
+    def test_thinking_off_on_the_fast_server_only(self):
+        eps = self.endpoints()
+        eps[1]["thinking"] = "apagado"
+        s = self.server(eps)
+        call(s, "local_ask", {"task": "rápido"})
+        call(s, "local_write_file", {"path": "c.py", "instructions": "z = 3"})
+        self.assertEqual(self.seen_small[0]["chat_template_kwargs"], {"enable_thinking": False})
+        self.assertNotIn("chat_template_kwargs", self.seen_big[0])
+
     def test_tools_offer_server_choice_only_with_several(self):
         one = Server({"LH_ROOT": self.tmp.name, "LH_LOCAL_URL": f"http://127.0.0.1:{self.big.server_port}"})
         ask = next(t for t in one.tools() if t["name"] == "local_ask")
@@ -275,6 +284,39 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("Qwen3.5-4B", tools["local_ask"]["description"])
         self.assertIn("server", tools["local_execute_plan"]["inputSchema"]["properties"]["blocks"]["items"]["properties"])
         self.assertNotIn("server", tools["run_checks"]["inputSchema"]["properties"])
+
+
+
+
+class AutostartOnTaskTests(unittest.TestCase):
+    def test_starts_the_off_servers_with_their_last_model_and_waits(self):
+        from localharness import local_servers
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(":memory:")
+            gguf = Path(tmp) / "Qwen3.5-4B.gguf"
+            gguf.write_bytes(b"GGUF")
+            p1, p2 = free_port(), free_port()
+            settings.save(store, {"llama": {"servers": [
+                {"id": "principal", "name": "Fuerte", "port": p1, "device": "CUDA0", "role": "fuerte"},
+                {"id": "rapido", "name": "Rápido", "port": p2, "device": "CUDA1", "role": "rapido"}],
+                "last_by_server": {"rapido": {"model": str(gguf), "options": {"ctx": 4096}}}}})
+            pool = llama.LlamaPool(Path(tmp) / "llama-server.log")
+            said: list[str] = []
+            old = llama.POOL
+            llama.POOL = pool
+            try:
+                with unittest.mock.patch.object(llama.LlamaManager, "start") as start,                         unittest.mock.patch.object(llama.LlamaManager, "status", return_value={"state": "ready"}):
+                    names = local_servers.ensure_for_task(store, None, 5, said.append)
+                self.assertEqual(names, ["Rápido"])  # el principal no tiene último modelo: no se toca
+                model, port, ctx, _ngl, extra = start.call_args.args
+                self.assertEqual((port, ctx, extra[:2]), (p2, 4096, ["-dev", "CUDA1"]))
+                self.assertIn("Arrancando Qwen3.5-4B en Rápido", said[0])
+                settings.save(store, {"llama": {"autostart_on_task": False}})
+                with unittest.mock.patch.object(llama.LlamaManager, "start") as start:
+                    self.assertEqual(local_servers.ensure_for_task(store, None, 5, said.append), [])
+                start.assert_not_called()
+            finally:
+                llama.POOL = old
 
 
 if __name__ == "__main__":

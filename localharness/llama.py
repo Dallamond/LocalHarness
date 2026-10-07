@@ -25,6 +25,7 @@ DIRS_OVERRIDE: list[str] = []
 API_KEY: str | None = None
 KEYS: dict[int, str] = {}
 PRINCIPAL = "principal"
+POOL: "LlamaPool | None" = None  # el de la API en marcha (lo usa el orquestador para arrancar modelos solo)
 
 
 def key_for(port: int | None) -> str | None:

@@ -35,14 +35,18 @@ DEFAULTS: dict[str, Any] = {
     # falte usa los valores generales de arriba. hardware: VRAM/RAM a mano si la detección falla (vacío = detectar).
     # download_dir: dónde dejar lo que se descarga de Hugging Face (vacío = la primera carpeta de modelos).
     # servers: los llama-server que puede tener encendidos a la vez (uno por GPU, p. ej.): [{id, name, port, device,
-    # role}]. Vacío = solo el «principal» en `port`. role: general (todo) | fuerte (escribir código, agente local) |
+    # role, thinking}]. Vacío = solo el «principal» en `port`. thinking: normal | apagado | profundo (lo que hace el
+    # modelo en cada encargo; apagado = Qwen3/3.5 contesta al momento: en la prueba, 0,4 s en vez de 8,9 s). role: general (todo) | fuerte (escribir código, agente local) |
     # rapido (preguntas, resúmenes, buscar): la delegación reparte los encargos según el papel. device: -dev de
     # llama.cpp (CUDA0, CUDA1, CUDA0,CUDA1…; vacío = lo decide llama.cpp).
     "llama": {"server": "", "model_dirs": [], "port": 8080, "ctx": 16384, "ngl": 99, "per_model": {},
               "hardware": {}, "hf_token": "", "download_dir": "", "servers": [],
               # autostart: al abrir LocalHarness arranca el último modelo de cada servidor (last = {model, options}
               # del principal; last_by_server = {id: {model, options}} de los demás)
-              "autostart": False, "last": {}, "last_by_server": {}},
+              "autostart": False, "last": {}, "last_by_server": {},
+              # autostart_on_task: una tarea que usa modelos locales arranca los que estén apagados (el último que
+              # tuvo cada servidor) y espera a que carguen, en vez de que Claude trabaje solo
+              "autostart_on_task": True},
     # Valores que propone el formulario de nuevo agente
     "agent_defaults": {"provider": "claude", "model": "sonnet", "role": "trabajador", "max_turns": 10,
                        "max_budget_usd": 1.0},
@@ -69,6 +73,7 @@ def clean_office_layout(v: Any) -> dict[str, list[float]]:
         out[k] = [max(-20.0, min(20.0, float(p[0]))), max(-20.0, min(20.0, float(p[1]))), int(p[2]) % 4]
     return out
 SERVER_ROLES = ("general", "fuerte", "rapido")
+SERVER_THINKING = ("normal", "apagado", "profundo")  # como el pensamiento de los agentes (THINKING_LEVELS)
 SERVER_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,23}$")
 DEVICE = re.compile(r"^([A-Za-z]+\d+)(,[A-Za-z]+\d+)*$")
 
@@ -94,8 +99,9 @@ def clean_servers(v: Any, default_port: int) -> list[dict]:
         if device and not DEVICE.match(device):
             raise ValueError(f"Dispositivo no válido para {sid}: {device!r} (p. ej. CUDA0 o CUDA0,CUDA1)")
         role = srv.get("role") if srv.get("role") in SERVER_ROLES else "general"
+        thinking = srv.get("thinking") if srv.get("thinking") in SERVER_THINKING else "normal"
         out.append({"id": sid, "name": str(srv.get("name") or sid)[:40], "port": port, "device": device,
-                    "role": role})
+                    "role": role, "thinking": thinking})
     ids = [s["id"] for s in out]
     ports = [s["port"] for s in out]
     if len(set(ids)) != len(ids):
@@ -108,7 +114,7 @@ def clean_servers(v: Any, default_port: int) -> list[dict]:
         if default_port in ports:
             raise ValueError(f"El puerto {default_port} es del servidor principal")
         out.insert(0, {"id": llama.PRINCIPAL, "name": "Principal", "port": default_port, "device": "",
-                       "role": "general"})
+                       "role": "general", "thinking": "normal"})
     else:  # el principal siempre el primero
         out.sort(key=lambda s: s["id"] != llama.PRINCIPAL)
     return out

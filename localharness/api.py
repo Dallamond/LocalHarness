@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from localharness.local_servers import autostart_llama, servers_status, start_on, suggest_servers  # noqa: F401
 from localharness import (actions, analytics, catalog, context, designer, hardware, hf, library, llama, maintenance, mcp_local,
                           modelinfo, orchestrator, roles, settings, usage, workspace)
 from localharness.adapters import ADAPTERS
@@ -378,70 +379,6 @@ class Runner:
             await self.cancel_plan(pid)
 
 
-def autostart_llama(store: Store, pool: "llama.LlamaPool") -> str | None:
-    """Modelos locales → «Arrancar el último modelo al abrir LocalHarness»: lanza en cada servidor local el último
-    GGUF que tuvo, con sus ajustes. Devuelve qué pasó (para la GUI) o None si está apagado. Nunca impide arrancar."""
-    cfg = settings.load(store)["llama"]
-    if not cfg.get("autostart"):
-        return None
-    said = []
-    for srv in settings.local_servers(store):
-        main = srv["id"] == llama.PRINCIPAL
-        last = (cfg.get("last") if main else (cfg.get("last_by_server") or {}).get(srv["id"])) or {}
-        if not last.get("model"):
-            continue
-        who = "" if main else f"{srv['name']}: "
-        model = Path(last["model"])
-        if not model.is_file():
-            said.append(f"{who}no encuentro {model}")
-            continue
-        if llama.health(srv["port"]) != "off":
-            said.append(f"{who}ya había un llama-server en el puerto {srv['port']}")
-            continue
-        try:
-            start_on(store, pool, srv, model, last.get("options") or None)
-        except (LookupError, RuntimeError, OSError) as e:
-            said.append(f"{who}no pude arrancarlo: {e}")
-            continue
-        said.append(f"{who}arrancando {model.name}")
-    return " · ".join(said) or None
-
-
-def start_on(store: Store, pool: "llama.LlamaPool", srv: dict, model: Path, options: dict | None = None,
-             ctx: int | None = None, ngl: int | None = None) -> dict:
-    """Arranca `model` en el servidor local `srv` (en su GPU si tiene `device`). Devuelve los ajustes usados."""
-    own = settings.llama_launch(store, str(model), options)
-    extra = own["extra"]
-    if srv.get("device") and not own["options"].get("device"):
-        extra = ["-dev", srv["device"], *extra]
-    pool.get(srv["id"], srv["port"]).start(model, srv["port"], ctx or own["ctx"],
-                                           ngl if ngl is not None else own["ngl"], extra)
-    if srv["id"] == llama.PRINCIPAL:  # los agentes locales sin URL propia se conectan al principal
-        settings.save(store, {"local_base_url": settings.server_url(srv)})
-    return own
-
-
-def servers_status(store: Store, pool: "llama.LlamaPool") -> list[dict]:
-    """Cada servidor local de Ajustes con su estado (off | loading | ready | failed | external)."""
-    out = []
-    for srv in settings.local_servers(store):
-        status = pool.get(srv["id"], srv["port"]).status(srv["port"])
-        out.append({**srv, "url": settings.server_url(srv), "status": status,
-                    "model_name": _model_name(status.get("model")) if status["state"] != "off" else None})
-    return out
-
-
-def suggest_servers(devices: list[dict], current: list[dict]) -> list[dict] | None:
-    """Con 2+ GPU y solo el servidor principal: uno por GPU. El principal («fuerte») en la de más memoria y otro
-    («rápido») en la siguiente. None si no hay nada que proponer."""
-    gpus_ = sorted([d for d in devices if d.get("total_mb")], key=lambda d: -d["total_mb"])
-    if len(gpus_) < 2 or len(current) > 1:
-        return None
-    main = current[0] if current else {"id": llama.PRINCIPAL, "name": "Principal", "port": 8080}
-    return [{**main, "name": "Fuerte", "device": gpus_[0]["id"], "role": "fuerte"},
-            {"id": "rapido", "name": "Rápido", "port": main["port"] + 1, "device": gpus_[1]["id"], "role": "rapido"}]
-
-
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1", "testserver")  # testserver = el TestClient de las pruebas
 
 
@@ -469,7 +406,7 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         app.state.runner = Runner(store, app.state.hub, binaries, worktree_root)
         log = Path(db_path).parent / "llama-server.log" if str(db_path) != ":memory:" else Path(
             tempfile.gettempdir()) / "localharness-llama-server.log"
-        app.state.llama = llama.LlamaPool(log)  # un llama-server por servidor local (uno por GPU)
+        app.state.llama = llama.POOL = llama.LlamaPool(log)  # un llama-server por servidor local (uno por GPU)
         app.state.modelinfo = modelinfo.ModelInfo(log.with_name("model-info.json") if str(db_path) != ":memory:"
                                                   else Path(tempfile.mkdtemp()) / "model-info.json")
         app.state.downloads = hf.Downloads()

@@ -20,7 +20,7 @@ const now = ref(Date.now());
 const cfg = reactive({
   server: "", model_dirs: [] as string[], port: 8080, ctx: 16384, ngl: 99, per_model: {} as Record<string, ModelLaunch>,
   hardware: {} as { vram_gb?: number | null; ram_gb?: number | null; gpu_name?: string; bandwidth_gbs?: number | null },
-  hf_token: "", download_dir: "", autostart: false,
+  hf_token: "", download_dir: "", autostart: false, autostart_on_task: true,
 });
 const newDir = ref("");
 
@@ -72,7 +72,10 @@ const servers = computed<LocalServer[]>(() => info.value?.servers ?? []);
 const target = ref("principal"); // dónde arrancan los botones de «Tus modelos»
 const targetSrv = computed(() => servers.value.find((s) => s.id === target.value) ?? servers.value[0]);
 const openLog = ref<string | null>(null);
-const serverCfg = (s: LocalServer): LocalServerCfg => ({ id: s.id, name: s.name, port: s.port, device: s.device, role: s.role });
+const serverCfg = (s: LocalServer): LocalServerCfg => ({ id: s.id, name: s.name, port: s.port, device: s.device, role: s.role,
+  thinking: s.thinking ?? "normal" });
+const THINK_TEXT: Record<string, string> = { normal: "lo que haga el modelo", apagado: "apagado (contesta al momento)",
+  profundo: "siempre" };
 const devices = computed(() => info.value?.devices ?? []);
 const short = (name: string) => name.replace(/^NVIDIA GeForce /, "").replace(/^NVIDIA /, "");
 function gpuText(dev: string): string {
@@ -366,7 +369,8 @@ function addServer() {
   for (let i = 2; editServers.value.some((s) => s.id === id); i++) id = `local${i}`;
   const used = editServers.value.map((s) => s.device);
   const free = devices.value.find((d) => !used.includes(d.id));
-  editServers.value.push({ id, name: `Local ${editServers.value.length + 1}`, port, device: free?.id ?? "", role: "rapido" });
+  editServers.value.push({ id, name: `Local ${editServers.value.length + 1}`, port, device: free?.id ?? "", role: "rapido",
+    thinking: "apagado" });
   serversDirty.value = true;
 }
 function removeServer(id: string) {
@@ -513,7 +517,7 @@ async function setAgentServer(id: number, server: string) {
         <button class="btn btn--primary btn--small" @click="saveServers(info.suggested_servers!)">Usar las {{ devices.length }} GPU</button>
       </div>
       <table class="srvtab">
-        <thead><tr><th>Nombre</th><th>Papel</th><th>GPU</th><th>Puerto</th><th /></tr></thead>
+        <thead><tr><th>Nombre</th><th>Papel</th><th>GPU</th><th>Pensamiento</th><th>Puerto</th><th /></tr></thead>
         <tbody>
           <tr v-for="s in editServers" :key="s.id">
             <td><input v-model.trim="s.name" class="input mini" maxlength="40" :aria-label="`Nombre de ${s.id}`" @input="serversDirty = true" />
@@ -528,6 +532,11 @@ async function setAgentServer(id: number, server: string) {
                 <option value="">la que elija llama.cpp</option>
                 <option v-for="d in devices" :key="d.id" :value="d.id">{{ gpuText(d.id) }}</option>
                 <option v-if="devices.length > 1" :value="devices.map((d) => d.id).join(',')">las {{ devices.length }} juntas</option>
+              </select>
+            </td>
+            <td>
+              <select v-model="s.thinking" class="input mini" aria-label="Pensamiento" @change="serversDirty = true">
+                <option v-for="(t, k) in THINK_TEXT" :key="k" :value="k">{{ t }}</option>
               </select>
             </td>
             <td><input v-model.number="s.port" class="input mini num" type="number" min="1024" max="65535" aria-label="Puerto" @input="serversDirty = true" /></td>
@@ -845,6 +854,11 @@ async function setAgentServer(id: number, server: string) {
           <input v-model="cfg.autostart" type="checkbox" @change="saveCfg()" />
           Arrancar el último modelo al abrir LocalHarness
           <span class="muted small">(el que arrancaste la última vez en cada servidor, con los mismos ajustes)</span>
+        </label>
+        <label class="check">
+          <input v-model="cfg.autostart_on_task" type="checkbox" @change="saveCfg()" />
+          Arrancar solos los modelos cuando una tarea los necesita
+          <span class="muted small">(si delega o coordina y están apagados: el último de cada servidor; así Claude no trabaja solo por un despiste)</span>
         </label>
         <div class="nums">
           <label class="field">
