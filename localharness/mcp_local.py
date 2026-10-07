@@ -24,11 +24,17 @@ LH_LOG (JSONL) para que LocalHarness lo muestre y cuente los tokens ahorrados.
 Protocolo: JSON-RPC 2.0, un mensaje por línea en stdin/stdout (sin dependencias). stdout es SOLO para el
 protocolo; los avisos van a stderr.
 
+El «trabajador local» (lo que ve la oficina): `local_prepare` deja que Claude elija ANTES de encargar qué skills y
+qué herramientas lleva el modelo local; se guardan en LH_WORKER (JSON, también lo cambia el usuario desde la GUI
+mientras trabaja) y se aplican en cada encargo siguiente. Cada encargo apunta en el log su petición, su respuesta y
+su pensamiento (`request`, `answer`, `thinking`): es el chat propio del trabajador.
+
 Variables: LH_LOCAL_URL (llama-server), LH_LOCAL_KEY (su --api-key), LH_ROOT, LH_LOG, LH_WRITE (1/0),
 LH_MAX_TOKENS (por defecto 8192), LH_MAX_INPUT_CHARS (texto de archivos por encargo, por defecto 40000),
 LH_WEB (1/0, búsqueda web), LH_COORDINATOR (1: Claude no puede hacerlo él; los errores no le dicen «hazlo tú»),
 LH_COMMANDS (JSON: lista blanca de órdenes de comprobación; por defecto CHECK_COMMANDS), LH_AGENT_TURNS (pasos del
-agente local por encargo, 25), LH_AGENT_TIMEOUT (segundos por encargo de `local_agent`, 1200).
+agente local por encargo, 25), LH_AGENT_TIMEOUT (segundos por encargo de `local_agent`, 1200), LH_WORKER (estado
+del trabajador: skills y herramientas), LH_SKILLS (JSON {nombre: {description, body}}: skills que puede llevar).
 """
 
 import asyncio
@@ -168,6 +174,29 @@ CHECKS = {
     },
 }
 
+# herramientas del agente local (local_agent) que Claude o tú podéis quitarle o darle; las de control van siempre
+WORKER_TOOLS = {"leer_archivo": "leer archivos", "listar": "listar carpetas", "buscar_texto": "buscar en el código",
+                "escribir_archivo": "escribir archivos", "ejecutar": "ejecutar tests",
+                "buscar_web": "buscar en internet", "leer_url": "leer páginas web"}
+PREPARE = {
+    "name": "local_prepare",
+    "description": "",  # se rellena en tools(): lleva la lista de skills disponibles
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "skills": {"type": "array", "items": {"type": "string"},
+                       "description": "Nombres de las skills que debe seguir el modelo local (de la lista)"},
+            "tools": {"type": "array", "items": {"type": "string", "enum": list(WORKER_TOOLS)},
+                      "description": "Herramientas del agente local (`local_agent`). Omítelo para darle todas"},
+            "reason": {"type": "string", "description": "Por qué estas skills y herramientas (lo ve el usuario)"},
+        },
+        "required": ["skills"],
+    },
+}
+MAX_LOG_REQUEST = 3000
+MAX_LOG_ANSWER = 8000
+MAX_LOG_THINKING = 6000
+
 SYSTEM_ASK = ("Eres un asistente de programación que ayuda a otro agente más caro a ahorrar trabajo. Responde en "
               "español, concreto y sin relleno. Si te faltan datos, dilo en vez de inventar.")
 SYSTEM_WRITE = ("Eres un programador. Devuelve ÚNICAMENTE el contenido completo del archivo pedido, dentro de un solo "
@@ -215,12 +244,15 @@ class Server:
             self.commands = None
         self.agent_turns = int(env.get("LH_AGENT_TURNS") or 25)
         self.agent_timeout = float(env.get("LH_AGENT_TIMEOUT") or 1200)
+        self.worker_path = Path(env["LH_WORKER"]) if env.get("LH_WORKER") else None
+        self.skills_path = Path(env["LH_SKILLS"]) if env.get("LH_SKILLS") else None
         self.transport = transport  # pruebas: función (body) -> respuesta JSON de /v1/chat/completions
         self.http_get = http_get or _http_get  # pruebas: función (url, data) -> HTML; sin red de verdad
 
     # --- protocolo
     def tools(self) -> list[dict]:
-        return ([ASK] + ([WRITE, PLAN, AGENT] if self.write else []) + ([CHECKS] if self.commands != [] else [])
+        prepare = [self.prepare_tool()] if self.worker_path else []
+        return (prepare + [ASK] + ([WRITE, PLAN, AGENT] if self.write else []) + ([CHECKS] if self.commands != [] else [])
                 + ([RESEARCH] if self.web else []))
 
     def handle(self, msg: dict) -> dict | None:
@@ -249,7 +281,10 @@ class Server:
         t0 = time.monotonic()
         entry: dict = {"tool": name, "at": time.time()}
         try:
-            if name == "local_ask":
+            if name == "local_prepare" and self.worker_path:
+                text, stats = self.prepare(args.get("skills") or [], args.get("tools"), str(args.get("reason") or ""))
+                entry["task"] = stats["summary"]
+            elif name == "local_ask":
                 entry["task"] = str(args.get("task", ""))[:300]
                 text, stats = self.ask(str(args.get("task") or ""), args.get("files") or [])
             elif name == "local_write_file" and self.write:
@@ -283,6 +318,61 @@ class Server:
         finally:
             entry["seconds"] = round(time.monotonic() - t0, 1)
             self._log(entry)
+
+    # --- el trabajador local: skills y herramientas
+    def available_skills(self) -> dict[str, dict]:
+        if not self.skills_path:
+            return {}
+        try:
+            data = json.loads(self.skills_path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def worker(self) -> dict:
+        """Estado actual (se relee en cada encargo: el usuario puede cambiarlo desde la GUI mientras trabaja)."""
+        if not self.worker_path:
+            return {"skills": [], "tools": None}
+        try:
+            w = json.loads(self.worker_path.read_text(encoding="utf-8"))
+            return w if isinstance(w, dict) else {"skills": [], "tools": None}
+        except (OSError, ValueError):
+            return {"skills": [], "tools": None}
+
+    def skills_text(self) -> str:
+        cat = self.available_skills()
+        parts = [f"## Skill: {n}\n{cat[n].get('body', '').strip()}" for n in self.worker().get("skills") or [] if n in cat]
+        return ("\n\n# Skills que debes seguir en este encargo\n\n" + "\n\n".join(parts)) if parts else ""
+
+    def prepare_tool(self) -> dict:
+        cat = self.available_skills()
+        lines = [f"- {n}: {(v.get('description') or '')[:140]}" for n, v in sorted(cat.items())][:80]
+        desc = ("PRIMER PASO antes de encargar nada: equipa al modelo local (el «trabajador local») con las skills y "
+                "herramientas que necesita para ESTA tarea. Las skills se añaden a cada encargo siguiente como reglas "
+                "que debe seguir; elige pocas y relevantes (cada una ocupa contexto en un modelo pequeño). Puedes "
+                "volver a llamarla para cambiarlas. El usuario ve tu elección y puede corregirla.\n"
+                "Herramientas de `local_agent`: " + ", ".join(f"{k} ({v})" for k, v in WORKER_TOOLS.items()) + ".\n"
+                "Skills disponibles:\n" + ("\n".join(lines) if lines else "(ninguna instalada)"))
+        return {**PREPARE, "description": desc}
+
+    def prepare(self, skills, tools, reason: str) -> tuple[str, dict]:
+        cat = self.available_skills()
+        if not isinstance(skills, list):
+            raise ToolError("`skills` tiene que ser una lista de nombres")
+        names = [str(n) for n in skills]
+        unknown = [n for n in names if n not in cat]
+        if unknown:
+            raise ToolError(f"no existen estas skills: {', '.join(unknown)}. Disponibles: {', '.join(sorted(cat)) or 'ninguna'}")
+        if tools is not None:
+            if not isinstance(tools, list) or any(t not in WORKER_TOOLS for t in tools):
+                raise ToolError(f"herramientas válidas: {', '.join(WORKER_TOOLS)}")
+            tools = list(dict.fromkeys(tools))
+        state = {**self.worker(), "skills": list(dict.fromkeys(names)), "tools": tools, "by": "Claude",
+                 "reason": reason[:500], "at": time.time()}
+        self.worker_path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        tools_txt = ", ".join(tools) if tools is not None else "todas"
+        summary = f"skills: {', '.join(state['skills']) or 'ninguna'} · herramientas: {tools_txt}"
+        return (f"Trabajador local equipado. {summary}. Se aplica a los encargos siguientes."), {"summary": summary}
 
     # --- herramientas
     def ask(self, task: str, files: list) -> tuple[str, dict]:
@@ -430,12 +520,13 @@ class Server:
         except (TypeError, ValueError):
             turns = self.agent_turns
         start = [f for f in files if isinstance(f, str)]
-        prompt = task + (f"\n\nEmpieza leyendo: {', '.join(start)}" if start else "")
+        prompt = task + (f"\n\nEmpieza leyendo: {', '.join(start)}" if start else "") + self.skills_text()
         before = self.snapshot()
         adapter = LocalAgentAdapter(base_url=self.url, api_key=self.key or None, transport=self._httpx(),
                                     http_get=self.http_get, web=self.web,
-                                    commands=CHECK_COMMANDS if self.commands is None else self.commands)
-        seen: dict = {"tools": 0, "errors": [], "usage": {}, "model": None}
+                                    commands=CHECK_COMMANDS if self.commands is None else self.commands,
+                                    only_tools=self.worker().get("tools"))
+        seen: dict = {"tools": 0, "errors": [], "usage": {}, "model": None, "thinking": []}
 
         def on_event(ev: Event) -> None:
             if ev.kind == "tool":
@@ -444,6 +535,10 @@ class Server:
                 what = inp.get("ruta") or inp.get("comando") or inp.get("texto") or inp.get("consulta") or ""
                 self._log({"tool": "local_agent", "progress": True, "text": f"{ev.text} {what}".strip()[:200],
                            "at": time.time()})
+            elif ev.kind == "thinking" and ev.text:
+                seen["thinking"].append(ev.text)
+                self._log({"tool": "local_agent", "progress": True, "thinking": ev.text[-MAX_LOG_THINKING:],
+                           "text": "pensando…", "at": time.time()})
             elif ev.kind == "error":
                 seen["errors"].append(ev.text)
             elif ev.kind == "usage":
@@ -454,7 +549,10 @@ class Server:
         changed = self.changed(before, self.snapshot())
         stats = {"prompt_tokens": seen["usage"].get("prompt_tokens"), "completion_tokens":
                  seen["usage"].get("completion_tokens"), "model": seen["model"], "files": changed,
-                 "status": res["status"]}
+                 "status": res["status"], "request": task[:MAX_LOG_REQUEST],
+                 "answer": (res.get("final") or "")[:MAX_LOG_ANSWER], "skills": self.worker().get("skills") or []}
+        if seen["thinking"]:
+            stats["thinking"] = "\n\n".join(seen["thinking"])[-MAX_LOG_THINKING:]
         if res["status"] != "done" and not seen["tools"] and seen["errors"]:
             raise ToolError(f"{seen['errors'][-1]}; hazlo tú")
         lines = [f"El agente local terminó: {'OK' if res['status'] == 'done' else res['status']} "
@@ -540,6 +638,8 @@ class Server:
         return "\n\n".join(parts), read
 
     def complete(self, system: str, user: str) -> tuple[str, dict]:
+        skills = self.worker().get("skills") or []
+        system += self.skills_text()
         body = {"messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
                 "temperature": 0.2, "max_tokens": self.max_tokens}
         t0 = time.monotonic()
@@ -551,7 +651,12 @@ class Server:
         timings = data.get("timings") or {}
         stats = {"prompt_tokens": usage.get("prompt_tokens"), "completion_tokens": usage.get("completion_tokens"),
                  "tps": round(timings["predicted_per_second"], 1) if timings.get("predicted_per_second") else None,
-                 "model": _short(data.get("model")), "gen_seconds": round(time.monotonic() - t0, 1)}
+                 "model": _short(data.get("model")), "gen_seconds": round(time.monotonic() - t0, 1),
+                 # el chat propio del trabajador local: lo que se le pidió, lo que contestó y lo que pensó
+                 "request": user[:MAX_LOG_REQUEST] + ("\n[…]" if len(user) > MAX_LOG_REQUEST else ""),
+                 "answer": text[:MAX_LOG_ANSWER], "skills": skills}
+        if msg.get("reasoning_content"):
+            stats["thinking"] = msg["reasoning_content"][-MAX_LOG_THINKING:]
         if not text:
             if msg.get("reasoning_content"):
                 raise ToolError("el modelo local se quedó pensando y no llegó a responder (sube LH_MAX_TOKENS o "

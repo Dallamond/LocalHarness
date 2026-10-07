@@ -6,7 +6,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
-export type StationKind = "you" | "director" | "jefe" | "trabajador" | "consultas" | "otro";
+export type StationKind = "you" | "director" | "jefe" | "trabajador" | "consultas" | "local" | "otro";
 export type StationState = "idle" | "working" | "waiting";
 
 export interface StationSpec {
@@ -14,6 +14,7 @@ export interface StationSpec {
   name: string;
   color: string;
   kind: StationKind;
+  boss?: string; // puesto del que depende (el trabajador local, del Claude que le encarga): la línea va a él
 }
 
 export interface BoardStep {
@@ -361,6 +362,7 @@ export class Office {
     for (const [id, st] of this.stations) {
       const spec = specs.find((s) => s.id === id);
       if (!want.has(id) || !spec || spec.color !== st.spec.color || spec.kind !== st.spec.kind) this.removeStation(id);
+      else if (spec.boss !== st.spec.boss) st.spec = spec; // la línea de mando cambia, el puesto no
     }
     const taken = (p: [number, number]) => [...this.stations.values()].some((st) =>
       Math.hypot(st.group.position.x - p[0], st.group.position.z - p[1]) < 1.5);
@@ -650,6 +652,12 @@ export class Office {
       const mic = T(new THREE.CylinderGeometry(0.012, 0.012, 0.22, 6), k, head, 0.24, -0.02, 0.15);
       mic.rotation.x = Math.PI / 2.4;
       T(new THREE.SphereGeometry(0.03, 8, 6), S(0x22c55e), head, 0.24, -0.06, 0.25);
+    } else if (spec.kind === "local") {
+      // trabajador del modelo local: visor de luz (corre en tu GPU) y un chip en la cabeza
+      const glow = new THREE.MeshStandardMaterial({ color: 0x67e8f9, emissive: 0x22d3ee, emissiveIntensity: 0.9, roughness: 0.2 });
+      T(new THREE.TorusGeometry(0.3, 0.035, 8, 28, Math.PI * 0.9), glow, head, 0, 0.15, 0).rotation.set(0, Math.PI * 0.05, 0);
+      T(B(0.2, 0.05, 0.2), S(0x0f172a), head, 0, 0.33, 0);
+      T(B(0.12, 0.02, 0.12), glow, head, 0, 0.365, 0);
     } else if (spec.kind === "consultas") {
       const k = S(0x0f172a);
       [-0.11, 0.11].forEach((x) => T(new THREE.TorusGeometry(0.065, 0.014, 6, 16), k, head, x, 0.15, 0.27));
@@ -675,12 +683,15 @@ export class Office {
     const pairs: [Station, Station][] = [];
     const you = this.stations.get("you");
     if (!you) return;
+    const bossOf = (s: Station) => (s.spec.boss ? this.stations.get(s.spec.boss) : undefined);
+    const free = agents.filter((s) => !bossOf(s));
     if (hub) {
       heads.forEach((h) => pairs.push([you, h]));
-      agents.filter((s) => s.spec.kind !== "director").forEach((s) => pairs.push([hub, s]));
+      free.filter((s) => s.spec.kind !== "director").forEach((s) => pairs.push([hub, s]));
     } else {
-      agents.forEach((s) => pairs.push([you, s]));
+      free.forEach((s) => pairs.push([you, s]));
     }
+    agents.forEach((s) => { const b = bossOf(s); if (b) pairs.push([b, s]); });
     for (const [a, b] of pairs) {
       const pa = a.group.position, pb = b.group.position;
       const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(pa.x, 0.06, pa.z), new THREE.Vector3(pb.x, 0.06, pb.z)]);

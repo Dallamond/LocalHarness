@@ -7,6 +7,7 @@ from pathlib import Path
 from localharness import llama, settings
 from localharness.adapters import get_adapter
 from localharness.adapters.base import RunSpec
+from localharness.adapters.local_agent import LocalAgentAdapter
 from localharness.mcp_local import Server, page_text, parse_ddg, read_log, strip_fence
 from localharness.orchestrator import execute_task
 from localharness.store import Store
@@ -132,6 +133,41 @@ class McpServerTests(unittest.TestCase):
             msg = r["result"]["content"][0]["text"]
             self.assertTrue(r["result"]["isError"])
             self.assertIn("díselo al usuario", msg); self.assertNotIn("hazlo tú", msg)  # coordinador: no puede hacerlo él
+
+    def test_worker_skills_and_chat(self):
+        """El trabajador local: Claude elige sus skills (local_prepare) y se aplican a cada encargo siguiente."""
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "skills.json").write_text(json.dumps({"tests-primero": {"description": "Escribe el test antes",
+                                                                         "body": "REGLA: primero el test."}}))
+            (d / "worker.json").write_text(json.dumps({"skills": [], "tools": None}))
+            seen = []
+
+            def fake(body):
+                seen.append(body)
+                return reply("hecho", reasoning="primero pienso en el test")
+            s = Server({"LH_ROOT": tmp, "LH_LOG": str(d / "log.jsonl"), "LH_WORKER": str(d / "worker.json"),
+                        "LH_SKILLS": str(d / "skills.json")}, transport=fake)
+            tools = s.tools()
+            self.assertEqual(tools[0]["name"], "local_prepare")
+            self.assertIn("tests-primero: Escribe el test antes", tools[0]["description"])  # ve lo que hay
+            bad = call(s, "local_prepare", {"skills": ["no-existe"]})
+            self.assertTrue(bad["result"]["isError"]); self.assertIn("tests-primero", bad["result"]["content"][0]["text"])
+            ok = call(s, "local_prepare", {"skills": ["tests-primero"], "tools": ["leer_archivo", "ejecutar"],
+                                           "reason": "hay que arreglar un fallo"})
+            self.assertNotIn("isError", ok["result"])
+            state = json.loads((d / "worker.json").read_text())
+            self.assertEqual((state["skills"], state["tools"], state["by"]),
+                             (["tests-primero"], ["leer_archivo", "ejecutar"], "Claude"))
+            call(s, "local_ask", {"task": "arregla esto"})
+            self.assertIn("REGLA: primero el test.", seen[0]["messages"][0]["content"])  # la skill va en el sistema
+            log = read_log(d / "log.jsonl")
+            self.assertEqual([e["tool"] for e in log], ["local_prepare", "local_prepare", "local_ask"])
+            ask = log[2]
+            self.assertEqual((ask["request"], ask["answer"], ask["thinking"], ask["skills"]),
+                             ("arregla esto", "hecho", "primero pienso en el test", ["tests-primero"]))
+            names = LocalAgentAdapter(only_tools=["leer_archivo"]).tool_names(read_only=False)
+            self.assertEqual(names, ["leer_archivo", "avisar_progreso", "terminar"])  # las de control, siempre
 
     def test_strip_fence(self):
         self.assertEqual(strip_fence("```js\nx = 1\n```"), "x = 1")
@@ -274,8 +310,17 @@ class EndToEndTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("local_execute_plan", res["final"])
                 self.assertIn("Integradas: Read,Glob,Grep.", res["final"])  # sin Edit/Write: no lo hace él
                 self.assertIn("Coordinador: True", res["final"])
-                summary = next(e for e in store.list_events(t["id"]) if e["kind"] == "delegate_summary")
-                self.assertEqual(json.loads(summary["data"])["calls"], 3)  # los bloques, no el resumen del plan
+                evs = store.list_events(t["id"])
+                summary = next(e for e in evs if e["kind"] == "delegate_summary")
+                self.assertEqual(json.loads(summary["data"])["calls"], 3)  # los bloques, no el plan ni local_prepare
+                worker = next(e for e in evs if e["kind"] == "worker")  # Claude equipó al trabajador local
+                self.assertEqual((json.loads(worker["data"])["skills"], json.loads(worker["data"])["by"]),
+                                 (["cambios-minimos"], "Claude"))
+                block = next(json.loads(e["data"]) for e in evs if e["kind"] == "delegate"
+                             and json.loads(e["data"]).get("block") == "1")
+                self.assertIn("un saludo", block["request"])  # su chat: lo que se le pidió y lo que contestó
+                self.assertEqual((block["answer"], block["skills"]), ("```\nhola desde el modelo local\n```",
+                                                                      ["cambios-minimos"]))
         finally:
             httpd.shutdown()
 

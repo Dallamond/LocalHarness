@@ -8,6 +8,29 @@ Decisión de Lucas: **se trabaja siempre en `main`**. Se integraron en `main` la
 editable), `claude/cool-dirac-vmw6s0` (análisis de Paperclip) y `claude/youthful-edison-bi67hm` (Modelos locales +
 rediseño de la oficina). Las secciones de abajo son el historial de cada una; donde digan «rama X», ya está en `main`.
 
+### Trabajador local en la oficina (08/10/2026) — Claude lo equipa; tú lo ves y lo corriges
+Petición de Lucas: que Claude piense primero qué skills y herramientas necesita el modelo local, y que al encargarle
+algo aparezca un muñeco del trabajador local con su pensamiento, su propio chat y sus skills (añadir/quitar).
+- **`local_prepare`** (MCP, primera herramienta de la lista): Claude elige skills (de las instaladas + biblioteca;
+  la lista va en la descripción de la herramienta) y herramientas del agente local (`WORKER_TOOLS`), con el motivo.
+  Se guarda en `worker.json` de la carpeta de la delegación (LH_WORKER); el catálogo, en `skills.json` (LH_SKILLS).
+  El servidor relee el estado en CADA encargo: las skills van al prompt de sistema (ask/write/plan) o al de la
+  tarea (`local_agent`, que además solo recibe las herramientas elegidas: `LocalAgentAdapter(only_tools=…)`).
+  Las guías del coordinador y de delegar tienen un paso 0 «equipa al trabajador local».
+- **Chat y pensamiento**: cada encargo apunta `request`, `answer`, `thinking` (reasoning_content) y `skills` en el
+  log → eventos `delegate`; el pensamiento de `local_agent` sale como `worker_thinking`. Cambios de equipo →
+  evento `worker` (quién: Claude / tú / el agente). `local_prepare` no cuenta como encargo.
+- **API**: `GET /api/tasks/{id}/worker` (lo que lleva, si está activo, skills disponibles, herramientas) y
+  `PUT` (cambiarlo mientras trabaja: `orchestrator.set_worker`, registro `ACTIVE_WORKERS`; 409 si ya no trabaja).
+  `config.local_skills` del agente = skills con las que arranca su trabajador («Usar siempre estas skills»).
+- **Oficina**: puesto `w<tarea>` de tipo `local` (robot azul con visor y chip, línea discontinua a su Claude:
+  `StationSpec.boss`). Entra cuando Claude le encarga algo; paquetes Claude → trabajador → rack y de vuelta.
+  Inspector `office/LocalWorkerPanel.vue`: pestañas Chat / Piensa / Skills (quitar ×, añadir, herramientas).
+- Probado: 169 pruebas + capturas en Chromium con un llama-server falso. Una de las tareas de la demo la hizo por
+  error la CLI real de Claude del contenedor (el rol se resincronizó al reiniciar y perdió el binario falso): equipó
+  sola al trabajador (`cambios-minimos`, `manejo-de-errores`) y los cambios de skills hechos desde la GUI a mitad
+  de tarea se aplicaron. **Pendiente**: probarlo en el PC de Lucas con Qwen de verdad.
+
 ### Revisión completa y delegación unificada (07/10/2026, noche) — LEER `docs/REVISION.md`
 - **Delegación**: el modo coordinador de abajo y el «modo jefe» de otra sesión se unificaron en `coordinator`.
   Además: herramienta **`local_agent`** (encarga una tarea entera al agente local con herramientas en el mismo

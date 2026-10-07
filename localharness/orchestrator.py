@@ -6,6 +6,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -24,8 +25,12 @@ EPHEMERAL = ("speed", "thinking_live")  # en vivo para la GUI, no se guardan (ll
 DELEGATE_TOOLS = {"local_ask": "mcp__local__local_ask", "local_write_file": "mcp__local__local_write_file",
                   "local_execute_plan": "mcp__local__local_execute_plan",
                   "local_agent": "mcp__local__local_agent", "run_checks": "mcp__local__run_checks",
-                  "local_research": "mcp__local__local_research"}
+                  "local_research": "mcp__local__local_research", "local_prepare": "mcp__local__local_prepare"}
 PLAN_TOOL = "local_execute_plan"
+PREPARE_TOOL = "local_prepare"
+NOT_ENCARGOS = (PLAN_TOOL, PREPARE_TOOL)  # no cuentan como encargos en el resumen (no generan nada)
+# trabajador local de las tareas en marcha: task_id -> datos de su delegación (la GUI cambia sus skills al vuelo)
+ACTIVE_WORKERS: dict[int, dict] = {}
 
 # Las guías van en el prompt de SISTEMA (--append-system-prompt), no en el de la tarea: Claude las trata como reglas
 # de trabajo y se repiten en cada vuelta de la conversación (con --resume también).
@@ -34,6 +39,8 @@ COORDINATOR_GUIDE = """
 El trabajo lo hace un modelo local que corre gratis en el PC del usuario; tu cuota es cara. Tú entiendes, partes,
 encargas, revisas y presentas. No tienes Edit, Write ni Bash: no puedes escribir archivos ni ejecutar nada; todo lo
 que haya que generar (código, tests, documentación, correcciones) lo genera el modelo local. Sigue este ciclo:
+0. EQUIPA al trabajador local ANTES de encargar: `local_prepare` con las skills (de su lista) y herramientas que
+   necesita para esta tarea, y el motivo. Pocas y relevantes: es un modelo pequeño y cada skill ocupa contexto.
 1. ENTIENDE la petición entera y sepárala en bloques. Explora lo justo: Glob para la estructura; para entender
    código o buscar fallos NO leas tú los archivos: `local_ask` con sus rutas en `files` (puedes pedirle de una vez
    «lista los fallos de estos archivos con archivo, línea y corrección»).
@@ -54,6 +61,7 @@ Investigar en internet: `local_research`. Si el modelo local deja de responder, 
 DELEGATE_GUIDE = """
 # Cómo trabajas: delega en el modelo local
 Tienes un modelo local que corre gratis en el PC del usuario; tu cuota es cara. Delegar es OBLIGATORIO cuando encaje:
+0. Antes del primer encargo, equípalo con `local_prepare` (skills y herramientas que necesita para esta tarea).
 1. NO leas archivos tú para entenderlos, resumirlos o buscar fallos: `local_ask` con sus rutas en `files`.
    Haz Read tú solo de las líneas concretas que vayas a editar o verificar.
 2. Preguntas, explicaciones, comparar opciones, redactar texto o documentación: `local_ask`.
@@ -190,6 +198,8 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
     if missing:
         sink(Event("warning", text=f"Skills no encontradas: {', '.join(missing)}"))
     watcher = asyncio.create_task(_watch_delegations(deleg, sink)) if deleg and deleg["delegate"] else None
+    if watcher:
+        ACTIVE_WORKERS[task_id] = deleg
     try:
         res = await run(adapter, spec, sink, timeout_s=cfg.get("timeout_s") or timeout_s or settings.task_timeout_s(store))
     except asyncio.CancelledError:
@@ -203,6 +213,7 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
             await asyncio.gather(watcher, return_exceptions=True)
             _flush_delegations(deleg, sink)
         if deleg:
+            ACTIVE_WORKERS.pop(task_id, None)
             shutil.rmtree(deleg["dir"], ignore_errors=True)
     ws.checkpoint(f"localharness: {task['title']}")
     head = ws.head()
@@ -272,6 +283,47 @@ def llama_up(base_url: str, timeout: float = 2.0) -> bool:
         return False
 
 
+def worker_skill_catalog() -> dict[str, dict]:
+    """Skills que puede llevar el trabajador local: las instaladas y las de la biblioteca (sin instalar hace falta)."""
+    from localharness import library
+    from localharness.context import load_skills
+    out = {n: {"description": sk.description, "body": sk.body} for n, sk in load_skills().items()}
+    try:
+        for e in library.skill_library():
+            if e["name"] not in out:
+                meta_body = library._front(e["content"])[1]
+                out[e["name"]] = {"description": e["description"], "body": meta_body}
+    except OSError:
+        pass
+    return out
+
+
+def worker_state(deleg: dict) -> dict:
+    try:
+        return json.loads(Path(deleg["worker"]).read_text(encoding="utf-8"))
+    except (OSError, ValueError, KeyError):
+        return {"skills": [], "tools": None}
+
+
+def set_worker(task_id: int, skills: list[str], tools: list[str] | None) -> dict:
+    """Desde la GUI, con la tarea en marcha: cambia las skills/herramientas del trabajador local para los encargos
+    siguientes. El vigilante lo convierte en un evento `worker` (como cuando lo cambia Claude)."""
+    from localharness.mcp_local import WORKER_TOOLS
+    deleg = ACTIVE_WORKERS.get(task_id)
+    if not deleg:
+        raise LookupError("La tarea no está trabajando con el modelo local ahora mismo")
+    known = json.loads(Path(deleg["skills"]).read_text(encoding="utf-8"))
+    unknown = [n for n in skills if n not in known]
+    if unknown:
+        raise ValueError(f"No existen estas skills: {', '.join(unknown)}")
+    if tools is not None and any(t not in WORKER_TOOLS for t in tools):
+        raise ValueError(f"Herramientas válidas: {', '.join(WORKER_TOOLS)}")
+    state = {**worker_state(deleg), "skills": list(dict.fromkeys(skills)), "tools": tools, "by": "tú",
+             "reason": "", "at": time.time()}
+    Path(deleg["worker"]).write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    return state
+
+
 def _mcp_setup(store: Store, root: Path, cfg: dict, write: bool, coordinator: bool = False) -> dict | None:
     """Archivo `--mcp-config` de un agente Claude: los servidores del Catálogo que tiene asignados (`config.mcps`)
     y, con «Puede delegar en el modelo local», el servidor `local` (localharness.mcp_local). Va en una carpeta
@@ -294,7 +346,14 @@ def _mcp_setup(store: Store, root: Path, cfg: dict, write: bool, coordinator: bo
                             "args": [str(Path(mcp_local.__file__).resolve())], "env": env}
         if cfg.get("commands") is not None:
             env["LH_COMMANDS"] = json.dumps(cfg["commands"], ensure_ascii=False)
-        tools = ([DELEGATE_TOOLS["local_ask"]]
+        # el trabajador local: catálogo de skills que puede llevar y su estado (skills/herramientas elegidas)
+        catalog_skills = worker_skill_catalog()
+        (d / "skills.json").write_text(json.dumps(catalog_skills, ensure_ascii=False), encoding="utf-8")
+        start = [n for n in cfg.get("local_skills") or [] if n in catalog_skills]
+        (d / "worker.json").write_text(json.dumps({"skills": start, "tools": None, "by": "agente" if start else "",
+                                                   "reason": ""}, ensure_ascii=False), encoding="utf-8")
+        env.update(LH_WORKER=str(d / "worker.json"), LH_SKILLS=str(d / "skills.json"))
+        tools = ([DELEGATE_TOOLS[PREPARE_TOOL], DELEGATE_TOOLS["local_ask"]]
                  + ([DELEGATE_TOOLS["local_write_file"], DELEGATE_TOOLS[PLAN_TOOL], DELEGATE_TOOLS["local_agent"]]
                     if write else [])
                  + ([DELEGATE_TOOLS["run_checks"]] if cfg.get("commands") != [] else [])
@@ -303,6 +362,7 @@ def _mcp_setup(store: Store, root: Path, cfg: dict, write: bool, coordinator: bo
     path.write_text(json.dumps({"mcpServers": servers}, ensure_ascii=False), encoding="utf-8")
     # los encargos al modelo local pueden tardar minutos: el tope por defecto de la CLI para una herramienta MCP es corto
     return {"dir": d, "config": str(path), "log": log, "tools": tools, "seen": 0, "delegate": delegate,
+            "worker": str(d / "worker.json"), "skills": str(d / "skills.json"), "worker_seen": None,
             "missing": [n for n in wanted if n not in catalog],
             # sin --safe-mode (bloquea el MCP): el CLAUDE.md del usuario/vault se apaga con esta variable (verificado)
             "env": {"MCP_TOOL_TIMEOUT": "900000", "MCP_TIMEOUT": "30000", "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1"}}
@@ -324,7 +384,7 @@ def _flush_delegations(deleg: dict, sink: Callable[[Event], None]) -> None:
     from localharness.mcp_local import read_log
     _emit_new(deleg, sink)  # los que terminaron después del último vistazo
     # el resumen de un plan y los pasos sueltos del agente local no son encargos
-    entries = [e for e in read_log(deleg["log"]) if e.get("tool") != PLAN_TOOL and not e.get("progress")]
+    entries = [e for e in read_log(deleg["log"]) if e.get("tool") not in NOT_ENCARGOS and not e.get("progress")]
     if entries:
         tokens = sum((e.get("completion_tokens") or 0) + (e.get("prompt_tokens") or 0) for e in entries)
         ok = sum(1 for e in entries if e.get("ok"))
@@ -336,12 +396,39 @@ def _flush_delegations(deleg: dict, sink: Callable[[Event], None]) -> None:
         sink(Event("warning", text="Claude no le encargó nada al modelo local en esta tarea"))
 
 
+def _emit_worker(deleg: dict, sink: Callable[[Event], None]) -> None:
+    """Skills/herramientas del trabajador local cambiadas (por Claude con `local_prepare` o por ti en la oficina)."""
+    if not deleg.get("worker"):
+        return
+    try:
+        raw = Path(deleg["worker"]).read_text(encoding="utf-8")
+    except OSError:
+        return
+    if raw == deleg.get("worker_seen"):
+        return
+    first = deleg.get("worker_seen") is None
+    deleg["worker_seen"] = raw
+    try:
+        state = json.loads(raw)
+    except ValueError:
+        return
+    if first and not state.get("skills") and state.get("tools") is None:
+        return  # arranque sin nada elegido: no hace falta avisar
+    skills = ", ".join(state.get("skills") or []) or "ninguna"
+    who = {"Claude": "Claude equipó", "tú": "Cambiaste", "agente": "El agente trae"}.get(state.get("by"), "Equipado")
+    sink(Event("worker", text=f"{who} al trabajador local · skills: {skills}"[:300], data=state))
+
+
 def _emit_new(deleg: dict, sink: Callable[[Event], None]) -> None:
     from localharness.mcp_local import read_log
+    _emit_worker(deleg, sink)
     entries = read_log(deleg["log"])
     for e in entries[deleg["seen"]:]:
         if e.get("progress"):  # paso a paso del agente local mientras trabaja un encargo de `local_agent`
-            sink(Event("progress", text=f"Modelo local: {e.get('text', '')}"[:300]))
+            if e.get("thinking"):  # su pensamiento: para el inspector del trabajador local
+                sink(Event("worker_thinking", text=e["thinking"][-4000:]))
+            else:
+                sink(Event("progress", text=f"Modelo local: {e.get('text', '')}"[:300]))
             continue
         what = e.get("path") or e.get("task") or ""
         sink(Event("delegate", text=f"{e.get('tool')}: {what}"[:300], data=e))

@@ -1,4 +1,4 @@
-import tempfile, textwrap, time, unittest
+import json, tempfile, textwrap, time, unittest
 from pathlib import Path
 
 from tests.test_core import FAKES, make_repo
@@ -43,6 +43,36 @@ class ApiTests(unittest.TestCase):
                                      (binary, a.json()["id"]))
         c.app.state.store.db.commit()
         return p.json()["id"], a.json()["id"]
+
+    def test_local_worker_endpoint(self):
+        """El trabajador local de una tarea: lo que llevó (último evento `worker`); cambiarlo solo mientras trabaja."""
+        from localharness import orchestrator
+        with TestClient(self.app) as c:
+            pid, aid = self._setup(c)
+            store = c.app.state.store
+            t = store.add_task(pid, "x", "y", aid)
+            store.add_event(t["id"], "worker", "Claude equipó", {"skills": ["tests-primero"], "tools": None,
+                                                                 "by": "Claude", "reason": "hay un fallo"})
+            w = c.get(f"/api/tasks/{t['id']}/worker").json()
+            self.assertEqual((w["active"], w["skills"], w["by"], w["reason"]),
+                             (False, ["tests-primero"], "Claude", "hay un fallo"))
+            self.assertIn("tests-primero", [s["name"] for s in w["available"]])
+            self.assertIn("escribir_archivo", w["all_tools"])
+            self.assertEqual(c.put(f"/api/tasks/{t['id']}/worker", json={"skills": []}).status_code, 409)
+            d = Path(self.tmp.name) / "deleg"
+            d.mkdir()
+            (d / "worker.json").write_text(json.dumps({"skills": ["tests-primero"], "tools": None}))
+            (d / "skills.json").write_text(json.dumps({"tests-primero": {"description": "", "body": ""},
+                                                       "cambios-minimos": {"description": "", "body": ""}}))
+            orchestrator.ACTIVE_WORKERS[t["id"]] = {"worker": str(d / "worker.json"), "skills": str(d / "skills.json")}
+            try:  # en marcha: tú cambias sus skills y el servidor MCP las lee en el siguiente encargo
+                r = c.put(f"/api/tasks/{t['id']}/worker", json={"skills": ["cambios-minimos"], "tools": ["leer_archivo"]})
+                self.assertEqual(r.status_code, 200, r.text)
+                self.assertEqual(json.loads((d / "worker.json").read_text())["skills"], ["cambios-minimos"])
+                self.assertEqual(c.get(f"/api/tasks/{t['id']}/worker").json()["by"], "tú")
+                self.assertEqual(c.put(f"/api/tasks/{t['id']}/worker", json={"skills": ["nada"]}).status_code, 422)
+            finally:
+                orchestrator.ACTIVE_WORKERS.pop(t["id"], None)
 
     def test_full_cycle_from_api(self):
         with TestClient(self.app) as c:

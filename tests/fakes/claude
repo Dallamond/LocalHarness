@@ -84,6 +84,9 @@ elif "--mcp-config" in sys.argv and ("DELEGA" in prompt or "COORDINA" in prompt)
 
     rpc(1, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "falso"}})
     names = [t["name"] for t in rpc(2, "tools/list", {})["result"]["tools"]]
+    if "COORDINA" in prompt and "local_prepare" in names:  # primero equipa al trabajador local
+        rpc(9, "tools/call", {"name": "local_prepare", "arguments": {"skills": ["cambios-minimos"],
+                                                                     "reason": "cambios pequeños"}})
     if "COORDINA" in prompt:  # modo coordinador: el plan entero de una vez
         tool, args = "local_execute_plan", {"blocks": [
             {"id": "1", "title": "saludo", "kind": "write", "path": "a.txt", "instructions": "un saludo"},

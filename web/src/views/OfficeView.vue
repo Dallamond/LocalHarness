@@ -5,6 +5,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import StatusChip from "../components/StatusChip.vue";
+import LocalWorkerPanel from "../office/LocalWorkerPanel.vue";
 import OfficeDock from "../office/OfficeDock.vue";
 import { MAX_STATIONS, Office, type BoardStep, type GitRow, type Placement, type StationKind, type StationSpec, type StationState } from "../office/office3d";
 import {
@@ -45,11 +46,14 @@ const kindOf = (a: Agent): StationKind =>
   (["director", "jefe", "trabajador", "consultas"].includes(a.role ?? "") ? a.role : "otro") as StationKind;
 const ICON: Record<string, string> = {
   you: "fa-crown", director: "fa-chess-king", jefe: "fa-shield-halved", trabajador: "fa-hammer",
-  consultas: "fa-magnifying-glass", otro: "fa-user-astronaut",
+  consultas: "fa-magnifying-glass", local: "fa-robot", otro: "fa-user-astronaut",
 };
 const specs = computed<StationSpec[]>(() => [
   { id: "you", name: "Tú", color: YOU, kind: "you" },
   ...shown.value.map((a) => ({ id: `a${a.id}`, name: a.name, color: agentColor(a), kind: kindOf(a) })),
+  // el trabajador del modelo local entra en cuanto un Claude le encarga algo, con su línea hacia ese Claude
+  ...workers.value.map((t) => ({ id: `w${t.id}`, name: "Trabajador local", color: LOCAL, kind: "local" as StationKind,
+    boss: `a${t.agent_id}` })),
 ]);
 const agentOf = (sid: string) => (sid.startsWith("a") ? live.agents.find((a) => `a${a.id}` === sid) : undefined);
 
@@ -58,12 +62,53 @@ const mine = (aid: number) => tasks.value.filter((t) => t.agent_id === aid).sort
 const runningOf = (aid: number) => mine(aid).find((t) => t.status === "running");
 const waitingOf = (aid: number) => live.inbox.find((i) => i.task_id && live.tasks[i.task_id]?.agent_id === aid);
 
+// ---------- trabajador local: el modelo local trabajando para un Claude que delega (coordinador o «con ayuda»)
+const isLocalEv = (e: { kind: string; text: string }) => ["delegate", "worker", "worker_thinking"].includes(e.kind)
+  || (e.kind === "tool" && String(e.text).startsWith("mcp__local__"))
+  || (e.kind === "progress" && String(e.text).startsWith("Modelo local:"));
+const delegates = (a?: Agent) => !!a && a.provider === "claude" && !!(a.config.delegate_local || a.config.coordinator);
+const workerEvents = reactive<Record<number, TaskEvent[]>>({});
+const workerLoaded = new Set<number>();
+// candidatas: tareas de un Claude que delega en marcha, la misión elegida y la tarea del trabajador que miras
+const workerCandidates = computed(() => tasks.value.filter((t) => delegates(live.agents.find((a) => a.id === t.agent_id))
+  && (t.status === "running" || t.id === curTask.value?.id || sel.value === `w${t.id}`)));
+// sale en la oficina cuando ya le han encargado algo (no antes)
+const workers = computed(() => workerCandidates.value.filter((t) => workerEvents[t.id]?.some((e) => e.kind !== "progress")));
+async function loadWorkerEvents() {
+  for (const t of workerCandidates.value) {
+    if (workerLoaded.has(t.id)) continue;
+    workerLoaded.add(t.id);
+    const evs = await api<TaskEvent[]>(`/api/tasks/${t.id}/events`).catch(() => [] as TaskEvent[]);
+    const live_ = (workerEvents[t.id] ?? []).filter((e) => !evs.some((x) => x.id === e.id));
+    workerEvents[t.id] = [...evs.filter(isLocalEv), ...live_];
+  }
+}
+const workerTask = (sid: string) => (sid.startsWith("w") ? live.tasks[Number(sid.slice(1))] : undefined);
+const selWorker = computed(() => workerTask(sel.value));
+function workerBusy(tid: number): boolean {
+  let open = 0;
+  for (const e of workerEvents[tid] ?? []) {
+    const tool = String(e.data?.tool ?? "");
+    if (e.kind === "tool" && !String(e.text).endsWith("local_prepare")) open++;
+    if (e.kind === "delegate" && tool !== "local_prepare" && !tool.includes("/")) open = Math.max(0, open - 1);
+  }
+  return open > 0 && live.tasks[tid]?.status === "running";
+}
+function workerBubble(tid: number): string {
+  const evs = workerEvents[tid] ?? [];
+  const last = [...evs].reverse().find((e) => e.kind === "delegate" || e.kind === "tool" || e.kind === "progress");
+  if (!last || live.tasks[tid]?.status !== "running") return "";
+  if (workerBusy(tid)) return last.kind === "progress" ? String(last.text).replace(/^Modelo local:\s*/, "") : "Con un encargo…";
+  return "Esperando encargo";
+}
+
 function stateOf(a: Agent): StationState {
   if (runningOf(a.id)) return "working";
   return waitingOf(a.id) ? "waiting" : "idle";
 }
 
 function bubbleOf(sid: string): string {
+  if (sid.startsWith("w")) return workerBubble(Number(sid.slice(1)));
   if (sid === "you") return live.inbox.length ? `${live.inbox.length} ${live.inbox.length === 1 ? "decisión pendiente" : "decisiones pendientes"}` : "";
   const a = agentOf(sid);
   if (!a) return "";
@@ -76,6 +121,10 @@ function bubbleOf(sid: string): string {
 }
 
 function stateText(sid: string): { text: string; cls: string } {
+  if (sid.startsWith("w")) {
+    const tid = Number(sid.slice(1));
+    return workerBusy(tid) ? { text: "trabajando", cls: "working" } : { text: `para #${tid}`, cls: "" };
+  }
   if (sid === "you") return live.inbox.length ? { text: "decide", cls: "waiting" } : { text: "director", cls: "" };
   const a = agentOf(sid);
   if (!a) return { text: "", cls: "" };
@@ -115,7 +164,11 @@ async function loadEvents() {
   events.value = all.flat().sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
 }
 watch(() => [curKey.value, [...missionTaskIds.value].join(",")], () => loadEvents().catch(() => {}), { immediate: true });
-const delegations = computed(() => events.value.filter((e) => e.kind === "delegate").length);
+// encargos de verdad: sin equipar (local_prepare) ni los bloques sueltos de un plan
+const delegations = computed(() => events.value.filter((e) => e.kind === "delegate"
+  && !String(e.data?.tool ?? "").includes("/") && e.data?.tool !== "local_prepare").length);
+// (aquí y no arriba: usa la misión elegida, que se define más abajo que los puestos)
+watch(() => workerCandidates.value.map((t) => t.id).join(), () => loadWorkerEvents().catch(() => {}), { immediate: true });
 
 interface Step extends BoardStep { icon: string; sub?: string }
 const FAILED = ["failed", "timeout", "cancelled", "interrupted"];
@@ -501,8 +554,16 @@ onMounted(() => {
     const t = live.tasks[ev.task_id];
     if (!t || !office) return;
     const me = `a${t.agent_id}`;
-    if (ev.kind === "delegate") office.packet(me, "rack", LOCAL);
-    if (ev.kind === "tool" && String(ev.text).startsWith("mcp__local__")) office.packet(me, "rack", LOCAL);
+    if (isLocalEv(ev) && (workerEvents[ev.task_id] || delegates(live.agents.find((a) => a.id === t.agent_id)))) {
+      workerEvents[ev.task_id] = [...(workerEvents[ev.task_id] ?? []), { ...ev, ts: undefined }];
+    }
+    // encargo: Claude → trabajador local → GPU (rack); respuesta: trabajador → Claude
+    const w = `w${t.id}`;
+    if (ev.kind === "tool" && String(ev.text).startsWith("mcp__local__")) {
+      office.packet(me, w, LOCAL);
+      setTimeout(() => office?.packet(w, "rack", LOCAL), 900);
+    }
+    if (ev.kind === "delegate" && !String(ev.data?.tool ?? "").includes("/")) office.packet(w, me, LOCAL);
     if (ev.kind === "status" && ev.text === "running") {
       const from = t.plan_id && live.plans[t.plan_id]?.director_agent_id && t.kind !== "director" ? `a${live.plans[t.plan_id].director_agent_id}` : "you";
       office.packet(from, me, YOU);
@@ -524,13 +585,14 @@ function syncScene() {
   if (!office) return;
   office.setStations(specs.value);
   for (const a of shown.value) office.setState(`a${a.id}`, stateOf(a));
+  for (const t of workers.value) office.setState(`w${t.id}`, workerBusy(t.id) ? "working" : "idle");
   office.setState("you", live.inbox.length ? "waiting" : "idle");
   office.pending = live.inbox.length > 0;
   office.setRackVisible(localOn.value);
   office.selected = sel.value;
 }
 watch(() => [specs.value.map((s) => `${s.id}${s.color}${s.kind}`).join(), live.inbox.length, sel.value, localOn.value,
-  shown.value.map((a) => stateOf(a)).join()], syncScene);
+  shown.value.map((a) => stateOf(a)).join(), workers.value.map((t) => `${t.id}${workerBusy(t.id)}`).join()], syncScene);
 watch(() => [missionTitle.value, JSON.stringify(steps.value.map((s) => [s.label, s.who, s.state])), progress.value],
   () => office?.drawBoard(missionTitle.value, steps.value, progress.value), { immediate: true, flush: "post" });
 watch(worktrees, (w) => office?.drawGit(w.map((x) => ({ name: x.branch, status: wtState(x) }))));
@@ -769,6 +831,12 @@ watch(() => [gpus.value, live.local.state, tpsNow.value > 0], () =>
           </p>
           <RouterLink class="btn btn--small wide" to="/modelos"><i class="fa-solid fa-microchip" /> Modelos locales</RouterLink>
         </template>
+
+        <!-- el trabajador del modelo local de una tarea -->
+        <LocalWorkerPanel
+          v-else-if="selWorker" :task="selWorker" :events="workerEvents[selWorker.id] ?? []"
+          :agent="live.agents.find((a) => a.id === selWorker!.agent_id)"
+        />
 
         <!-- un agente -->
         <template v-else-if="selAgent && agentStats">

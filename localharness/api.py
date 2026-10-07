@@ -19,8 +19,8 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from localharness import (actions, catalog, context, hardware, hf, library, llama, maintenance, modelinfo, roles,
-                          settings, workspace)
+from localharness import (actions, catalog, context, hardware, hf, library, llama, maintenance, mcp_local, modelinfo,
+                          orchestrator, roles, settings, workspace)
 from localharness.adapters import ADAPTERS
 from localharness.context import load_skills
 from localharness.events import Event
@@ -100,6 +100,7 @@ class AgentIn(BaseModel):
     subagents: bool = False  # solo claude: puede lanzar subagentes (herramienta Agent; gasta más)
     delegate_local: bool = False  # solo claude: puede encargar trabajo al modelo local (MCP local_ask/local_write_file)
     coordinator: bool = False  # solo claude: solo planifica y presenta; el modelo local genera todo (sin Edit/Write)
+    local_skills: list[str] | None = None  # solo claude que delega: skills con las que arranca su trabajador local
     mcps: list[str] | None = None  # solo claude: servidores MCP del Catálogo (Ajustes → mcp_servers)
     temperature: float | None = Field(default=None, ge=0, le=2)  # solo local
     max_tokens: int | None = Field(default=None, ge=64, le=131_072)  # solo local
@@ -128,6 +129,7 @@ class AgentPatch(BaseModel):
     subagents: bool | None = None
     delegate_local: bool | None = None
     coordinator: bool | None = None
+    local_skills: list[str] | None = None
     mcps: list[str] | None = None
     temperature: float | None = Field(default=None, ge=0, le=2)
     max_tokens: int | None = Field(default=None, ge=64, le=131_072)
@@ -145,9 +147,15 @@ class AgentPatch(BaseModel):
 
 
 AGENT_CFG = ("max_turns", "max_budget_usd", "read_only", "skills", "base_url", "description", "subagents",
-             "delegate_local", "coordinator", "web", "mcps", "temperature", "max_tokens", "repo_context", "tool_mode",
+             "delegate_local", "coordinator", "local_skills", "web", "mcps", "temperature", "max_tokens", "repo_context", "tool_mode",
              "commands", "command_timeout_s", "timeout_s", "thinking", "off", "instructions")
 KEEP_FALSY = ("web", "commands")  # web=False y commands=[] significan algo (apagar), no «quitar el ajuste»
+
+
+class WorkerIn(BaseModel):
+    """Skills y herramientas del trabajador local de una tarea en marcha (None en tools = todas)."""
+    skills: list[str] = Field(default_factory=list, max_length=40)
+    tools: list[str] | None = None
 
 
 class SkillIn(BaseModel):
@@ -493,6 +501,7 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
                                  "description": (body.description or "").strip() or None,
                                  "subagents": body.subagents or None, "delegate_local": body.delegate_local or None,
                                  "coordinator": body.coordinator or None,
+                                 "local_skills": body.local_skills or None,
                                  "mcps": body.mcps or None,
                                  "temperature": body.temperature,
                                  "max_tokens": body.max_tokens, "repo_context": body.repo_context,
@@ -969,6 +978,35 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
     async def task_events(request: Request, tid: int, after: int = 0) -> list[dict]:
         task_or_404(st(request), tid)
         return [{**e, "data": json.loads(e["data"] or "{}")} for e in st(request).list_events(tid, after)]
+
+    @app.get("/api/tasks/{tid}/worker")
+    async def task_worker(request: Request, tid: int) -> dict:
+        """El trabajador local de una tarea (Claude que delega): skills y herramientas que lleva, si está activo y
+        qué puede llevar. Con la tarea terminada, lo último que llevó (último evento `worker`)."""
+        store = st(request)
+        task_or_404(store, tid)
+        deleg = orchestrator.ACTIVE_WORKERS.get(tid)
+        if deleg:
+            state = orchestrator.worker_state(deleg)
+        else:
+            last = next((e for e in reversed(store.list_events(tid)) if e["kind"] == "worker"), None)
+            state = json.loads(last["data"] or "{}") if last else {"skills": [], "tools": None}
+        catalog = await asyncio.to_thread(orchestrator.worker_skill_catalog)
+        return {"active": bool(deleg), "skills": state.get("skills") or [], "tools": state.get("tools"),
+                "by": state.get("by") or "", "reason": state.get("reason") or "",
+                "available": [{"name": n, "description": v["description"]} for n, v in sorted(catalog.items())],
+                "all_tools": mcp_local.WORKER_TOOLS}
+
+    @app.put("/api/tasks/{tid}/worker")
+    async def set_task_worker(request: Request, tid: int, body: WorkerIn) -> dict:
+        task_or_404(st(request), tid)
+        try:
+            state = await asyncio.to_thread(orchestrator.set_worker, tid, body.skills, body.tools)
+        except LookupError as e:
+            raise HTTPException(409, str(e)) from None
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+        return {"active": True, "skills": state["skills"], "tools": state["tools"], "by": state["by"]}
 
     @app.get("/api/tasks/{tid}/review")
     async def task_review(request: Request, tid: int) -> dict:

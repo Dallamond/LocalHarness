@@ -103,7 +103,8 @@ class LocalAgentAdapter(LocalAdapter):
     def __init__(self, binary: str | None = None, base_url: str | None = None, temperature: float = 0.2,
                  max_tokens: int = 4096, api_key: str | None = None, transport=None, http_get=None,
                  tool_mode: str = "native", max_tool_chars: int = 6000, max_context_chars: int = 60_000,
-                 web: bool = True, commands: list[str] | None = None, command_timeout_s: float = 120, **_):
+                 web: bool = True, commands: list[str] | None = None, command_timeout_s: float = 120,
+                 only_tools: list[str] | None = None, **_):
         super().__init__(binary, base_url, temperature, max_tokens, 0, api_key, transport)
         self.tool_mode = tool_mode if tool_mode in ("native", "json") else "native"
         self.max_tool_chars, self.max_context_chars, self.web = max_tool_chars, max_context_chars, web
@@ -111,6 +112,8 @@ class LocalAgentAdapter(LocalAdapter):
         self.thinking: str | None = None
         self.commands = [c for c in (commands if commands is not None else DEFAULT_COMMANDS) if c.strip()]
         self.command_timeout_s = command_timeout_s
+        # trabajador local de un coordinador: solo estas herramientas de trabajo (las de control van siempre)
+        self.only_tools = only_tools
 
     def tool_names(self, read_only: bool, director: bool = False) -> list[str]:
         names = list(TOOLS)
@@ -122,6 +125,9 @@ class LocalAgentAdapter(LocalAdapter):
             names.remove("preguntar_director")
         if not self.web:
             names = [n for n in names if n not in ("buscar_web", "leer_url")]
+        if self.only_tools is not None:
+            keep = ("avisar_progreso", "terminar", "preguntar_director")
+            names = [n for n in names if n in keep or n in self.only_tools]
         return names
 
     def body(self, messages: list[dict], names: list[str]) -> dict:
