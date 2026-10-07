@@ -110,3 +110,30 @@ class SkillImportTests(unittest.TestCase):
             res = c.get("/api/resources").json()
             self.assertIsInstance(res["gpus"], list)
             self.assertEqual(res["worktrees"], [])
+
+
+class OfficeTests(unittest.TestCase):
+    def test_layout_setting_and_off_agents(self):
+        from localharness import settings
+        from localharness.store import Store
+        s = Store(":memory:")
+        settings.save(s, {"office_layout": {"a3": [2.5, -1, 5], "you": [0, -5, 0]}})
+        self.assertEqual(settings.load(s)["office_layout"]["a3"], [2.5, -1.0, 1])  # giro en cuartos de vuelta
+        with self.assertRaises(ValueError):
+            settings.save(s, {"office_layout": {"../x": [0, 0, 0]}})
+        settings.reset(s)
+        self.assertIn("a3", settings.load(s)["office_layout"])  # restablecer no deshace tu oficina
+
+    def test_director_skips_agents_out_of_service(self):
+        from localharness.hierarchy import Hierarchy
+        from localharness.policy import Policy
+        from localharness.store import Store
+        s = Store(":memory:")
+        a = s.add_agent("w1", "claude", config={})
+        s.add_agent("w2", "claude", config={"off": True})
+        h = Hierarchy.__new__(Hierarchy)
+        h.store = s
+        names = [w["name"] for w in h._workers({"director_agent_id": None, "reviewer_agent_id": None})]
+        self.assertEqual(names, ["w1"])
+        self.assertTrue(a)
+

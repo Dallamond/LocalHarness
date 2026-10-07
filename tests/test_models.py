@@ -1,6 +1,7 @@
 """Pestaña de modelos locales: lector GGUF, hardware, estimación de memoria, recomendaciones, nota y arranque."""
 
 import json
+import unittest.mock
 import struct
 import tempfile
 import unittest
@@ -220,6 +221,17 @@ class ModelsApiTests(unittest.TestCase):
                 self.assertEqual(c.post("/api/llama/download", json={"repo": "a/b", "files": ["../x.gguf"]}).status_code,
                                  422)
                 self.assertEqual(c.post("/api/llama/probe").status_code, 409)  # nada arrancado
+                # carpeta elegida al descargar: relativa no; una nueva se añade a las carpetas de modelos
+                self.assertEqual(c.post("/api/llama/download", json={"repo": "a/b", "files": ["x.gguf"],
+                                                                     "dest": "relativa"}).status_code, 422)
+                otra = Path(tmp) / "otra"
+                with unittest.mock.patch("localharness.hf.Downloads.start", return_value={"state": "queued"}) as st:
+                    r = c.post("/api/llama/download", json={"repo": "a/b", "files": ["x.gguf"], "dest": str(otra)})
+                self.assertEqual(r.status_code, 200)
+                self.assertEqual(st.call_args.args[2], otra)
+                cfg = c.get("/api/settings").json()["values"]["llama"]
+                self.assertIn(str(otra), cfg["model_dirs"])
+                self.assertEqual(cfg["download_dir"], str(otra))
                 recs = c.get("/api/llama/recommend?online=false").json()
                 self.assertTrue(next(x for x in recs["models"] if x["id"] == "qwen3-8b")["downloaded"])
 

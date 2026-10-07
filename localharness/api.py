@@ -55,6 +55,7 @@ class EstimateIn(BaseModel):
 class DownloadIn(BaseModel):
     repo: str = Field(min_length=3, pattern=r"^[\w.-]+/[\w.-]+$")
     files: list[str] = Field(min_length=1)
+    dest: str | None = None  # carpeta elegida al descargar (None = la de Ajustes o la primera de modelos)
 
 
 LAUNCH_KEYS = {"ctx", "ngl", "extra", *llama.OPTION_FLAGS, *llama.BOOL_FLAGS}
@@ -132,11 +133,12 @@ class AgentPatch(BaseModel):
     command_timeout_s: float | None = Field(default=None, gt=0, le=3600)
     timeout_s: float | None = Field(default=None, gt=0, le=86_400)
     thinking: Literal["apagado", "normal", "profundo"] | None = None
+    off: bool | None = None  # fuera de servicio: fuera de la oficina y el Director no le encarga nada
 
 
 AGENT_CFG = ("max_turns", "max_budget_usd", "read_only", "skills", "base_url", "description", "subagents",
              "delegate_local", "web", "mcps", "temperature", "max_tokens", "repo_context", "tool_mode", "commands",
-             "command_timeout_s", "timeout_s", "thinking")
+             "command_timeout_s", "timeout_s", "thinking", "off")
 KEEP_FALSY = ("web", "commands")  # web=False y commands=[] significan algo (apagar), no «quitar el ajuste»
 
 
@@ -667,11 +669,26 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
 
     @app.post("/api/llama/download")
     async def llama_download(request: Request, body: DownloadIn) -> dict:
-        cfg = settings.load(st(request))["llama"]
-        dest = cfg.get("download_dir") or (cfg["model_dirs"][0] if cfg["model_dirs"] else None) or \
-            next((str(d) for d in llama.model_dirs()), None)
+        store = st(request)
+        cfg = settings.load(store)["llama"]
+        dest = (body.dest or "").strip().strip('"') or cfg.get("download_dir") or \
+            (cfg["model_dirs"][0] if cfg["model_dirs"] else None) or next((str(d) for d in llama.model_dirs()), None)
         if not dest:
             raise HTTPException(409, "Elige antes una carpeta de modelos (abajo, «Dónde están las cosas»)")
+        if body.dest:
+            d = Path(dest)
+            if not d.is_absolute():
+                raise HTTPException(422, "Indica la ruta completa de la carpeta (p. ej. D:\\IA\\modelos)")
+            try:
+                d.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                raise HTTPException(422, f"No puedo usar esa carpeta: {e}") from None
+            # lo descargado tiene que aparecer en «Tus modelos»: si la carpeta no está entre las de modelos, se añade
+            known = cfg["model_dirs"] or [str(k) for k in llama.model_dirs()]  # sin perder las de Arena LLM
+            if not any(d == Path(k) or Path(k) in d.parents for k in known):
+                settings.save(store, {"llama": {"model_dirs": [*known, str(d)], "download_dir": str(d)}})
+            else:
+                settings.save(store, {"llama": {"download_dir": str(d)}})
         if any(".." in f or f.startswith(("/", "\\")) or not f.lower().endswith(".gguf") for f in body.files):
             raise HTTPException(422, "Solo se descargan archivos .gguf del repo")
         files = hf.tree(body.repo, cached_only=True) or []

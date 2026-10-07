@@ -261,8 +261,10 @@ class Hierarchy:
         return self.store.get_plan(pid)
 
     def _workers(self, plan: dict) -> list[dict]:
-        """Trabajadores: solo agentes capaces de modificar archivos (`local` no lo es; `local_agent` sí)."""
-        writers = [a for a in self.store.list_agents() if ADAPTERS[a["provider"]].can_write]
+        """Trabajadores: solo agentes capaces de modificar archivos (`local` no lo es; `local_agent` sí) y que no
+        estén fuera de servicio (los quitaste de la oficina)."""
+        writers = [a for a in self.store.list_agents() if ADAPTERS[a["provider"]].can_write
+                   and not json.loads(a.get("config") or "{}").get("off")]
         others = [a for a in writers if a["id"] not in (plan["director_agent_id"], plan["reviewer_agent_id"])]
         return others or writers
 

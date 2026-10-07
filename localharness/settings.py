@@ -42,8 +42,22 @@ DEFAULTS: dict[str, Any] = {
     # Catálogo de servidores MCP (formato `mcpServers` de Claude/Cursor): {nombre: {command, args, env} | {url}}.
     # Cada agente Claude elige los suyos (config.mcps); `local` (el modelo local) es de serie y no va aquí.
     "mcp_servers": {},
+    # Oficina: dónde has colocado cada puesto ({"you" | "a<id>" | "rack": [x, z, giro en cuartos de vuelta]})
+    "office_layout": {},
 }
-FREE_DICTS = ("mcp_servers",)  # se guardan enteros (las claves son nombres, no campos fijos)
+FREE_DICTS = ("mcp_servers", "office_layout")  # se guardan enteros (las claves son nombres, no campos fijos)
+
+
+def clean_office_layout(v: Any) -> dict[str, list[float]]:
+    if not isinstance(v, dict):
+        raise ValueError("office_layout debe ser un objeto {puesto: [x, z, giro]}")
+    out = {}
+    for k, p in v.items():
+        if not re.match(r"^(you|rack|a\d{1,9})$", str(k)) or not isinstance(p, list) or len(p) != 3 \
+                or not all(isinstance(n, (int, float)) and not isinstance(n, bool) for n in p):
+            raise ValueError(f"Posición no válida para {k!r}")
+        out[k] = [max(-20.0, min(20.0, float(p[0]))), max(-20.0, min(20.0, float(p[1]))), int(p[2]) % 4]
+    return out
 MCP_NAME = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 
 
@@ -92,7 +106,7 @@ def save(store: Store, changes: dict[str, Any]) -> dict[str, Any]:
     current = load(store)
     for k, v in changes.items():
         if k in FREE_DICTS:
-            v = clean_mcp_servers(v)
+            v = clean_office_layout(v) if k == "office_layout" else clean_mcp_servers(v)
         elif isinstance(DEFAULTS[k], dict):
             if not isinstance(v, dict):
                 raise ValueError(f"{k} debe ser un objeto")
@@ -103,11 +117,12 @@ def save(store: Store, changes: dict[str, Any]) -> dict[str, Any]:
 
 
 def reset(store: Store) -> dict[str, Any]:
-    """Valores por defecto en todo salvo el catálogo de servidores MCP (son datos tuyos, no preferencias)."""
-    keep = store.get_settings().get("mcp_servers")
+    """Valores por defecto en todo salvo el catálogo de servidores MCP y la oficina (son datos tuyos, no preferencias)."""
+    saved = store.get_settings()
     store.clear_settings()
-    if keep:
-        store.set_setting("mcp_servers", keep)
+    for k in FREE_DICTS:
+        if saved.get(k):
+            store.set_setting(k, saved[k])
     apply(store)
     return load(store)
 

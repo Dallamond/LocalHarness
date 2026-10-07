@@ -6,7 +6,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import StatusChip from "../components/StatusChip.vue";
 import OfficeDock from "../office/OfficeDock.vue";
-import { MAX_STATIONS, Office, type BoardStep, type GitRow, type StationKind, type StationSpec, type StationState } from "../office/office3d";
+import { MAX_STATIONS, Office, type BoardStep, type GitRow, type Placement, type StationKind, type StationSpec, type StationState } from "../office/office3d";
 import {
   PLAN_TEXT, PROVIDER_TEXT, ROLE_TEXT, STATUS_TEXT, agentColor, agentName, api, describeActivity, duration, live,
   modelText, onTaskEvent, openCatalog, parseTs, pct, planChip, planList, post, projectName, refreshAll, speedText,
@@ -33,8 +33,11 @@ const summoned = ref(new Set<number>());
 function lastSeen(aid: number): number {
   return Math.max(0, ...mine(aid).map((t) => Math.max(parseTs(t.created_at) || 0, parseTs(t.finished_at) || 0)));
 }
+// «Quitar de la oficina» = fuera de servicio (config.off): no aparece aunque haya trabajado y el Director no le
+// encarga nada. Si aún le queda una tarea en marcha o esperando tu decisión, sigue en su puesto hasta acabar.
+const isOff = (a: Agent) => !!a.config.off;
 const present = computed(() => agentsSorted.value.filter((a) => runningOf(a.id) || waitingOf(a.id) ||
-  summoned.value.has(a.id) || now.value - lastSeen(a.id) < PRESENCE_MS));
+  (!isOff(a) && (summoned.value.has(a.id) || now.value - lastSeen(a.id) < PRESENCE_MS))));
 const shown = computed(() => present.value.slice(0, MAX_STATIONS));
 const hidden = computed(() => present.value.slice(MAX_STATIONS));
 const away = computed(() => agentsSorted.value.filter((a) => !present.value.includes(a)));
@@ -326,6 +329,8 @@ const wtState = (w: Worktree): GitRow["status"] =>
 
 // ---------- inspector: instrucción directa al agente seleccionado
 const nudge = ref("");
+const thinkOpen = ref(false);
+const tail = (t: string, n = 220) => (t.length > n ? "…" + t.slice(-n).trimStart() : t);
 const nudgeError = ref("");
 const OPEN = ["done", "review", "approved"];
 const nudgeTarget = computed(() => {
@@ -386,9 +391,72 @@ function goView(k: string) {
   if (k !== "iso") sel.value = k;
 }
 /** Trae a un agente a la oficina (aunque no tenga trabajo) y lo enfoca. */
-function callIn(aid: number) {
+async function callIn(aid: number) {
+  const a = live.agents.find((x) => x.id === aid);
+  if (a && isOff(a)) {
+    try {
+      await api(`/api/agents/${aid}`, { method: "PATCH", body: JSON.stringify({ off: false }) });
+      await refreshAll();
+    } catch (e) {
+      nudgeError.value = (e as Error).message;
+      return;
+    }
+  }
   summoned.value = new Set([...summoned.value, aid]);
   setTimeout(() => pick(`a${aid}`), 50);
+}
+
+/** Quitar de la oficina: fuera de servicio. Si está trabajando, ofrece cancelar su tarea. */
+const removing = ref(false);
+async function dismiss(a: Agent) {
+  const run = runningOf(a.id);
+  const msg = run
+    ? `${a.name} está trabajando en #${run.id} «${run.title}».\n\nAceptar: cancelar esa tarea y sacarlo de la oficina.\nCancelar: no hacer nada.`
+    : `¿Quitar a ${a.name} de la oficina?\n\nQueda fuera de servicio: el Director no le encargará nada hasta que lo vuelvas a llamar (abajo, «Fuera de la oficina»).`;
+  if (!confirm(msg)) return;
+  removing.value = true;
+  try {
+    if (run) await post(`/api/tasks/${run.id}/cancel`);
+    await api(`/api/agents/${a.id}`, { method: "PATCH", body: JSON.stringify({ off: true }) });
+    const next = new Set(summoned.value);
+    next.delete(a.id);
+    summoned.value = next;
+    await refreshAll();
+    pick("you");
+  } catch (e) {
+    nudgeError.value = (e as Error).message;
+  } finally {
+    removing.value = false;
+  }
+}
+
+// ---------- distribución: arrastrar puestos y girarlos (se guarda en Ajustes → office_layout)
+const layout = ref<Record<string, Placement>>({});
+const locked = ref(false);
+try { locked.value = localStorage.getItem("lh-office-locked") === "1"; } catch { /* sin almacenamiento */ }
+watch(locked, (v) => {
+  if (office) office.movable = !v;
+  try { localStorage.setItem("lh-office-locked", v ? "1" : "0"); } catch { /* sin almacenamiento */ }
+});
+let saveTimer: ReturnType<typeof setTimeout>;
+function saveLayout() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    api("/api/settings", { method: "PUT", body: JSON.stringify({ office_layout: layout.value }) }).catch(() => {});
+  }, 400);
+}
+async function loadLayout() {
+  try {
+    const r = await api<{ values: { office_layout?: Record<string, Placement> } }>("/api/settings");
+    layout.value = r.values.office_layout ?? {};
+    office?.setLayout(layout.value);
+  } catch { /* sin ajustes: posiciones por defecto */ }
+}
+function resetLayout() {
+  if (!confirm("¿Volver a colocar todos los puestos en su sitio por defecto?")) return;
+  layout.value = {};
+  saveLayout();
+  location.reload();
 }
 const localOn = computed(() => live.local.state !== "off");
 function pick(id: string) {
@@ -408,9 +476,15 @@ onMounted(() => {
   resTimer = setInterval(loadResources, 3000);
   try {
     office = new Office(host.value!, labelsEl.value!, pick);
+    office.movable = !locked.value;
+    office.onMove = (id, p) => {
+      layout.value = { ...layout.value, [id]: p };
+      saveLayout();
+    };
   } catch (e) {
     webglError.value = (e as Error).message || "WebGL no disponible";
   }
+  loadLayout().then(syncScene);
   syncScene();
   if (ui.focusAgent) { callIn(ui.focusAgent); ui.focusAgent = null; }
   offEvents = onTaskEvent((ev) => {
@@ -586,12 +660,18 @@ watch(() => [gpus.value, live.local.state, tpsNow.value > 0], () =>
             <i class="d" />{{ s.name }}
           </button>
           <button v-if="localOn" :class="{ on: view === 'rack' }" :style="{ '--c': LOCAL }" @click="goView('rack')"><i class="d" />Modelo local</button>
+          <span class="sep" />
+          <button :class="{ on: !locked }" :title="locked ? 'Desbloquear: arrastra los puestos para moverlos' : 'Arrastra un puesto para moverlo. Pulsa para bloquear.'" @click="locked = !locked">
+            <i class="fa-solid" :class="locked ? 'fa-lock' : 'fa-up-down-left-right'" /> {{ locked ? "Bloqueado" : "Mover" }}
+          </button>
+          <button v-if="Object.keys(layout).length" title="Volver a la colocación por defecto" @click="resetLayout"><i class="fa-solid fa-rotate-left" /></button>
         </div>
         <div v-if="away.length || hidden.length" class="more">
           <template v-if="hidden.length">{{ hidden.length }} sin puesto (caben {{ MAX_STATIONS }}) · </template>
           <span>Fuera de la oficina:</span>
-          <button v-for="a in away" :key="a.id" class="away" :style="{ '--c': agentColor(a) }" :title="`Llamar a ${a.name} a la oficina`" @click="callIn(a.id)">
-            <i class="d" />{{ a.name }}
+          <button v-for="a in away" :key="a.id" class="away" :class="{ 'away--off': isOff(a) }" :style="{ '--c': agentColor(a) }"
+                  :title="isOff(a) ? `${a.name} está fuera de servicio: pulsa para volver a ponerlo a trabajar` : `Llamar a ${a.name} a la oficina`" @click="callIn(a.id)">
+            <i class="d" />{{ a.name }}<small v-if="isOff(a)"> · fuera de servicio</small>
           </button>
         </div>
         <p v-if="webglError" class="more more--err">No se puede dibujar la oficina 3D: {{ webglError }}</p>
@@ -710,6 +790,19 @@ watch(() => [gpus.value, live.local.state, tpsNow.value > 0], () =>
           <div class="chips">
             <span v-for="t in tools(selAgent)" :key="t.text" class="pill" :class="t.cls"><i class="fa-solid" :class="t.icon" />{{ t.text }}</span>
           </div>
+          <div v-if="agentStats.run && live.thinking[agentStats.run.id]" class="think">
+            <button class="think__btn" :class="{ open: thinkOpen }" @click="thinkOpen = !thinkOpen">
+              <b>💭 {{ live.thinking[agentStats.run.id].live ? "pensando ahora" : "último pensamiento" }}</b>
+              {{ thinkOpen ? live.thinking[agentStats.run.id].text : tail(live.thinking[agentStats.run.id].text) }}
+            </button>
+          </div>
+          <div class="row btns">
+            <button class="btn btn--small" :disabled="locked" title="Girar el puesto un cuarto de vuelta" @click="office?.rotate(sel)"><i class="fa-solid fa-rotate-right" /> Girar</button>
+            <button class="btn btn--small btn--danger" :disabled="removing" title="Fuera de servicio: sale de la oficina y no recibe trabajo" @click="dismiss(selAgent)">
+              <i class="fa-solid fa-person-walking-arrow-right" /> Quitar de la oficina
+            </button>
+          </div>
+          <p v-if="!locked" class="small muted">Arrastra su puesto en la oficina para recolocarlo.</p>
           <div class="row btns">
             <button class="btn btn--small" @click="openCatalog('agents', selAgent.id)"><i class="fa-solid fa-boxes-stacked" /> Asignar</button>
             <button v-if="agentStats.last" class="btn btn--small" @click="router.push(`/chat/${agentStats.last.id}`)"><i class="fa-solid fa-comments" /> Chat</button>
@@ -1168,6 +1261,41 @@ watch(() => [gpus.value, live.local.state, tpsNow.value > 0], () =>
   box-shadow: 0 8px 18px -10px rgba(15, 23, 42, 0.35);
   max-width: 96%;
   overflow-x: auto;
+}
+.views .sep {
+  width: 1px;
+  margin: 4px 2px;
+  background: #cbc6ba;
+}
+.away--off {
+  opacity: 0.6;
+  text-decoration: line-through dotted;
+}
+.away small {
+  font-size: 11px;
+}
+.think__btn {
+  display: block;
+  width: 100%;
+  margin: 6px 0;
+  padding: 6px 9px;
+  border: 1px dashed var(--line-strong, #cbc6ba);
+  border-radius: 8px;
+  background: var(--panel-raised);
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  white-space: pre-wrap;
+  cursor: pointer;
+}
+.think__btn.open {
+  max-height: 280px;
+  overflow: auto;
+}
+.think__btn b {
+  display: block;
+  color: var(--ink-faint);
 }
 .views button {
   display: flex;

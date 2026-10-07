@@ -213,14 +213,33 @@ async function pollDownloads() {
     dlTimer = setTimeout(pollDownloads, 8000);
   }
 }
-async function download(repo: string, files: string[]) {
+// antes de descargar: elegir carpeta (las de modelos, la última usada u otra con el selector de Windows)
+const askDl = ref<{ repo: string; files: string[]; dest: string; size?: number } | null>(null);
+const dlDirs = computed(() => [...new Set([cfg.download_dir, ...cfg.model_dirs, ...(info.value?.dirs ?? [])].filter(Boolean))]);
+function download(repo: string, files: string[], size?: number) {
   if (!files.length) {
     error.value = "Sin la lista de archivos de Hugging Face no sé qué descargar: pulsa «Consultar Hugging Face».";
     return;
   }
+  askDl.value = { repo, files, size, dest: dlDirs.value[0] ?? "" };
+}
+async function pickDlDir() {
+  try {
+    const p = await pickPath("folder", "Carpeta donde guardar el modelo");
+    if (p && askDl.value) askDl.value.dest = p;
+  } catch (e) {
+    error.value = `${(e as Error).message}. Escribe la ruta a mano.`;
+  }
+}
+async function confirmDownload() {
+  const a = askDl.value;
+  if (!a) return;
+  const { repo, files } = a;
   error.value = msg.value = "";
   try {
-    await post("/api/llama/download", { repo, files });
+    await post("/api/llama/download", { repo, files, dest: a.dest.trim() || null });
+    askDl.value = null;
+    await load(true);
     msg.value = `Descargando ${files[0].split("/").pop()}…`;
     clearTimeout(dlTimer);
     pollDownloads();
@@ -556,7 +575,7 @@ const modelFor = (name: string | null) => info.value?.models.find((m) => m.name 
               </option>
             </select>
             <button class="btn btn--small btn--primary" :disabled="!r.hf_checked" :title="r.hf_checked ? '' : 'Consulta antes Hugging Face'"
-                    @click="download(r.repo, quantFor(r)?.files ?? r.best?.files ?? [])">Descargar</button>
+                    @click="download(r.repo, quantFor(r)?.files ?? r.best?.files ?? [], quantFor(r)?.size_gb)">Descargar</button>
           </div>
         </article>
       </div>
@@ -586,7 +605,7 @@ const modelFor = (name: string | null) => info.value?.models.find((m) => m.name 
             <td>{{ q.size_gb.toFixed(1) }} GB</td>
             <td><span class="tag" :class="`tag--${FIT_CLS[q.fit]}`">{{ FIT_TEXT[q.fit] }}</span>
               <span class="muted small"> {{ Math.round(q.ctx / 1024) }}k<template v-if="q.tps_est"> · ~{{ q.tps_est }} tok/s</template></span></td>
-            <td><button class="btn btn--small" @click="download(repoInfo.repo, q.files)">Descargar</button></td>
+            <td><button class="btn btn--small" @click="download(repoInfo.repo, q.files, q.size_gb)">Descargar</button></td>
           </tr>
         </table>
         <p class="hint">Estimación por el nombre del repo; al descargarlo se lee su cabecera y la nota es exacta.</p>
@@ -680,6 +699,28 @@ const modelFor = (name: string | null) => info.value?.models.find((m) => m.name 
         </div>
       </div>
     </Card>
+
+    <div v-if="askDl" class="overlay" @click.self="askDl = null">
+      <form class="dl-dialog" @submit.prevent="confirmDownload">
+        <h3>¿Dónde lo guardo?</h3>
+        <p class="small muted">
+          <strong>{{ askDl.files[0].split("/").pop() }}</strong><template v-if="askDl.files.length > 1"> (+{{ askDl.files.length - 1 }} partes)</template>
+          <template v-if="askDl.size"> · {{ askDl.size.toFixed(1) }} GB</template> · de {{ askDl.repo }}
+        </p>
+        <label v-for="d in dlDirs" :key="d" class="dl-opt">
+          <input v-model="askDl.dest" type="radio" :value="d" /> <code>{{ d }}</code>
+        </label>
+        <div class="row">
+          <button type="button" class="btn btn--small" @click="pickDlDir">Elegir otra carpeta…</button>
+          <input v-model="askDl.dest" class="input code grow" placeholder="o pega la ruta: D:\IA\modelos" />
+        </div>
+        <p class="hint">Se guarda en una subcarpeta con el nombre del repo. Si la carpeta no está entre las de modelos, se añade para que aparezca en «Tus modelos».</p>
+        <div class="row dl-actions">
+          <button type="button" class="btn btn--small" @click="askDl = null">Cancelar</button>
+          <button class="btn btn--primary btn--small" :disabled="!askDl.dest.trim()">Descargar aquí</button>
+        </div>
+      </form>
+    </div>
 
     <LaunchDialog
       v-if="dialogFor" :model="dialogFor" :rating="ratings[dialogFor.path]" :saved="cfg.per_model[dialogFor.path]"
@@ -1003,6 +1044,39 @@ const modelFor = (name: string | null) => info.value?.models.find((m) => m.name 
   border-radius: var(--radius-sm);
   background: var(--warn-weak);
   color: var(--warn);
+}
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgb(0 0 0 / 0.45);
+}
+.dl-dialog {
+  width: min(560px, 100%);
+  display: grid;
+  gap: 10px;
+  padding: 18px 20px;
+  border-radius: var(--radius);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+.dl-dialog h3,
+.dl-dialog p {
+  margin: 0;
+}
+.dl-opt {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.dl-actions {
+  justify-content: flex-end;
 }
 .block-warn {
   margin-bottom: 12px;
