@@ -8,7 +8,70 @@ Decisión de Lucas: **se trabaja siempre en `main`**. Se integraron en `main` la
 editable), `claude/cool-dirac-vmw6s0` (análisis de Paperclip) y `claude/youthful-edison-bi67hm` (Modelos locales +
 rediseño de la oficina). Las secciones de abajo son el historial de cada una; donde digan «rama X», ya está en `main`.
 
-### ▶ DÓNDE LO DEJAMOS (07/10/2026, noche) — leer primero
+### ▶ MAÑANA 08/10/2026, 7:00 — Lucas lanza el autopiloto antes de irse a clase (6 h) — leer primero
+1. Reiniciar LocalHarness (`LocalHarness.bat`) y Ctrl+F5: así carga todo lo de abajo (Job Object, MCP arreglado…).
+2. Modelos locales: si sale el aviso de llama-server sueltos → «Apagarlos». Arrancar **Qwen-2.5-Coder-14B Q4_K_M
+   en Fuerte (CUDA0, 3060)** y **Qwen3.5-4B en Rápido (CUDA1, 1060)**; mejor el Rápido con `parallel: 2`.
+3. Opcional: un parche a mano en «poeta» con «Jefe de obra» para ver que va.
+4. Doble clic en `Autopiloto.bat` (lista `autopilot/poeta.md`, 18 parches; máx. 6 h, 5 $, 30 min por parche).
+5. Al volver: `data/autopilot/poeta-informe.md` + pedir a Claude Code que analice las tareas «Autopiloto N/18»
+   (eventos `delegate`, `worker_live` no se guarda; pensamientos en `delegate.data.thinking`) con el script de
+   volcado de eventos por tarea (id, kind, text, data).
+
+### Prueba real con dos GPU y lo que salió (07/10/2026, 20:30)
+- **Tarea 17 (Dynamic Island)**: los dos modelos trabajaron (Qwen-2.5-Coder-14B «principal» escribió tests,
+  Llama-3.1-8B «rapido» hizo una revisión que Claude descartó por inventar líneas), pero **uno detrás de otro**: el
+  `local_ask` empezó justo cuando acabó el `local_write_file`. Causa: Claude Code solo lanza a la vez herramientas MCP
+  con `readOnlyHint`. Arreglo: `local_ask`, `local_research` y `run_checks` lo llevan; la guía multi-modelo dice
+  que para que los dos ESCRIBAN a la vez hay que usar `local_execute_plan` con `after`.
+- «Aprobé y no se pusieron a trabajar»: el botón de la revisión es aprobar **los cambios** (integrar), no más
+  trabajo; para seguir, «Pedir cambios» o un mensaje nuevo en la misma tarea.
+- **Un avatar por modelo** en la oficina: puesto `w<tarea>~<servidor>` («Local · Fuerte», «Local · Rápido», un color
+  cada uno), con sus encargos (la llamada de Claude se empareja con la entrada del log por herramienta + encargo/
+  archivo), su directo y sus paquetes. `live.json` lleva `servers: {id: …}` y el orquestador emite un
+  `worker_live` por modelo. El directo se escribe también al EMPEZAR cada encargo (antes no se veía nada mientras
+  el modelo leía el prompt).
+- **tok/s del monitor de recursos**: solo se actualizaba con agentes locales; con Claude delegando nunca. Ahora el
+  directo lleva `tps` (trozos/s mientras escribe; al final, el de llama-server) y `worker_live`/`delegate` cuentan.
+- **Sandbox nuevo** `C:\Users\Lucas\LocalHarness-poeta` (proyecto «poeta», solo `ENCARGO.md` + `package.json`):
+  web estática que crece por parches, cada uno con su entrada de blog poética (código → fuerte, poema → rápido).
+  Agente #13 «Jefe de obra» (Sonnet, coordinador, 30 turnos, 1 $).
+- **Tareas 19 y 20 (sandbox, agente «Organizador»)**: el agente tenía «Solo lectura» marcado → ni Claude (Haiku)
+  ni el modelo local podían escribir (sin `local_write_file`/`local_execute_plan`), y Haiku se pasó ~20 encargos
+  pidiendo al modelo local que escribiera «con PowerShell/git/Python». Además, `local_ask` sin `files` → Llama-8B
+  se inventó un proyecto React/Express entero y Haiku lo presentó como informe. Arreglos: la guía de solo lectura
+  prohíbe esos rodeos; `local_ask` avisa (descripción + prompt de sistema `NO_FILES`) de que sin `files` no ve el
+  repo ni recuerda encargos; el asistente de agentes avisa de «Solo lectura» + delegar.
+- **Tarea 21 (poeta, Jefe de obra)**: Sonnet coordinó muy bien (un plan con `after`, revisa y reencarga solo lo
+  que falla). Los dos modelos trabajaron a la vez de verdad. Fuerte = Devstral-Small **IQ2_M** (2 bits): test con
+  errores de sintaxis a la primera, `parseInt('001')`; rápido = Qwen3.5-4B sin pensar: rápido y correcto (poema
+  flojito). **`local_agent` se colgaba**: `snapshot()` hacía `git status` sin `stdin=DEVNULL` desde un hilo
+  mientras el principal lee stdin → en Windows se bloquea. Arreglado. Sin explicar: en el primer intento los
+  modelos no arrancaron solos y `ensure_for_task` no avisó de nada.
+- **llama-server sueltos al cerrar la ventana**: cerrar la consola mata Python de golpe y el `lifespan` no llega a
+  pararlos. Ahora cada llama-server entra en un Job Object de Windows con KILL_ON_JOB_CLOSE (`llama._die_with_us`;
+  probado en el PC de Lucas: muere el padre → Windows mata al hijo). Además, Modelos locales → «Apagar todos los
+  modelos» (`POST /api/llama/stop-all`, `LlamaPool.kill_everything`) y aviso de los sueltos (`GET /api/llama` →
+  `strays`, con `llama.running_servers()` por psutil o tasklist).
+- **Oficina**: el engranaje de «Modelo local» en la misión giraba orbitando (el `<i>` se estiraba a la fila de la
+  rejilla); ahora caja cuadrada. «Tokens/s (local)» SUMA los modelos que escriben a la vez (`live.localWork`, uno
+  por servidor, desde `worker_live`). Pestaña nueva **Modelos** en el panel de abajo (`OfficeDock`): una tarjeta por
+  modelo local con qué tiene cargado, encargo en curso (tarea, tipo), tok/s, tokens, tiempo, y lo que piensa y
+  escribe en directo; libre → su último encargo.
+- **Autopiloto** (`localharness/autopilot.py`, `python -m localharness autopilot`, `Autopiloto.bat`): con
+  LocalHarness abierto, hace sola una lista de parches (`autopilot/poeta.md`, 18 escritos por Claude Code, sin
+  gastar plan) en «poeta» con «Jefe de obra»: re-arranca modelos caídos, tope por parche (cancela), tests en el
+  worktree → aprueba + integra; si fallan, UNA respuesta con la salida y si no, descarta; para por horas, $ o 3
+  fallos seguidos; no deja suspender Windows; estado JSON para retomar; informe `data/autopilot/poeta-informe.md`
+  (por parche y por modelo: encargos, tokens, minutos, % de GPU ocupada). 7 pruebas con API falsa + comprobado
+  contra la API real sin lanzar nada.
+- **Tareas 22–23 (poeta)**: fuerte = Qwen-2.5-Coder-14B (≈28 tok/s), rápido = Qwen3.5-4B (≈25,6). Claude no escribe
+  ni una línea (0 Edit/Write) pero dicta el diseño: ~2k tokens de instrucciones exactas por parche; salida de Claude
+  5,6k–7,4k tokens frente a 6,2k–10,3k locales; 0,18 $ por parche. Cola por servidor (`-np 1`): un CHANGELOG de 100
+  tokens esperó 115 s detrás de un CSS de 3.000. `local_agent` con Qwen-Coder-14B repite lecturas y no acaba.
+- 213 pruebas (venv), ruff limpio, web compila. **Pendiente**: reiniciar LocalHarness y probar el sandbox poeta.
+
+### DÓNDE LO DEJAMOS (07/10/2026, noche)
 - **Todo en `main` y en GitHub** (último trabajo: dos GPU + las 4 mejoras de abajo). 201 pruebas, ruff limpio, web compila.
 - **PC de Lucas**: RTX 3060 12 GB (llama.cpp `CUDA0`) + GTX 1060 6 GB (`CUDA1`; en nvidia-smi el orden es el
   contrario). llama.cpp en `D:\dev-tools\llama.cpp\b11379`, modelos en `D:\ollama\models` (Qwen3.5-9B y

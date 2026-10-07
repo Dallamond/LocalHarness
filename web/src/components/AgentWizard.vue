@@ -207,6 +207,8 @@ const warnings = computed(() => {
     if (o?.needsParams) w.push(`El servidor ${m} necesita configurarse (clave o ruta): añádelo desde el Catálogo → Servidores MCP.`);
     else if (o && !o.available) w.push(`El servidor ${m} necesita ${o.needs === "npx" ? "Node.js (npx)" : o.needs === "uvx" ? "uv (uvx)" : o.needs} instalado en el PC.`);
   }
+  if (provider.value === "claude" && f.read_only && f.delegate_local)
+    w.push("Solo lectura: ni Claude ni el modelo local podrán crear o cambiar archivos. Para programar, quítalo.");
   if (editing.value?.config.from_role) w.push(`Este agente sale de roles/${editing.value.config.from_role}.md: al reiniciar LocalHarness el archivo vuelve a mandar.`);
   return w;
 });

@@ -28,6 +28,111 @@ PRINCIPAL = "principal"
 POOL: "LlamaPool | None" = None  # el de la API en marcha (lo usa el orquestador para arrancar modelos solo)
 
 
+# --- que los llama-server mueran con LocalHarness
+# Cerrar la ventana de LocalHarness mata Python de golpe: no llega a ejecutarse el apagado ordenado y los llama-server
+# se quedaban sueltos ocupando la GPU. En Windows cada uno entra en un «Job Object» con KILL_ON_JOB_CLOSE: el handle lo
+# tiene este proceso y, muera como muera, Windows lo cierra y mata todo lo que haya dentro.
+_JOB = None
+
+
+def _die_with_us(proc: subprocess.Popen) -> None:
+    global _JOB
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        if _JOB is None:
+            k32.CreateJobObjectW.restype = wintypes.HANDLE
+            k32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+            k32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+
+            class Basic(ctypes.Structure):
+                _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                            ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                            ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                            ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                            ("SchedulingClass", wintypes.DWORD)]
+
+            class Io(ctypes.Structure):
+                _fields_ = [(n, ctypes.c_uint64) for n in ("r", "w", "o", "rb", "wb", "ob")]
+
+            class Extended(ctypes.Structure):
+                _fields_ = [("Basic", Basic), ("Io", Io), ("ProcessMemoryLimit", ctypes.c_size_t),
+                            ("JobMemoryLimit", ctypes.c_size_t), ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                            ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+            job = k32.CreateJobObjectW(None, None)
+            info = Extended()
+            info.Basic.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            if not job or not k32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):
+                return
+            _JOB = job
+        k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        k32.AssignProcessToJobObject(_JOB, int(proc._handle))  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 — sin esto solo se pierde el apagado automático; el botón sigue funcionando
+        pass
+
+
+def running_servers() -> list[dict]:
+    """Todos los llama-server vivos en este PC, los lanzáramos o no (los que se quedaron sueltos de otra sesión no
+    salen en ningún panel): [{pid, port, model}]."""
+    out: list[dict] = []
+    try:
+        import psutil
+    except ImportError:
+        psutil = None
+    if psutil:
+        for p in psutil.process_iter(["pid", "name", "cmdline"]):
+            name = (p.info.get("name") or "").lower()
+            if not name.startswith("llama-server"):
+                continue
+            cmd = p.info.get("cmdline") or []
+            model = _arg(cmd, "-m") or _arg(cmd, "--model")
+            port = _arg(cmd, "--port") or ""
+            out.append({"pid": p.info["pid"], "port": int(port) if port.isdigit() else None,
+                        "model": Path(model).stem if model else None})
+        return out
+    if os.name == "nt":
+        try:
+            raw = subprocess.run(["tasklist", "/FI", "IMAGENAME eq llama-server.exe", "/FO", "CSV", "/NH"],
+                                 capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=10,
+                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            return out
+        for line in raw.splitlines():
+            cells = [c.strip('"') for c in line.split('","')]
+            if len(cells) > 1 and cells[1].isdigit():
+                out.append({"pid": int(cells[1]), "port": None, "model": None})
+    return out
+
+
+def _arg(cmd: list[str], flag: str) -> str | None:
+    return next((cmd[i + 1] for i, a in enumerate(cmd[:-1]) if a == flag), None)
+
+
+def kill_pid(pid: int) -> bool:
+    try:
+        import psutil
+        psutil.Process(pid).kill()
+        return True
+    except ImportError:
+        pass
+    except Exception:  # noqa: BLE001 — ya no existe o no hay permiso
+        return False
+    try:
+        if os.name == "nt":
+            return subprocess.run(["taskkill", "/PID", str(pid), "/F", "/T"], capture_output=True,
+                                  stdin=subprocess.DEVNULL, timeout=15,
+                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).returncode == 0
+        os.kill(pid, 9)
+        return True
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def key_for(port: int | None) -> str | None:
     """La --api-key del llama-server que escucha en `port` (si lo arrancamos nosotros)."""
     return KEYS.get(int(port)) if port else None
@@ -225,6 +330,7 @@ class LlamaManager:
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # sin ventana de consola en Windows
         self.proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                      creationflags=flags)
+        _die_with_us(self.proc)
         log.close()
         self.model, self.port, self.started_at, self.ready_at = str(model), port, time.time(), None
         self.key = KEYS[port] = key
@@ -414,6 +520,19 @@ class LlamaPool:
     def stop_all(self) -> None:
         for m in self.managers.values():
             m.stop()
+
+    def kill_everything(self) -> list[dict]:
+        """El botón «Apagar todos»: los nuestros, con orden, y luego cualquier llama-server que siga vivo (sueltos de
+        una sesión anterior o lanzados a mano). Devuelve los que hubo que matar a la fuerza."""
+        self.stop_all()
+        killed = [s for s in running_servers() if kill_pid(s["pid"])]
+        for p in list(KEYS):
+            if health(p) == "off":
+                KEYS.pop(p, None)
+        return killed
+
+    def ours(self) -> set[int]:
+        return {m.proc.pid for m in self.managers.values() if m.proc and m.proc.poll() is None}
 
     def load_times(self) -> dict[str, float]:
         return self.principal.load_times()

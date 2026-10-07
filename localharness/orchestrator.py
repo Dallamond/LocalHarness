@@ -77,9 +77,14 @@ Tú decides, planificas y verificas: es un modelo pequeño. Si responde que no h
 
 READ_GUIDE = """
 # Cómo trabajas: delega la lectura en el modelo local
-Tienes un modelo local que corre gratis en el PC del usuario; tu cuota es cara. No escribes archivos.
+Tienes un modelo local que corre gratis en el PC del usuario; tu cuota es cara. Este agente es de SOLO LECTURA: ni
+tú ni el modelo local podéis crear ni modificar archivos, ni ejecutar órdenes (el modelo local solo contesta texto).
+Si la petición pide crear o cambiar archivos, NO lo intentes por otros caminos (pedírselo al modelo local, scripts,
+PowerShell, git): di en una línea que este agente es de solo lectura y que use uno que pueda escribir; como mucho,
+deja el contenido propuesto en tu respuesta.
 1. NO leas archivos tú para entenderlos o resumirlos: `local_ask` con sus rutas en `files`; haz Read tú solo de las
-   líneas concretas que necesites verificar.
+   líneas concretas que necesites verificar. El modelo local NO ve el repo por su cuenta ni recuerda encargos
+   anteriores: sin `files`, lo que diga del repo es inventado.
 2. Explicaciones, comparar opciones, borradores de texto: `local_ask`. Internet: `local_research`.
 3. Tests: `run_checks` (no gasta cuota).
 Tú decides y verificas: es un modelo pequeño. Si responde que no hay modelo local, hazlo tú y dilo al final."""
@@ -89,8 +94,10 @@ MULTI_GUIDE = """
 ## Varios modelos locales a la vez
 Tienes {n} modelos locales, cada uno en su GPU, y trabajan EN PARALELO: {who}. Cada encargo va solo al que encaja
 por su papel (el «fuerte» escribe código y hace `local_agent`; el «rápido» contesta preguntas, resume e investiga);
-con el argumento `server` puedes elegir otro. Aprovéchalo: mientras uno escribe, el otro puede ir analizando lo
-siguiente. En `local_execute_plan` cada bloque puede llevar su `server`.
+con el argumento `server` puedes elegir otro. OJO: dos llamadas tuyas solo van a la vez si son de solo lectura
+(`local_ask`, `local_research`, `run_checks`): pídelas en el MISMO mensaje. Las que escriben (`local_write_file`,
+`local_agent`) se hacen una detrás de otra, así que para que los dos modelos ESCRIBAN a la vez usa UNA llamada a
+`local_execute_plan` con `after` en cada bloque (y `server` en el bloque si quieres elegir quién lo hace).
 """
 
 
@@ -492,10 +499,15 @@ def _emit_live(deleg: dict, sink: Callable[[Event], None]) -> None:
         data = json.loads(Path(deleg["live"]).read_text(encoding="utf-8"))
     except (OSError, ValueError, KeyError):
         return
-    if not isinstance(data, dict) or data.get("at", 0) <= deleg.get("live_at", 0):
+    if not isinstance(data, dict):
         return
-    deleg["live_at"] = data["at"]
-    sink(Event("worker_live", text=str(data.get("task") or "")[:200], data=data))
+    seen = deleg.setdefault("live_by", {})
+    # uno por modelo local: con dos GPU, los dos pueden estar escribiendo a la vez
+    for sid, entry in (data.get("servers") or {str(data.get("server") or ""): data}).items():
+        if not isinstance(entry, dict) or entry.get("at", 0) <= seen.get(sid, 0):
+            continue
+        seen[sid] = entry["at"]
+        sink(Event("worker_live", text=str(entry.get("task") or "")[:200], data=entry))
 
 
 def _emit_new(deleg: dict, sink: Callable[[Event], None]) -> None:

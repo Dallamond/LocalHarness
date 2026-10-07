@@ -357,6 +357,27 @@ async function stop(server = "principal") {
   }
 }
 
+// «Apagar todos»: los de los paneles y cualquier llama-server que se quedara suelto (de una sesión anterior, o si
+// LocalHarness se cerró de golpe antes de que existiera el apagado automático)
+const stoppingAll = ref(false);
+const anyRunning = computed(() => servers.value.some((s) => pid(s) || s.status.state === "external") || !!info.value?.strays?.length);
+async function stopAll() {
+  error.value = "";
+  msg.value = "";
+  stoppingAll.value = true;
+  try {
+    const r = await post<{ killed: { pid: number }[]; left: { pid: number }[] }>("/api/llama/stop-all");
+    msg.value = r.left.length ? `No pude apagar ${r.left.length} llama-server (¿sin permiso?): ciérralos desde el Administrador de tareas.`
+      : `Apagados todos los llama-server${r.killed.length ? ` (${r.killed.length} se habían quedado sueltos)` : ""}.`;
+    await load();
+    await refreshLocals().catch(() => undefined);
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    stoppingAll.value = false;
+  }
+}
+
 // --- editor de servidores locales (Ajustes → llama.servers)
 const editServers = ref<LocalServerCfg[]>([]);
 const serversDirty = ref(false);
@@ -453,6 +474,18 @@ async function setAgentServer(id: number, server: string) {
 
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="msg" class="okmsg">{{ msg }}</p>
+
+    <!-- llama-server sueltos: siguen ocupando la GPU aunque no salgan en ningún panel -->
+    <div v-if="info?.strays?.length" class="warnline block-warn">
+      <span><strong>{{ info.strays.length === 1 ? "Hay un llama-server suelto" : `Hay ${info.strays.length} llama-server sueltos` }}</strong>
+        (de otra sesión o lanzados a mano), ocupando memoria de la GPU:
+        {{ info.strays.map((s) => `${s.model ?? "modelo desconocido"}${s.port ? ` en el puerto ${s.port}` : ""}`).join(", ") }}.</span>
+      <button class="btn btn--danger btn--small" :disabled="stoppingAll" @click="stopAll">Apagarlos</button>
+    </div>
+    <div v-if="anyRunning" class="stopall">
+      <button class="btn btn--ghost btn--small" :disabled="stoppingAll" title="Los de los paneles y cualquier llama-server suelto"
+              @click="stopAll"><i class="fa-solid fa-power-off" /> {{ stoppingAll ? "Apagando…" : "Apagar todos los modelos" }}</button>
+    </div>
 
     <!-- estado de cada servidor local (uno por GPU) -->
     <div class="servers" :class="{ 'servers--multi': servers.length > 1 }">
@@ -913,6 +946,7 @@ async function setAgentServer(id: number, server: string) {
 </template>
 
 <style scoped>
+.stopall { display: flex; justify-content: flex-end; margin-bottom: 8px; }
 .servers {
   display: grid;
   gap: 12px;

@@ -341,9 +341,13 @@ class Runner:
         self.hub.publish("task_event", {"task_id": tid, **ev.as_dict()})
         if ev.kind in ("status", "session", "usage"):
             self.publish_task(tid)
-        if ev.kind == "speed" or (ev.kind == "usage" and ev.data.get("local") and ev.data.get("tps")):
+        # velocidad del modelo local: la de un agente local y también la de los encargos de un Claude que delega
+        # (`worker_live` mientras escribe, `delegate` al terminar); sin estos dos, con Claude coordinando no cambiaba
+        final = ev.kind in ("usage", "delegate") or (ev.kind == "worker_live" and ev.data.get("done"))
+        if (ev.kind == "speed" or (ev.kind in ("usage", "delegate", "worker_live") and ev.data.get("tps")
+                                   and (ev.kind != "usage" or ev.data.get("local")))):
             self.last_speed = {"model": ev.data.get("model"), "tps": ev.data.get("tps"), "task_id": tid,
-                               "at": time.time(), "final": ev.kind == "usage"}
+                               "at": time.time(), "final": final, "server": ev.data.get("server")}
         if ev.kind == "limit":
             self.last_limit = ev.data
             self.hub.publish("limit", ev.data)
@@ -683,7 +687,9 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
                     "suggested_servers": suggest_servers(devices, cfg.get("servers") or []),
                     "roles": list(settings.SERVER_ROLES),
                     "speed": request.app.state.runner.last_speed,
-                    "load_times": pool.load_times()}
+                    "load_times": pool.load_times(),
+                    # llama-server vivos que no son de esta sesión (sueltos de una anterior o lanzados a mano)
+                    "strays": [s for s in llama.running_servers() if s["pid"] not in pool.ours()]}
         return await asyncio.to_thread(gather)
 
     @app.get("/api/llama/devices")
@@ -723,6 +729,12 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         mgr = request.app.state.llama.get(srv["id"], srv["port"])
         await asyncio.to_thread(mgr.stop)
         return mgr.status(srv["port"])
+
+    @app.post("/api/llama/stop-all")
+    async def llama_stop_all(request: Request) -> dict:
+        """Apaga TODOS los llama-server del PC: los de los paneles y los que se quedaron sueltos."""
+        killed = await asyncio.to_thread(request.app.state.llama.kill_everything)
+        return {"killed": killed, "left": await asyncio.to_thread(llama.running_servers)}
 
     # --- hardware, fichas, recomendaciones y descargas de Hugging Face
     def hw_budget(store: Store, force: bool = False) -> tuple[dict, dict]:

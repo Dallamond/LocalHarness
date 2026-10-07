@@ -18,6 +18,7 @@ import {
 const router = useRouter();
 const YOU = "#eab308";
 const LOCAL = "#0ea5e9";
+const LOCAL_COLORS = [LOCAL, "#10b981", "#a855f7", "#f97316"]; // un color por modelo local (por servidor)
 
 // reloj para tiempos «lleva X»
 const now = ref(Date.now());
@@ -56,8 +57,9 @@ const specs = computed<StationSpec[]>(() => [
   { id: "you", name: "Tú", color: YOU, kind: "you" },
   ...shown.value.map((a) => ({ id: `a${a.id}`, name: a.name, color: agentColor(a), kind: kindOf(a) })),
   // el trabajador del modelo local entra en cuanto un Claude le encarga algo, con su línea hacia ese Claude
-  ...workers.value.map((t) => ({ id: `w${t.id}`, name: "Trabajador local", color: LOCAL, kind: "local" as StationKind,
-    boss: `a${t.agent_id}` })),
+  // con dos GPU, uno por modelo («Local · Fuerte», «Local · Rápido»), cada uno con sus encargos y su directo
+  ...workers.value.map((w) => ({ id: wid(w.task.id, w.srv), name: serverLabel(w.srv), color: serverColor(w.srv),
+    kind: "local" as StationKind, boss: `a${w.task.agent_id}` })),
 ]);
 const agentOf = (sid: string) => (sid.startsWith("a") ? live.agents.find((a) => `a${a.id}` === sid) : undefined);
 
@@ -74,21 +76,91 @@ const delegates = (a?: Agent) => !!a && a.provider === "claude" && !!(a.config.d
 const workerEvents = reactive<Record<number, TaskEvent[]>>({});
 // lo que el trabajador local está pensando/escribiendo AHORA (eventos `worker_live`, no se guardan)
 interface WorkerLive { tool?: string; task?: string; thinking: string; text: string; done: boolean; at: number; skills?: string[] }
-const workerLive = reactive<Record<number, WorkerLive>>({});
-const liveNow = (tid: number) => {
-  const l = workerLive[tid];
-  return l && !l.done && Date.now() / 1000 - l.at < 8 ? l : null;
-};
+interface WorkerLiveSrv extends WorkerLive { server?: string; tps?: number | null }
+const workerLive = reactive<Record<string, WorkerLiveSrv>>({}); // `${tarea}~${servidor}` → lo último de ese modelo
+// sin `srv`, el más reciente de la tarea. Uno a medias (no `done`) sigue trabajando aunque no llegue nada nuevo:
+// mientras el modelo lee un encargo largo pasan segundos sin que escriba
+function liveNow(tid: number, srv?: string): WorkerLiveSrv | null {
+  if (live.tasks[tid]?.status !== "running") return null;
+  const all = Object.entries(workerLive).filter(([k]) => (srv ? k === `${tid}~${srv}` : k.startsWith(`${tid}~`)))
+    .map(([, l]) => l).filter((l) => !l.done && Date.now() / 1000 - l.at < 600);
+  return all.sort((a, b) => b.at - a.at)[0] ?? null;
+}
+// ---------- un trabajador por modelo local (servidor): puesto «w<tarea>~<servidor>»
+const defaultServer = computed(() => live.locals[0]?.id ?? "principal");
+const wid = (tid: number, srv: string) => `w${tid}~${srv}`;
+function parseW(sid: string): { tid: number; srv: string } | null {
+  const m = /^w(\d+)(?:~(.+))?$/.exec(sid);
+  return m ? { tid: Number(m[1]), srv: m[2] ?? defaultServer.value } : null;
+}
+const serverOf = (id: string) => live.locals.find((l) => l.id === id);
+const serverLabel = (id: string) => (live.locals.length < 2 ? "Trabajador local" : `Local · ${serverOf(id)?.name ?? id}`);
+const serverColor = (id: string) => LOCAL_COLORS[Math.max(0, live.locals.findIndex((l) => l.id === id)) % LOCAL_COLORS.length];
+// a quién va un encargo sin `server`: lo mismo que decide el servidor MCP por su papel
+const LIGHT_TOOLS = ["local_ask", "local_research", "run_checks"];
+function guessServer(tool: string): string {
+  if (live.locals.length < 2) return defaultServer.value;
+  const prefs = LIGHT_TOOLS.some((t) => tool.endsWith(t)) ? ["rapido", "general", "fuerte"] : ["fuerte", "general", "rapido"];
+  const on = live.locals.filter((l) => l.state !== "off");
+  for (const r of prefs) {
+    const l = (on.length ? on : live.locals).find((x) => x.role === r);
+    if (l) return l.id;
+  }
+  return defaultServer.value;
+}
+/** Servidor de cada evento del trabajador local («*» = de todos: equipar, o un plan que reparte bloques). La llamada
+ * de Claude se empareja con la entrada del log que la cierra (misma herramienta y mismo encargo o archivo). */
+function eventServers(evs: TaskEvent[]): string[] {
+  const used = new Set<number>();
+  return evs.map((e, i) => {
+    const d = (e.data ?? {}) as Record<string, unknown>;
+    if (e.kind === "delegate") {
+      const tool = String(d.tool ?? "");
+      return tool === "local_execute_plan" || tool === "local_prepare" ? "*" : String(d.server ?? defaultServer.value);
+    }
+    if (e.kind !== "tool") return d.server ? String(d.server) : "*";
+    const tool = String(e.text).replace(/^mcp__local__/, "");
+    const inp = (d.input ?? {}) as Record<string, unknown>;
+    if (tool === "local_execute_plan" || tool === "local_prepare") return "*";
+    if (inp.server) return String(inp.server);
+    const key = String(inp.task ?? inp.question ?? inp.command ?? "").slice(0, 300);
+    for (let j = i + 1; j < evs.length; j++) {
+      const x = evs[j];
+      const xd = (x.data ?? {}) as Record<string, unknown>;
+      if (used.has(j) || x.kind !== "delegate" || xd.tool !== tool) continue;
+      if ((inp.path && xd.path === inp.path) || (!inp.path && String(xd.task ?? "") === key)) {
+        used.add(j);
+        return String(xd.server ?? defaultServer.value);
+      }
+    }
+    return guessServer(tool);
+  });
+}
+function serverEvents(tid: number, srv: string): TaskEvent[] {
+  const evs = workerEvents[tid] ?? [];
+  const map = eventServers(evs);
+  return evs.filter((_, i) => map[i] === "*" || map[i] === srv);
+}
+function serversOf(tid: number): string[] {
+  const out = new Set<string>();
+  eventServers(workerEvents[tid] ?? []).forEach((x) => { if (x !== "*") out.add(x); });
+  Object.keys(workerLive).forEach((k) => { if (k.startsWith(`${tid}~`)) out.add(k.slice(String(tid).length + 1)); });
+  if (!out.size) out.add(defaultServer.value);
+  const pos = (id: string) => { const i = live.locals.findIndex((l) => l.id === id); return i < 0 ? 99 : i; };
+  return [...out].sort((a, b) => pos(a) - pos(b));
+}
 const workerSkills = (tid: number): string[] => {
   const last = [...(workerEvents[tid] ?? [])].reverse().find((e) => e.kind === "worker");
-  return (last?.data?.skills as string[] | undefined) ?? workerLive[tid]?.skills ?? [];
+  return (last?.data?.skills as string[] | undefined) ?? liveNow(tid)?.skills ?? [];
 };
 const workerLoaded = new Set<number>();
 // candidatas: tareas de un Claude que delega en marcha, la misión elegida y la tarea del trabajador que miras
 const workerCandidates = computed(() => tasks.value.filter((t) => delegates(live.agents.find((a) => a.id === t.agent_id))
   && (t.status === "running" || t.id === curTask.value?.id || sel.value === `w${t.id}`)));
-// sale en la oficina cuando ya le han encargado algo (no antes)
-const workers = computed(() => workerCandidates.value.filter((t) => workerEvents[t.id]?.some((e) => e.kind !== "progress")));
+// sale en la oficina cuando ya le han encargado algo (no antes); uno por cada modelo local que haya trabajado
+const workers = computed(() => workerCandidates.value
+  .filter((t) => workerEvents[t.id]?.some((e) => e.kind !== "progress") || liveNow(t.id))
+  .flatMap((t) => serversOf(t.id).map((srv) => ({ task: t, srv }))));
 async function loadWorkerEvents() {
   for (const t of workerCandidates.value) {
     if (workerLoaded.has(t.id)) continue;
@@ -98,24 +170,25 @@ async function loadWorkerEvents() {
     workerEvents[t.id] = [...evs.filter(isLocalEv), ...live_];
   }
 }
-const workerTask = (sid: string) => (sid.startsWith("w") ? live.tasks[Number(sid.slice(1))] : undefined);
-const selWorker = computed(() => workerTask(sel.value));
-function workerBusy(tid: number): boolean {
+const selW = computed(() => parseW(sel.value));
+const selWorker = computed(() => (selW.value ? live.tasks[selW.value.tid] : undefined));
+function workerBusy(tid: number, srv?: string): boolean {
+  if (srv && serversOf(tid).length > 1) return !!liveNow(tid, srv); // con varios modelos, cada uno por su directo
   let open = 0;
-  for (const e of workerEvents[tid] ?? []) {
+  for (const e of srv ? serverEvents(tid, srv) : workerEvents[tid] ?? []) {
     const tool = String(e.data?.tool ?? "");
     if (e.kind === "tool" && !String(e.text).endsWith("local_prepare")) open++;
     if (e.kind === "delegate" && tool !== "local_prepare" && !tool.includes("/")) open = Math.max(0, open - 1);
   }
   return (open > 0 || !!liveNow(tid)) && live.tasks[tid]?.status === "running";
 }
-function workerBubble(tid: number): string {
-  const evs = workerEvents[tid] ?? [];
-  const last = [...evs].reverse().find((e) => e.kind === "delegate" || e.kind === "tool" || e.kind === "progress");
-  if (!last || live.tasks[tid]?.status !== "running") return "";
-  const l = liveNow(tid);
-  if (l) return l.text ? `✍️ ${l.text.slice(-70)}` : l.thinking ? `💭 ${l.thinking.slice(-70)}` : "Con un encargo…";
-  if (workerBusy(tid)) return last.kind === "progress" ? String(last.text).replace(/^Modelo local:\s*/, "") : "Con un encargo…";
+function workerBubble(tid: number, srv: string): string {
+  if (live.tasks[tid]?.status !== "running") return "";
+  const l = liveNow(tid, srv);
+  if (l) return l.text ? `✍️ ${l.text.slice(-70)}` : l.thinking ? `💭 ${l.thinking.slice(-70)}` : "Leyendo el encargo…";
+  const last = [...serverEvents(tid, srv)].reverse().find((e) => e.kind === "delegate" || e.kind === "tool" || e.kind === "progress");
+  if (!last) return "";
+  if (workerBusy(tid, srv)) return last.kind === "progress" ? String(last.text).replace(/^Modelo local:\s*/, "") : "Con un encargo…";
   return "Esperando encargo";
 }
 
@@ -125,7 +198,8 @@ function stateOf(a: Agent): StationState {
 }
 
 function bubbleOf(sid: string): string {
-  if (sid.startsWith("w")) return workerBubble(Number(sid.slice(1)));
+  const w = parseW(sid);
+  if (w) return workerBubble(w.tid, w.srv);
   if (sid === "you") return live.inbox.length ? `${live.inbox.length} ${live.inbox.length === 1 ? "decisión pendiente" : "decisiones pendientes"}` : "";
   const a = agentOf(sid);
   if (!a) return "";
@@ -138,11 +212,13 @@ function bubbleOf(sid: string): string {
 }
 
 function stateText(sid: string): { text: string; cls: string } {
-  if (sid.startsWith("w")) {
-    const tid = Number(sid.slice(1));
-    const n = workerSkills(tid).length;
+  const w = parseW(sid);
+  if (w) {
+    const n = workerSkills(w.tid).length;
     const sk = n ? ` · ${n} skill${n > 1 ? "s" : ""}` : "";
-    return workerBusy(tid) ? { text: `trabajando${sk}`, cls: "working" } : { text: `para #${tid}${sk}`, cls: "" };
+    const sp = liveNow(w.tid, w.srv)?.tps;
+    return workerBusy(w.tid, w.srv) ? { text: `trabajando${sp ? ` · ${tps(sp)}` : ""}${sk}`, cls: "working" }
+      : { text: `para #${w.tid}${sk}`, cls: "" };
   }
   if (sid === "you") return live.inbox.length ? { text: "decide", cls: "waiting" } : { text: "director", cls: "" };
   const a = agentOf(sid);
@@ -228,11 +304,11 @@ const delegations = computed(() => events.value.filter((e) => e.kind === "delega
 watch(() => workerCandidates.value.map((t) => t.id).join(), () => loadWorkerEvents().catch(() => {}), { immediate: true });
 // cuando el trabajador local entra a trabajar y estabas mirando a su Claude (o a ti), se le enfoca para verlo
 const seenWorkers = new Set<number>();
-watch(() => workers.value.map((t) => t.id).join(), () => {
-  for (const t of workers.value) {
+watch(() => workers.value.map((w) => w.task.id).join(), () => {
+  for (const { task: t, srv } of workers.value) {
     if (seenWorkers.has(t.id)) continue;
     seenWorkers.add(t.id);
-    if (t.status === "running" && (sel.value === `a${t.agent_id}` || sel.value === "you")) setTimeout(() => pick(`w${t.id}`), 600);
+    if (t.status === "running" && (sel.value === `a${t.agent_id}` || sel.value === "you")) setTimeout(() => pick(wid(t.id, srv)), 600);
   }
 });
 
@@ -462,9 +538,12 @@ const gpuColor = (v: number) => (v > 0.85 ? "#ef4444" : v > 0.6 ? "#f59e0b" : "#
 const LOCAL_TEXT: Record<string, string> = { off: "apagado", loading: "cargando…", ready: "listo", failed: "falló al arrancar", external: "arrancado fuera" };
 
 const series = ref<number[]>(new Array(60).fill(0));
+// tokens/s de todos los modelos locales que están escribiendo AHORA, sumados (con dos GPU, los dos a la vez), más el
+// agente local más rápido (sus eventos `speed` no dicen en qué servidor van)
+const workingLocals = computed(() => Object.values(live.localWork).filter((w) => !w.done && now.value - w.at < 4000 && w.tps));
 const tpsNow = computed(() => {
-  const vals = Object.values(live.speed).filter((s) => now.value - s.at < 4000).map((s) => s.tps ?? 0);
-  return vals.length ? Math.max(...vals) : 0;
+  const agents = Object.values(live.speed).filter((s) => s.src !== "worker" && now.value - s.at < 4000).map((s) => s.tps ?? 0);
+  return workingLocals.value.reduce((sum, w) => sum + (w.tps ?? 0), 0) + (agents.length ? Math.max(...agents) : 0);
 });
 const spark = ref<HTMLCanvasElement>();
 function drawSpark() {
@@ -704,17 +783,29 @@ onMounted(() => {
     const t = live.tasks[ev.task_id];
     if (!t || !office) return;
     const me = `a${t.agent_id}`;
-    if (ev.kind === "worker_live") workerLive[ev.task_id] = ev.data as unknown as WorkerLive;
+    if (ev.kind === "worker_live") {
+      const d = ev.data as unknown as WorkerLiveSrv;
+      const srv = d.server ?? defaultServer.value;
+      const k = `${ev.task_id}~${srv}`;
+      if ((!workerLive[k] || workerLive[k].done) && !d.done) office.packet(me, wid(t.id, srv), serverColor(srv));
+      workerLive[k] = d;
+    }
     if (isLocalEv(ev) && (workerEvents[ev.task_id] || delegates(live.agents.find((a) => a.id === t.agent_id)))) {
       workerEvents[ev.task_id] = [...(workerEvents[ev.task_id] ?? []), { ...ev, ts: undefined }];
     }
     // encargo: Claude → trabajador local → GPU (rack); respuesta: trabajador → Claude
-    const w = `w${t.id}`;
+    // con varios modelos, el paquete va al puesto del modelo que hace cada encargo
     if (ev.kind === "tool" && String(ev.text).startsWith("mcp__local__")) {
-      office.packet(me, w, LOCAL);
-      setTimeout(() => office?.packet(w, "rack", LOCAL), 900);
+      const tool = String(ev.text).replace(/^mcp__local__/, "");
+      const inp = (ev.data?.input ?? {}) as Record<string, unknown>;
+      const to = tool === "local_execute_plan" ? serversOf(t.id) : [String(inp.server ?? guessServer(tool))];
+      for (const srv of to) setTimeout(() => office?.packet(wid(t.id, srv), "rack", serverColor(srv)), 900);
     }
-    if (ev.kind === "delegate" && !String(ev.data?.tool ?? "").includes("/")) office.packet(w, me, LOCAL);
+    if (ev.kind === "delegate") {
+      const srv = String(ev.data?.server ?? defaultServer.value);
+      const tool = String(ev.data?.tool ?? "");
+      if (!tool.includes("/") && tool !== "local_execute_plan" && tool !== "local_prepare") office.packet(wid(t.id, srv), me, serverColor(srv));
+    }
     if (ev.kind === "status" && ev.text === "running") {
       const from = t.plan_id && live.plans[t.plan_id]?.director_agent_id && t.kind !== "director" ? `a${live.plans[t.plan_id].director_agent_id}` : "you";
       office.packet(from, me, YOU);
@@ -738,14 +829,14 @@ function syncScene() {
   if (!office) return;
   office.setStations(specs.value);
   for (const a of shown.value) office.setState(`a${a.id}`, stateOf(a));
-  for (const t of workers.value) office.setState(`w${t.id}`, workerBusy(t.id) ? "working" : "idle");
+  for (const w of workers.value) office.setState(wid(w.task.id, w.srv), workerBusy(w.task.id, w.srv) ? "working" : "idle");
   office.setState("you", live.inbox.length ? "waiting" : "idle");
   office.pending = live.inbox.length > 0;
   office.setRackVisible(localOn.value);
   office.selected = sel.value;
 }
 watch(() => [specs.value.map((s) => `${s.id}${s.color}${s.kind}`).join(), live.inbox.length, sel.value, localOn.value,
-  shown.value.map((a) => stateOf(a)).join(), workers.value.map((t) => `${t.id}${workerBusy(t.id)}`).join()], syncScene);
+  shown.value.map((a) => stateOf(a)).join(), workers.value.map((w) => `${w.task.id}${w.srv}${workerBusy(w.task.id, w.srv)}`).join()], syncScene);
 watch(() => [missionTitle.value, JSON.stringify(steps.value.map((s) => [s.label, s.who, s.state])), progress.value],
   () => office?.drawBoard(missionTitle.value, steps.value, progress.value), { immediate: true, flush: "post" });
 watch(worktrees, (w) => office?.drawGit(w.map((x) => ({ name: x.branch, status: wtState(x) }))));
@@ -849,7 +940,7 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
           <!-- qué está haciendo el modelo local, encargo a encargo -->
           <div v-if="curTask && (localJobs.length || curLive)" class="ljobs">
             <div class="ljobs__h"><i class="fa-solid fa-robot" /> Modelo local <em>{{ localJobs.filter((j) => j.state === "ok").length }}/{{ localJobs.length }} hechos</em>
-              <button v-if="workers.some((w) => w.id === curTask!.id)" class="linkish" @click="pick(`w${curTask.id}`)">ver →</button>
+              <button v-for="w in workers.filter((x) => x.task.id === curTask!.id)" :key="w.srv" class="linkish" @click="pick(wid(w.task.id, w.srv))">{{ live.locals.length > 1 ? `${serverOf(w.srv)?.name ?? w.srv} →` : "ver →" }}</button>
             </div>
             <div v-for="j in localJobs.slice(-8)" :key="j.key" class="ljob" :class="j.state">
               <i class="fa-solid" :class="j.state === 'run' ? 'fa-gear fa-spin' : j.state === 'ok' ? 'fa-check' : 'fa-xmark'" />
@@ -1009,7 +1100,7 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
           <div class="l">Claude · semana <span>{{ pct(live.limit?.seven_day) }}</span></div>
           <span class="meter"><span :style="{ width: `${(live.limit?.seven_day ?? 0) * 100}%`, background: '#fb923c' }" /></span>
         </div>
-        <div class="l">Tokens/s (local) <span class="mono">{{ tpsNow ? tps(tpsNow) : live.lastSpeed?.tps ? `último ${tps(live.lastSpeed.tps)}` : "0" }}</span></div>
+        <div class="l">Tokens/s (local) <span class="mono">{{ tpsNow ? tps(tpsNow) + (workingLocals.length > 1 ? ` · ${workingLocals.length} modelos` : "") : live.lastSpeed?.tps ? `último ${tps(live.lastSpeed.tps)}` : "0" }}</span></div>
         <canvas ref="spark" class="spark" width="300" height="38" />
         <div class="kv">
           <div><b>{{ tasks.filter((t) => t.status === "running").length }}</b><span>Trabajando</span></div>
@@ -1067,7 +1158,8 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
 
         <!-- el trabajador del modelo local de una tarea -->
         <LocalWorkerPanel
-          v-else-if="selWorker" :task="selWorker" :events="workerEvents[selWorker.id] ?? []" :stream="liveNow(selWorker.id)"
+          v-else-if="selWorker && selW" :task="selWorker" :events="serverEvents(selWorker.id, selW.srv)" :stream="liveNow(selWorker.id, selW.srv)"
+          :server="live.locals.length > 1 ? { id: selW.srv, name: serverOf(selW.srv)?.name ?? selW.srv, model: serverOf(selW.srv)?.model ?? null, color: serverColor(selW.srv) } : undefined"
           :agent="live.agents.find((a) => a.id === selWorker!.agent_id)"
         />
 
@@ -1298,6 +1390,11 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
 .ljob > i {
   margin-top: 3px;
   font-size: 11px;
+  width: 12px;
+  height: 12px;
+  line-height: 12px;
+  text-align: center;
+  align-self: start;
 }
 .ljob.ok > i {
   color: var(--ok);

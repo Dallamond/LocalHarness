@@ -422,6 +422,13 @@ export interface Speed {
   model?: string | null;
   at: number;
   final?: boolean;
+  src?: "worker"; // de un encargo de Claude a un modelo local (los suma `live.localWork`, no esto)
+}
+
+/** Lo que hace AHORA (o lo último que hizo) cada modelo local con los encargos de un Claude que delega. */
+export interface LocalWork {
+  server: string; task_id: number; tool?: string; task?: string; thinking: string; text: string;
+  tps?: number | null; tokens?: number | null; model?: string | null; done: boolean; at: number; started: number;
 }
 
 export interface LocalModel {
@@ -459,6 +466,7 @@ export interface LlamaInfo {
   roles: ServerRole[];
   speed: Speed | null;
   load_times: Record<string, number>;
+  strays?: { pid: number; port: number | null; model: string | null }[]; // llama-server sueltos (no de esta sesión)
 }
 
 /** Selector nativo del PC (el servidor es local). null si se cancela; lanza error si no hay escritorio. */
@@ -481,6 +489,7 @@ export const live = reactive({
   local: { state: "off", model: null } as { state: string; model: string | null }, // el modelo ARRANCADO (principal)
   locals: [] as LocalLive[], // todos los servidores locales (con dos GPU, normalmente dos modelos a la vez)
   lastSpeed: null as Speed | null,
+  localWork: {} as Record<string, LocalWork>, // id del servidor local → su encargo en curso o el último
 });
 
 export interface LocalLive {
@@ -644,10 +653,31 @@ export function connect(url = "/api/events"): void {
     if (["text", "tool", "status", "context", "progress", "thinking"].includes(ev.kind)) {
       live.activity[ev.task_id] = { kind: ev.kind, text: ev.text, data: ev.data ?? {}, at: Date.now() };
     }
-    if (ev.kind === "speed" || (ev.kind === "usage" && ev.data?.local && ev.data?.tps)) {
-      const sp = { ...(ev.data as unknown as Speed), at: Date.now(), final: ev.kind === "usage" };
-      if (ev.kind === "speed") live.speed[ev.task_id] = sp;
+    // velocidad: la de un agente local (speed/usage) y la de los encargos de un Claude que delega (worker_live
+    // mientras el modelo local escribe, delegate al acabar)
+    const delegated = (ev.kind === "worker_live" || ev.kind === "delegate") && !!ev.data?.tps;
+    if (ev.kind === "speed" || (ev.kind === "usage" && ev.data?.local && ev.data?.tps) || delegated) {
+      const fin = ev.kind === "usage" || ev.kind === "delegate" || (ev.kind === "worker_live" && !!ev.data?.done);
+      const sp: Speed = { ...(ev.data as unknown as Speed), at: Date.now(), final: fin, src: delegated ? "worker" : undefined };
+      if (ev.kind === "speed" || (ev.kind === "worker_live" && !fin)) live.speed[ev.task_id] = sp;
       live.lastSpeed = sp;
+    }
+    // cada modelo local por separado: con dos GPU, los dos pueden estar con un encargo a la vez
+    if (ev.kind === "worker_live") {
+      const d = (ev.data ?? {}) as Record<string, unknown>;
+      const srv = String(d.server ?? "principal");
+      const prev = live.localWork[srv];
+      const same = prev && !prev.done && prev.task_id === ev.task_id && prev.task === d.task && prev.tool === d.tool;
+      live.localWork[srv] = {
+        server: srv, task_id: ev.task_id, tool: d.tool as string | undefined, task: d.task as string | undefined,
+        thinking: String(d.thinking ?? ""), text: String(d.text ?? ""), tps: (d.tps as number | null) ?? prev?.tps ?? null,
+        tokens: d.tokens as number | null, model: (d.model as string | null) ?? prev?.model ?? null, done: !!d.done,
+        at: Date.now(), started: same ? prev.started : Date.now(),
+      };
+    }
+    if (ev.kind === "delegate" && ev.data?.server && live.localWork[String(ev.data.server)]) {
+      const w = live.localWork[String(ev.data.server)];
+      if (w.task_id === ev.task_id) Object.assign(w, { done: true, tps: (ev.data.tps as number) ?? w.tps, model: (ev.data.model as string) ?? w.model });
     }
     if (ev.kind === "session" && ev.data?.base_url && ev.data?.model) {
       live.local = { state: "ready", model: String(ev.data.model) };

@@ -1,11 +1,13 @@
 <script setup lang="ts">
 // Panel inferior de la oficina: Timeline (lo que pasa en la misión), Terminal (herramientas que usan los agentes)
-// y Diff (cambios de la tarea seleccionada). Datos reales: eventos de las tareas de la misión y /review.
-import { computed, nextTick, ref, watch } from "vue";
-import { agentColor, agentName, live, parseTs, type Review, type TaskEvent } from "../api";
+// Diff (cambios de la tarea seleccionada) y Modelos (cada modelo local: qué tiene cargado, qué encargo hace, a qué
+// velocidad y qué piensa/escribe en directo). Datos reales: eventos de las tareas de la misión, /review y worker_live.
+import { computed, nextTick, onUnmounted, ref, watch } from "vue";
+import { SERVER_ROLE_LABEL, agentColor, agentName, duration, live, parseTs, tps, type Review, type TaskEvent } from "../api";
 
 const props = defineProps<{ events: TaskEvent[]; review: Review | null; reviewTitle: string }>();
-const tab = ref<"time" | "term" | "diff">("time");
+type Tab = "time" | "term" | "diff" | "models";
+const tab = ref<Tab>("time");
 const min = ref(false);
 const body = ref<HTMLElement>();
 
@@ -71,15 +73,51 @@ const diffLines = computed(() => (props.review?.diff ?? "").split("\n").slice(0,
   text: l,
 })));
 
+// ---------- Modelos: uno por servidor local
+const LOCAL_COLORS = ["#0ea5e9", "#10b981", "#a855f7", "#f97316"]; // los mismos que sus puestos en la oficina
+const clock = ref(Date.now());
+const ticker = setInterval(() => { clock.value = Date.now(); }, 1000);
+onUnmounted(() => clearInterval(ticker));
+const WORK_TEXT: Record<string, string> = {
+  local_ask: "pregunta", local_write_file: "escribe un archivo", local_agent: "tarea con herramientas",
+  local_research: "investiga", "local_execute_plan/write": "bloque del plan: escribe", "local_execute_plan/ask": "bloque del plan: pregunta",
+};
+interface ModelCard {
+  id: string; name: string; role: string; device: string; state: string; model: string | null; color: string;
+  busy: boolean; what: string; taskLabel: string; tps: number | null; tokens: number | null; since: string;
+  thinking: string; text: string; last: string;
+}
+const models = computed<ModelCard[]>(() => {
+  const ids = live.locals.length ? live.locals.map((l) => l.id) : Object.keys(live.localWork);
+  return ids.map((id, i) => {
+    const l = live.locals.find((x) => x.id === id);
+    const w = live.localWork[id];
+    // trabajando = encargo sin terminar con noticias recientes (mientras lee un prompt largo pasan segundos sin nada)
+    const busy = !!w && !w.done && clock.value - w.at < 600_000 && live.tasks[w.task_id]?.status === "running";
+    const t = w ? live.tasks[w.task_id] : undefined;
+    return {
+      id, name: l?.name ?? id, role: l?.role ? SERVER_ROLE_LABEL[l.role] ?? l.role : "", device: l?.device ?? "",
+      state: l?.state ?? "off", model: l?.model ?? w?.model ?? null, color: LOCAL_COLORS[i % LOCAL_COLORS.length],
+      busy, what: w ? WORK_TEXT[w.tool ?? ""] ?? (w.tool ?? "").replace(/^local_/, "") : "",
+      taskLabel: w ? `${w.task ?? ""}${t ? ` · tarea #${t.id} de ${agentName(t.agent_id)}` : ""}` : "",
+      tps: w?.tps ?? null, tokens: w?.tokens ?? null, since: w ? duration(clock.value - (busy ? w.started : w.at)) : "",
+      thinking: w?.thinking ?? "", text: w?.text ?? "",
+      last: w && !busy ? `Último: ${WORK_TEXT[w.tool ?? ""] ?? w.tool ?? "encargo"}${w.task ? ` · ${w.task.slice(0, 80)}` : ""} (hace ${duration(clock.value - w.at)})` : "",
+    };
+  });
+});
+const busyModels = computed(() => models.value.filter((m) => m.busy).length);
+const STATE_TEXT: Record<string, string> = { ready: "cargado", external: "cargado (lanzado fuera)", loading: "cargando…", failed: "falló", off: "apagado" };
+
 // baja sola al final mientras llegan eventos (si ya estabas abajo)
 watch(() => [props.events.length, tab.value], async () => {
   const el = body.value;
   const atEnd = !el || el.scrollHeight - el.scrollTop - el.clientHeight < 60;
   await nextTick();
-  if (el && atEnd && tab.value !== "diff") el.scrollTop = el.scrollHeight;
+  if (el && atEnd && tab.value !== "diff" && tab.value !== "models") el.scrollTop = el.scrollHeight;
 });
 
-defineExpose({ show: (t: "time" | "term" | "diff") => { tab.value = t; min.value = false; } });
+defineExpose({ show: (t: Tab) => { tab.value = t; min.value = false; } });
 </script>
 
 <template>
@@ -94,12 +132,15 @@ defineExpose({ show: (t: "time" | "term" | "diff") => { tab.value = t; min.value
       <button class="tab" :class="{ on: tab === 'diff' }" @click="tab = 'diff'; min = false">
         <i class="fa-solid fa-code-compare" /> Diff <span v-if="review?.stat" class="n">{{ review.stat.trim().split("\n").pop()?.trim() }}</span>
       </button>
+      <button class="tab" :class="{ on: tab === 'models' }" @click="tab = 'models'; min = false">
+        <i class="fa-solid fa-microchip" /> Modelos <span v-if="busyModels" class="n">{{ busyModels }} trabajando</span>
+      </button>
       <span class="spacer" />
       <button class="mini" :title="min ? 'Desplegar panel' : 'Plegar panel'" @click="min = !min">
         <i class="fa-solid" :class="min ? 'fa-chevron-up' : 'fa-chevron-down'" />
       </button>
     </div>
-    <div v-show="!min" ref="body" class="pane" :class="{ dark: tab !== 'time' }">
+    <div v-show="!min" ref="body" class="pane" :class="{ dark: tab === 'term' || tab === 'diff' }">
       <template v-if="tab === 'time'">
         <p v-if="!timeline.length" class="none">Aún no ha pasado nada en esta misión.</p>
         <div v-for="r in timeline" :key="r.id" class="ev" :class="r.tone">
@@ -111,6 +152,32 @@ defineExpose({ show: (t: "time" | "term" | "diff") => { tab.value = t; min.value
         <p v-if="!terminal.length" class="h">Sin herramientas usadas todavía.</p>
         <div v-for="r in terminal" :key="r.id" class="tl" :class="r.cls">
           <span class="p">{{ r.who }}@harness</span> <span class="h">›</span> {{ r.text }}
+        </div>
+      </template>
+      <template v-else-if="tab === 'models'">
+        <p v-if="!models.length" class="none">No hay modelos locales configurados (Modelos locales).</p>
+        <div class="mgrid">
+          <article v-for="m in models" :key="m.id" class="mcard" :class="{ busy: m.busy }" :style="{ '--c': m.color }">
+            <header>
+              <span class="dot" />
+              <b>{{ m.name }}</b>
+              <span v-if="m.role" class="role">{{ m.role }}</span>
+              <span class="muted">{{ m.model ?? "sin modelo" }}{{ m.device ? ` · ${m.device}` : "" }}</span>
+              <span class="st" :class="m.state">{{ STATE_TEXT[m.state] ?? m.state }}</span>
+            </header>
+            <template v-if="m.busy">
+              <div class="doing">
+                <i class="fa-solid fa-gear fa-spin" /> <b>{{ m.what }}</b>
+                <span class="nums">{{ m.tps ? tps(m.tps) : "leyendo el encargo…" }}{{ m.tokens ? ` · ${m.tokens} tokens` : "" }} · {{ m.since }}</span>
+              </div>
+              <div class="task">{{ m.taskLabel }}</div>
+              <div v-if="m.thinking" class="box think"><small>💭 Pensando</small>{{ m.thinking.slice(-500) }}</div>
+              <div v-if="m.text" class="box write"><small>✍️ Escribiendo</small>{{ m.text.slice(-500) }}</div>
+            </template>
+            <p v-else class="idle">
+              <i class="fa-solid fa-mug-hot" /> {{ m.state === "ready" || m.state === "external" ? "Libre" : "Sin trabajo" }}<template v-if="m.last"> · {{ m.last }}</template>
+            </p>
+          </article>
         </div>
       </template>
       <template v-else>
@@ -127,6 +194,27 @@ defineExpose({ show: (t: "time" | "term" | "diff") => { tab.value = t; min.value
 </template>
 
 <style scoped>
+.mgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; }
+.mcard { border: 1px solid var(--line); border-left: 4px solid var(--c); border-radius: 10px; padding: 8px 10px; min-width: 0; }
+.mcard.busy { background: color-mix(in srgb, var(--c) 7%, transparent); }
+.mcard header { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }
+.mcard header .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
+.mcard.busy header .dot { box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 30%, transparent); }
+.mcard .role { font-size: 10px; font-weight: 800; text-transform: uppercase; color: var(--c); }
+.mcard .muted { color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.mcard .st { font-size: 11px; font-weight: 700; color: var(--ink-dim); }
+.mcard .st.ready, .mcard .st.external { color: var(--ok); }
+.mcard .st.failed { color: var(--crit); }
+.doing { margin-top: 6px; font-size: 12px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.doing i { color: var(--c); display: inline-block; width: 1em; text-align: center; }
+.doing .nums { margin-left: auto; font-family: ui-monospace, monospace; font-size: 11px; color: var(--ink-dim); }
+.task { font-size: 11px; color: var(--ink-dim); margin: 2px 0 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.box { font-family: ui-monospace, monospace; font-size: 11px; white-space: pre-wrap; word-break: break-word; max-height: 90px; overflow: hidden;
+  display: flex; flex-direction: column; justify-content: flex-end; padding: 6px 8px; border-radius: 8px; margin-top: 4px;
+  background: color-mix(in srgb, var(--ink) 5%, transparent); }
+.box small { font-family: inherit; font-weight: 700; color: var(--ink-dim); }
+.box.think { font-style: italic; }
+.idle { margin: 6px 0 0; font-size: 12px; color: var(--ink-dim); }
 .dock {
   height: var(--dockh, 230px);
   display: flex;

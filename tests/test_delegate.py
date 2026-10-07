@@ -205,8 +205,43 @@ class McpServerTests(unittest.TestCase):
                 state = json.loads(live.read_text(encoding="utf-8"))
                 self.assertEqual((state["tool"], state["task"], state["thinking"], state["text"], state["done"]),
                                  ("local_ask", "¿qué falla?", "Pienso en la suma.", "Hay que sumar.", True))
+                # la velocidad final (la de llama-server) va en el directo: la usa el monitor de recursos
+                self.assertEqual((state["server"], state["tps"], state["tokens"]), ("principal", 33.3, 7))
+                self.assertTrue(state["servers"]["principal"]["done"])
         finally:
             httpd.shutdown()
+
+    def test_live_per_server_and_one_event_each(self):
+        """Dos modelos a la vez: cada uno su entrada en el directo y el orquestador emite un `worker_live` por modelo."""
+        from localharness.orchestrator import _emit_live
+        with tempfile.TemporaryDirectory() as tmp:
+            live = Path(tmp) / "live.json"
+            s = Server({"LH_ROOT": tmp, "LH_LIVE": str(live), "LH_LOCAL_SERVERS": json.dumps([
+                {"id": "principal", "url": "http://127.0.0.1:1", "role": "fuerte"},
+                {"id": "rapido", "url": "http://127.0.0.1:2", "role": "rapido"}])})
+            s.current = {"tool": "local_write_file", "task": "a.py", "server": "principal"}
+            s._live("", "escribo a.py", tps=20.0)
+            s.current = {"tool": "local_ask", "task": "¿bugs?", "server": "rapido"}
+            s._live("pienso", "")
+            evs: list = []
+            deleg = {"live": str(live)}
+            _emit_live(deleg, evs.append)
+            self.assertEqual(sorted((e.data["server"], e.data["tool"]) for e in evs),
+                             [("principal", "local_write_file"), ("rapido", "local_ask")])
+            evs.clear()
+            _emit_live(deleg, evs.append)  # nada nuevo: no repite
+            self.assertEqual(evs, [])
+            s._live("pienso más", "")
+            _emit_live(deleg, evs.append)
+            self.assertEqual([e.data["server"] for e in evs], ["rapido"])
+
+    def test_read_only_tools_can_run_together(self):
+        """Claude Code solo lanza a la vez herramientas MCP de solo lectura: preguntar e investigar lo son."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tools = {t["name"]: t for t in Server({"LH_ROOT": tmp}).tools()}
+            self.assertTrue(tools["local_ask"]["annotations"]["readOnlyHint"])
+            self.assertTrue(tools["local_research"]["annotations"]["readOnlyHint"])
+            self.assertNotIn("annotations", tools["local_write_file"])
 
     def test_strip_fence(self):
         self.assertEqual(strip_fence("```js\nx = 1\n```"), "x = 1")

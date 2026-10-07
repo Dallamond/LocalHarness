@@ -371,6 +371,37 @@ def cmd_sandbox(args, store: Store) -> int:
     return 0
 
 
+def cmd_autopilot(args) -> int:
+    """Lista de parches que se hacen solos durante horas (ver localharness/autopilot.py)."""
+    from datetime import datetime
+
+    from localharness import autopilot
+    lst = Path(args.list)
+    if not lst.is_file():
+        return _fail(f"no existe la lista {lst}")
+    items = autopilot.read_list(lst)
+    if not items:
+        return _fail(f"{lst} no tiene parches (una línea «- texto» por parche)")
+    out = Path(args.out or Path(DEFAULT_DB).parent / "autopilot")
+    stem = lst.stem
+    state = out / f"{stem}-estado.json"
+    if args.fresh and state.exists():
+        state.rename(state.with_name(f"{stem}-estado-{datetime.now():%Y%m%d-%H%M}.json"))
+    try:
+        pilot = autopilot.Autopilot(autopilot.http(args.url), args.project, args.agent, items, hours=args.hours,
+                                    budget=args.budget, task_minutes=args.task_minutes, check=args.check,
+                                    state=state, report=out / f"{stem}-informe.md")
+    except autopilot.ApiError as e:
+        return _fail(str(e))
+    hecho = len(pilot.results)
+    print(f"Autopiloto: {len(items)} parches ({hecho} ya hechos) en «{pilot.project['name']}» con «{pilot.agent['name']}»"
+          f" · máx. {args.hours} h · {args.budget} $ · {args.task_minutes} min por parche")
+    print(f"Informe: {out / f'{stem}-informe.md'}  (se actualiza tras cada parche)")
+    pilot.run()
+    print(f"Terminado. Informe: {out / f'{stem}-informe.md'}")
+    return 0
+
+
 def cmd_serve(args) -> int:
     try:
         import uvicorn
@@ -560,6 +591,17 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("probar-delegacion", help="prueba gratis la mitad local de la delegación (sin Claude)") \
         .set_defaults(fn=cmd_delegation_test)
 
+    p = sub.add_parser("autopilot", help="hace sola una lista de parches durante horas (LocalHarness abierto)")
+    p.add_argument("--project", required=True); p.add_argument("--agent", required=True)
+    p.add_argument("--list", required=True, help="Markdown con una línea «- texto» por parche")
+    p.add_argument("--hours", type=float, default=6); p.add_argument("--budget", type=float, default=5.0,
+                                                                      help="tope de coste de Claude en $ (nominal)")
+    p.add_argument("--task-minutes", type=float, default=30, help="tope por parche; si se pasa, se para")
+    p.add_argument("--check", default="node --test", help="tests que deben pasar para integrar ('' = ninguno)")
+    p.add_argument("--url", default="http://127.0.0.1:8095"); p.add_argument("--out")
+    p.add_argument("--fresh", action="store_true", help="empezar de cero (si no, sigue donde se quedó)")
+    p.set_defaults(fn=cmd_autopilot)
+
     sub.add_parser("tasks", help="lista tareas").set_defaults(fn=cmd_tasks)
     p = sub.add_parser("show", help="detalle de una tarea"); p.add_argument("id", type=int)
     p.add_argument("--diff", action="store_true"); p.set_defaults(fn=cmd_show)
@@ -573,7 +615,7 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("falta el nombre")
     if args.cmd == "project" and args.action == "add" and not args.path:
         ap.error("falta la ruta del repo")
-    if args.cmd in ("doctor", "serve", "start", "llama", "skills"):
+    if args.cmd in ("doctor", "serve", "start", "llama", "skills", "autopilot"):
         return args.fn(args)
     store = _store(args)
     try:

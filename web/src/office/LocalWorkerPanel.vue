@@ -7,7 +7,9 @@ import Markdown from "../components/Markdown.vue";
 import { api, live, refreshAll, type Agent, type Task, type TaskEvent } from "../api";
 
 interface Live { tool?: string; task?: string; thinking: string; text: string; done: boolean; at: number; skills?: string[] }
-const props = defineProps<{ task: Task; events: TaskEvent[]; agent?: Agent; stream?: Live | null }>();
+// `server`: con varios modelos locales, este puesto es el de uno (sus encargos y su directo; las skills, de todos)
+const props = defineProps<{ task: Task; events: TaskEvent[]; agent?: Agent; stream?: Live | null;
+  server?: { id: string; name: string; model: string | null; color: string } }>();
 
 interface WorkerInfo {
   active: boolean; skills: string[]; tools: string[] | null; by: string; reason: string;
@@ -162,12 +164,12 @@ const BY: Record<string, string> = { Claude: "Las eligió Claude", "tú": "Las c
 <template>
   <div class="lw">
     <div class="insp-h">
-      <div class="avatar" style="--c: #0ea5e9"><i class="fa-solid fa-robot" /></div>
+      <div class="avatar" :style="{ '--c': server?.color ?? '#0ea5e9' }"><i class="fa-solid fa-robot" /></div>
       <div>
-        <b>Trabajador local</b>
+        <b>{{ server ? `Local · ${server.name}` : "Trabajador local" }}</b>
         <small>de {{ agent?.name ?? "agente" }} · tarea #{{ task.id }}</small>
       </div>
-      <span class="prov prov--local">{{ live.local.model ?? "modelo local" }}</span>
+      <span class="prov prov--local">{{ server?.model ?? live.local.model ?? "modelo local" }}</span>
     </div>
     <div class="state" :class="{ on: waiting }">
       <i class="fa-solid" :class="waiting ? 'fa-gear fa-spin' : running ? 'fa-mug-hot' : 'fa-flag-checkered'" />
@@ -265,6 +267,7 @@ const BY: Record<string, string> = { Claude: "Las eligió Claude", "tú": "Las c
 }
 .state { font-size: 12px; font-weight: 600; color: var(--ink-dim); padding: 6px 10px; border-radius: 10px; background: var(--panel-raised); }
 .state.on { background: rgba(14, 165, 233, 0.14); color: #0284c7; }
+.state i { display: inline-block; width: 1.1em; text-align: center; }
 .tabs { display: flex; gap: 4px; margin: 10px 0 8px; }
 .tabs button {
   flex: 1; min-width: 0; border: 0; border-radius: 10px; padding: 6px 4px; font: inherit; font-size: 11px; font-weight: 700;

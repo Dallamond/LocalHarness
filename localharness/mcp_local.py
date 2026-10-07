@@ -70,7 +70,9 @@ ASK = {
     "description": (
         "Encarga a un modelo local GRATIS (no gasta tu cuota) pensar, resumir, explicar, comparar opciones, proponer "
         "alternativas o revisar código. Pásale las rutas en `files`: los lee él, tú NO necesitas leerlos antes. "
-        "Devuelve su respuesta en texto. Es un modelo pequeño: verifica lo que sea crítico."),
+        "Devuelve su respuesta en texto. Es un modelo pequeño: verifica lo que sea crítico. Solo ve `task` y "
+        "`files`: no ve el repositorio por su cuenta ni recuerda encargos anteriores (pásale otra vez lo que "
+        "necesite), y no escribe archivos ni ejecuta nada."),
     "inputSchema": {
         "type": "object",
         "properties": {
@@ -80,6 +82,7 @@ ASK = {
         },
         "required": ["task"],
     },
+    "annotations": {"readOnlyHint": True},  # así Claude Code puede lanzar varias a la vez (una a cada modelo)
 }
 WRITE = {
     "name": "local_write_file",
@@ -155,6 +158,7 @@ RESEARCH = {
         },
         "required": ["question"],
     },
+    "annotations": {"readOnlyHint": True},
 }
 
 AGENT = {
@@ -186,6 +190,7 @@ CHECKS = {
         "properties": {"command": {"type": "string", "description": "Orden, p. ej. «python -m unittest» o «npm test»"}},
         "required": ["command"],
     },
+    "annotations": {"readOnlyHint": True},
 }
 
 # herramientas del agente local (local_agent) que Claude o tú podéis quitarle o darle; las de control van siempre
@@ -212,7 +217,11 @@ MAX_LOG_ANSWER = 8000
 MAX_LOG_THINKING = 6000
 
 SYSTEM_ASK = ("Eres un asistente de programación que ayuda a otro agente más caro a ahorrar trabajo. Responde en "
-              "español, concreto y sin relleno. Si te faltan datos, dilo en vez de inventar.")
+              "español, concreto y sin relleno. Solo conoces lo que viene en este mensaje: no ves el repositorio "
+              "salvo los ARCHIVOS incluidos y no recuerdas encargos anteriores. Si te faltan datos o archivos, dilo "
+              "en vez de inventar: nunca supongas nombres de archivos, carpetas ni dependencias que no veas aquí.")
+NO_FILES = (" En este encargo NO te han pasado ningún archivo del repositorio. Si la tarea es sobre el repo o sobre sus archivos, "
+            "NO la contestes de memoria: responde solo «Necesito que me pases los archivos en `files`».")
 SYSTEM_WRITE = ("Eres un programador. Devuelve ÚNICAMENTE el contenido completo del archivo pedido, dentro de un solo "
                 "bloque de código, sin explicaciones antes ni después. No dejes partes sin hacer ni «...».")
 SYSTEM_RESEARCH = ("Eres un investigador. Responde a la pregunta SOLO con lo que digan las fuentes que te paso, en "
@@ -281,6 +290,7 @@ class Server:
         env = env if env is not None else dict(os.environ)
         self._tl = threading.local()
         self._lock = threading.Lock()  # log y directo: los escriben varios encargos a la vez
+        self._live_by: dict[str, dict] = {}  # el directo de cada modelo local (id del servidor → lo último)
         url = (env.get("LH_LOCAL_URL") or "http://127.0.0.1:8080").rstrip("/").removesuffix("/v1")
         try:
             servers = json.loads(env["LH_LOCAL_SERVERS"]) if env.get("LH_LOCAL_SERVERS") else []
@@ -522,7 +532,7 @@ class Server:
             raise ToolError("falta `task`")
         ctx, read = self.read_files(files)
         user = task + (f"\n\nARCHIVOS:\n{ctx}" if ctx else "")
-        answer, stats = self.complete(SYSTEM_ASK, user)
+        answer, stats = self.complete(SYSTEM_ASK + ("" if ctx else NO_FILES), user)
         return answer, {**stats, "files": read}
 
     def write_file(self, path: str, instructions: str, context_files: list) -> tuple[str, dict]:
@@ -731,6 +741,7 @@ class Server:
         srv = self.first_up(self.order or self.servers)
         self.use(srv)
         self.current["server"] = self.server_id
+        self._live("", "")
         thinking = srv.get("thinking") if srv.get("thinking") in ("apagado", "profundo") else None
         adapter = LocalAgentAdapter(base_url=self.url, api_key=self.key or None, transport=self._httpx(),
                                     http_get=self.http_get, web=self.web,
@@ -782,8 +793,11 @@ class Server:
     def snapshot(self) -> dict[str, str]:
         """Huella de los archivos con cambios sin guardar en git (modificados o nuevos) para saber qué tocó."""
         try:
+            # stdin=DEVNULL siempre: cada encargo va en su hilo mientras el principal lee stdin, y en Windows heredar
+            # ese stdin (una tubería con una lectura en curso) deja colgado el subprocess (así se quedaba local_agent)
             raw = subprocess.run(["git", "status", "--porcelain", "-z", "--untracked-files=all"], cwd=self.root,
-                                 capture_output=True, timeout=30).stdout.decode("utf-8", "replace")
+                                 stdin=subprocess.DEVNULL, capture_output=True,
+                                 timeout=30).stdout.decode("utf-8", "replace")
         except (OSError, subprocess.TimeoutExpired):
             return {}
         out = {}
@@ -889,10 +903,12 @@ class Server:
         for i, srv in enumerate(order):
             self.use(srv)
             self.current["server"] = srv["id"]
+            self._live("", "")  # ese modelo ya está con el encargo (la oficina lo pone a trabajar)
             try:
                 return self._post({**body, **thinking_body(srv.get("thinking"))})
-            except NoModel as e:
-                if i == len(order) - 1 or "401" in str(e):
+            except Exception as e:
+                self._live("", "", done=True)
+                if not isinstance(e, NoModel) or i == len(order) - 1 or "401" in str(e):
                     raise
         raise NoModel("no hay ningún modelo local arrancado; hazlo tú")
 
@@ -927,6 +943,7 @@ class Server:
         usage: dict = {}
         timings: dict = {}
         last = 0.0
+        pieces, t_first = 0, 0.0  # trozos recibidos (≈ tokens) para la velocidad en vivo
         for raw in lines:
             line = (raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)).strip()
             if not line.startswith("data:"):
@@ -947,25 +964,37 @@ class Server:
                     content.append(delta["content"])
                 if delta.get("reasoning_content"):
                     reasoning.append(delta["reasoning_content"])
+                if delta.get("content") or delta.get("reasoning_content"):
+                    pieces += 1
+                    t_first = t_first or time.monotonic()
                 finish = c.get("finish_reason") or finish
             if time.monotonic() - last > 0.8:
                 last = time.monotonic()
-                self._live("".join(reasoning), "".join(content))
-        self._live("".join(reasoning), "".join(content), done=True)
+                el = last - t_first if t_first else 0
+                self._live("".join(reasoning), "".join(content), tps=round(pieces / el, 1) if el > 0.5 else None,
+                           tokens=pieces)
+        final = round(timings["predicted_per_second"], 1) if timings.get("predicted_per_second") else None
+        self._live("".join(reasoning), "".join(content), done=True, tps=final,
+                   tokens=usage.get("completion_tokens") or pieces)
         return {"model": model, "usage": usage, "timings": timings,
                 "choices": [{"message": {"content": "".join(content), "reasoning_content": "".join(reasoning)},
                              "finish_reason": finish}]}
 
-    def _live(self, thinking: str, text: str, done: bool = False) -> None:
-        """Lo que el modelo local está haciendo AHORA (lo lee el orquestador cada segundo para la oficina)."""
+    def _live(self, thinking: str, text: str, done: bool = False, tps: float | None = None,
+              tokens: int | None = None) -> None:
+        """Lo que el modelo local está haciendo AHORA (lo lee el orquestador cada segundo para la oficina). Con varios
+        modelos a la vez, cada uno tiene su entrada en `servers`; arriba va el último que escribió."""
         if not self.live_path:
             return
-        data = {**self.current, "thinking": thinking[-4000:], "text": text[-3000:], "done": done, "at": time.time(),
-                "skills": self.worker().get("skills") or []}
-        tmp = self.live_path.with_suffix(".tmp")
+        sid = self.current.get("server") or self.server_id
+        data = {**self.current, "server": sid, "thinking": thinking[-4000:], "text": text[-3000:], "done": done,
+                "at": time.time(), "skills": self.worker().get("skills") or [], "tps": tps, "tokens": tokens,
+                "model": self._models.get(sid)}
+        tmp = self.live_path.with_suffix(f".{sid}.tmp")
         try:
             with self._lock:
-                tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+                self._live_by[sid] = data
+                tmp.write_text(json.dumps({**data, "servers": self._live_by}, ensure_ascii=False), encoding="utf-8")
                 os.replace(tmp, self.live_path)
         except OSError:
             pass
