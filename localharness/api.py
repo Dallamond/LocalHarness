@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from localharness.local_servers import autostart_llama, servers_status, start_on, suggest_servers  # noqa: F401
+from localharness import compare
 from localharness import (actions, analytics, catalog, context, designer, hardware, hf, library, llama, maintenance, mcp_local,
                           modelinfo, orchestrator, roles, settings, usage, workspace)
 from localharness.adapters import ADAPTERS
@@ -272,6 +273,14 @@ class DecideIn(BaseModel):
     approve: bool
 
 
+class CompareIn(BaseModel):
+    project_id: int
+    prompt: str = Field(min_length=3)
+    variants: list[str] = Field(default_factory=lambda: list(compare.VARIANTS))
+    claude_model: str = "sonnet"
+    check: str = ""  # orden de tests que se ejecuta en el worktree de cada variante (lista blanca)
+
+
 class Runner:
     """Tareas en marcha en este proceso (para cancelar y para saber qué está vivo)."""
 
@@ -280,6 +289,7 @@ class Runner:
         self.store, self.hub, self.binaries, self.worktree_root = store, hub, binaries, worktree_root
         self.active: dict[int, asyncio.Task] = {}
         self.plans: dict[int, asyncio.Task] = {}
+        self.comparisons: dict[int, asyncio.Task] = {}
         self.hier = Hierarchy(store, on_event=self.on_event, on_plan=self.publish_plan, binaries=binaries,
                               worktree_root=worktree_root)
         self.last_limit = _last_limit(store)  # último uso del plan conocido (evento rate_limit_event)
@@ -356,6 +366,26 @@ class Runner:
 
         self.active[tid] = asyncio.create_task(go())
 
+    def run_comparison(self, cid: int) -> None:
+        """Comparativa (compare.py): las variantes una detrás de otra, como tareas normales."""
+        async def wait(tid: int) -> None:
+            task = self.active.get(tid)
+            if task:
+                await asyncio.gather(task, return_exceptions=True)
+
+        def publish(c: int) -> None:
+            data = compare.get(self.store, c)
+            if data:
+                self.hub.publish("comparison", data)
+
+        async def go() -> None:
+            try:
+                await compare.run(self.store, cid, self.start, wait, publish)
+            finally:
+                self.comparisons.pop(cid, None)
+
+        self.comparisons[cid] = asyncio.create_task(go())
+
     async def cancel(self, tid: int) -> bool:
         task = self.active.get(tid)
         if not task:
@@ -373,6 +403,8 @@ class Runner:
         return True
 
     async def shutdown(self) -> None:
+        for cid in list(self.comparisons):
+            self.comparisons[cid].cancel()
         for tid in list(self.active):
             await self.cancel(tid)
         for pid in list(self.plans):
@@ -397,6 +429,8 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         store = Store(db_path)
         store.mark_interrupted()
+        store.db.execute("UPDATE comparisons SET status='interrupted' WHERE status IN ('pending', 'running')")
+        store.db.commit()
         settings.apply(store)
         # agentes a medida por tarea (designer.py); con «roles_autosync» vuelven los agentes fijos de roles/*.md
         app.state.roles_log = (roles.sync_roles(store) if settings.load(store).get("roles_autosync")
@@ -1069,6 +1103,53 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
     async def task_events(request: Request, tid: int, after: int = 0) -> list[dict]:
         task_or_404(st(request), tid)
         return [{**e, "data": json.loads(e["data"] or "{}")} for e in st(request).list_events(tid, after)]
+
+    # --- comparativa: la misma petición con y sin modelos locales, con sus números
+    @app.get("/api/compare")
+    async def compare_list(request: Request) -> dict:
+        return {"comparisons": compare.list_all(st(request)),
+                "variants": {k: v["label"] for k, v in compare.VARIANTS.items()},
+                "models": list(compare.CLAUDE_MODELS)}
+
+    @app.get("/api/compare/{cid}")
+    async def compare_get(request: Request, cid: int) -> dict:
+        c = compare.get(st(request), cid)
+        if not c:
+            raise HTTPException(404, f"No existe la comparativa #{cid}")
+        return c
+
+    @app.post("/api/compare", status_code=201)
+    async def compare_start(request: Request, body: CompareIn) -> dict:
+        """Lanza la comparativa (gasta tu plan: una tarea de Claude por variante)."""
+        store, runner = st(request), request.app.state.runner
+        if not store.get_project(body.project_id):
+            raise HTTPException(422, "Proyecto inexistente")
+        if runner.comparisons:
+            raise HTTPException(409, "Ya hay una comparativa en marcha: espera a que termine o cancélala")
+        if store.list_tasks(body.project_id, status="running"):
+            raise HTTPException(409, "Ese proyecto ya tiene una tarea en marcha (una por repo a la vez)")
+        try:
+            c = compare.create(store, body.project_id, body.prompt.strip(), body.variants, body.claude_model,
+                               body.check)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+        runner.run_comparison(c["id"])
+        return c
+
+    @app.post("/api/compare/{cid}/cancel")
+    async def compare_cancel(request: Request, cid: int) -> dict:
+        store, runner = st(request), request.app.state.runner
+        c = compare.get(store, cid)
+        if not c:
+            raise HTTPException(404, f"No existe la comparativa #{cid}")
+        job = runner.comparisons.get(cid)
+        for r in c["results"].values():  # la variante que está trabajando
+            if isinstance(r, dict) and r.get("status") == "running" and r.get("task_id"):
+                await runner.cancel(r["task_id"])
+        if job:
+            job.cancel()
+            await asyncio.gather(job, return_exceptions=True)
+        return compare.get(store, cid)
 
     @app.get("/api/analytics")
     async def get_analytics(request: Request, days: int = 30) -> dict:

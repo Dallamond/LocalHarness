@@ -25,6 +25,7 @@ const links = [
   { to: "/chat", text: "Chat", icon: "fa-comments" },
   { to: "/modelos", text: "Modelos locales", icon: "fa-microchip" },
   { to: "/analiticas", text: "Analíticas", icon: "fa-chart-column" },
+  { to: "/comparativa", text: "Comparativa", icon: "fa-scale-balanced" },
   { to: "/ajustes", text: "Ajustes", icon: "fa-sliders" },
 ];
 </script>

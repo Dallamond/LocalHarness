@@ -44,6 +44,13 @@ MIGRATIONS = [
     """
     ALTER TABLE tasks ADD COLUMN thinking TEXT;
     """,
+    # Comparativa (compare.py): la misma petición hecha de varias maneras, con sus números
+    """
+    CREATE TABLE comparisons (id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id),
+        prompt TEXT NOT NULL, claude_model TEXT NOT NULL DEFAULT 'sonnet', check_cmd TEXT, variants TEXT NOT NULL,
+        results TEXT DEFAULT '{}', status TEXT NOT NULL DEFAULT 'pending', error TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP, finished_at TEXT);
+    """,
 ]
 
 

@@ -183,10 +183,11 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
     coord = is_claude and bool(cfg.get("coordinator")) and not ro
     # modelos locales apagados que esta tarea va a usar: se arrancan solos con el último modelo de cada servidor
     if is_claude and (coord or cfg.get("delegate_local")):
-        await asyncio.to_thread(local_servers.ensure_for_task, store, None, 180, lambda t: sink(Event("warning", text=t)))
+        await asyncio.to_thread(local_servers.ensure_for_task, store, cfg.get("local_servers"), 180,
+                                lambda t: sink(Event("warning", text=t)))
     for text in pre_warn:
         sink(Event("warning", text=text))
-    if coord and not await asyncio.to_thread(any_llama_up, store):
+    if coord and not await asyncio.to_thread(any_llama_up, store, cfg.get("local_servers")):
         coord = False
         sink(Event("warning", text="Modo coordinador sin modelo local arrancado: Claude trabaja solo esta vez "
                                    "(Modelos locales → Arrancar para que encargue el trabajo)"))
@@ -194,7 +195,9 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
                        coordinator=coord) if is_claude else None
     if deleg and deleg["missing"]:
         sink(Event("warning", text=f"Servidores MCP no encontrados en el Catálogo: {', '.join(deleg['missing'])}"))
-    system = (delegate_guide(write=not ro, coordinator=coord, servers=settings.local_servers(store))
+    only = cfg.get("local_servers")  # la Comparativa limita a qué modelos locales puede encargar
+    system = (delegate_guide(write=not ro, coordinator=coord,
+                             servers=[s for s in settings.local_servers(store) if not only or s["id"] in only])
               if deleg and deleg["delegate"] else None)
     thinking = task.get("thinking") or cfg.get("thinking")
     if not thinking and agent["provider"] in ("local", "local_agent"):  # si no, el de su servidor local
@@ -309,11 +312,13 @@ def local_url(store: Store, cfg: dict) -> str:
     return settings.load(store)["local_base_url"]
 
 
-def local_endpoints(store: Store) -> list[dict]:
+def local_endpoints(store: Store, only: list[str] | None = None) -> list[dict]:
     """Los servidores locales para el MCP de delegación: id, nombre, papel, GPU, URL y clave. El primero, el que usan
-    los encargos si no hay papel que encaje (el principal)."""
+    los encargos si no hay papel que encaje (el principal). `only`: solo esos (config `local_servers` del agente)."""
     out = []
     for srv in settings.local_servers(store):
+        if only and srv["id"] not in only:
+            continue
         url = settings.server_url(srv)
         if srv["id"] == llama.PRINCIPAL:
             url = settings.load(store)["local_base_url"] or url
@@ -322,8 +327,8 @@ def local_endpoints(store: Store) -> list[dict]:
     return out
 
 
-def any_llama_up(store: Store) -> bool:
-    return any(llama_up(e["url"]) for e in local_endpoints(store))
+def any_llama_up(store: Store, only: list[str] | None = None) -> bool:
+    return any(llama_up(e["url"]) for e in local_endpoints(store, only))
 
 
 def llama_up(base_url: str, timeout: float = 2.0) -> bool:
@@ -396,7 +401,7 @@ def _mcp_setup(store: Store, root: Path, cfg: dict, write: bool, coordinator: bo
     log = d / "encargos.jsonl"
     tools = [f"mcp__{n}" for n in servers]  # regla de servidor: aprueba todas sus herramientas
     if delegate:
-        endpoints = local_endpoints(store)
+        endpoints = local_endpoints(store, cfg.get("local_servers"))
         env = {"LH_LOCAL_URL": endpoints[0]["url"], "LH_LOCAL_KEY": endpoints[0]["key"],
                # con dos GPU, dos modelos: el MCP reparte cada encargo según el papel de cada servidor
                "LH_LOCAL_SERVERS": json.dumps(endpoints, ensure_ascii=False),

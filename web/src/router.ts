@@ -8,6 +8,7 @@ import PlansView from "./views/PlansView.vue";
 import PlanView from "./views/PlanView.vue";
 import AnalyticsView from "./views/AnalyticsView.vue";
 import WorkView from "./views/WorkView.vue";
+import CompareView from "./views/CompareView.vue";
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -20,6 +21,7 @@ export const router = createRouter({
     { path: "/modelos", component: ModelsView, meta: { title: "Modelos locales" } },
     { path: "/analiticas", component: AnalyticsView, meta: { title: "Analíticas" } },
     { path: "/trabajo", component: WorkView, meta: { title: "Trabajo" } },
+    { path: "/comparativa", component: CompareView, meta: { title: "Comparativa" } },
     { path: "/tareas", redirect: "/chat" },
     { path: "/tareas/:id", component: TaskView, props: (r) => ({ id: Number(r.params.id) }), meta: { title: "Ejecución" } },
     { path: "/ajustes", component: SettingsView, meta: { title: "Ajustes" } },

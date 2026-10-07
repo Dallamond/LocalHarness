@@ -8,6 +8,26 @@ Decisión de Lucas: **se trabaja siempre en `main`**. Se integraron en `main` la
 editable), `claude/cool-dirac-vmw6s0` (análisis de Paperclip) y `claude/youthful-edison-bi67hm` (Modelos locales +
 rediseño de la oficina). Las secciones de abajo son el historial de cada una; donde digan «rama X», ya está en `main`.
 
+### Mejoras para aprovechar las dos GPU (07/10/2026, noche) — Lucas las prueba a la vuelta
+1. **Pensamiento por servidor** (`llama.servers[].thinking`: normal | apagado | profundo → `chat_template_kwargs`
+   en cada encargo). Medido con Qwen3.5-4B: apagado 0,4 s / 3 tokens frente a 8,9 s / 216 (`reasoning_budget: 0`
+   por petición NO funciona en b11379). «Usar las 2 GPU» deja el rápido apagado. Columna en Servidores locales.
+2. **Arrancar solos los modelos** (`local_servers.ensure_for_task`, ajuste `llama.autostart_on_task`, por defecto
+   sí): una tarea que delega/coordina, o un agente local, arranca los servidores apagados con su último modelo y
+   espera (máx. 3 min) con avisos en el Timeline. `local_servers.py` sale de `api.py`; `llama.POOL` = el de la API.
+3. **Plan en paralelo**: bloques de `local_execute_plan` con `after` (ids de bloques anteriores). Si alguno lo
+   lleva, los independientes van a la vez (hilos, cada uno al servidor de su tipo) y los que dependen de uno
+   fallido no se hacen; sin `after`, en orden como siempre. Prueba real: 4 bloques (3 a la vez + tests que
+   esperan a calc.py) en 7,5 s frente a ~13 s en serie; 8 tests pasan.
+4. **Comparativa** (`/comparativa`, `compare.py`, tabla `comparisons`, `/api/compare`): misma petición con «Solo
+   Claude», «Claude + 1 modelo local» (`config.local_servers = ["principal"]`) y «Claude + todos»; una tras otra
+   como tareas normales (agentes `comparativa-N-variante`, ocultos en la oficina) y se mide: tokens de Claude
+   (entrada nueva + salida; caché leída aparte), coste nominal, tiempo, encargos y tokens locales por servidor,
+   archivos ±, y la orden de tests en cada worktree. Marca la mejor celda y el % de plan ahorrado frente a solo
+   Claude. Probado con la CLI falsa; **una de verdad gasta plan** (la lanza Lucas, en el sandbox).
+- Sin hacer de la lista: ver a los dos trabajadores en directo en la oficina (hoy un `live.json` por tarea).
+- 201 pruebas.
+
 ### Dos GPU, dos modelos (07/10/2026, tarde — en el PC de Lucas: RTX 3060 12 GB + GTX 1060 6 GB)
 Objetivo de Lucas: que todo el sistema vea normal tener dos modelos locales y dos GPU, para probar el reparto de
 trabajo entre ellos y Claude.
