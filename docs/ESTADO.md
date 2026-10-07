@@ -1,6 +1,6 @@
 # Estado y traspaso — leer primero al retomar (también desde Claude Code en la web)
 
-Última actualización: 06/10/2026, mediodía (sesión 3 + delegación en Qwen + rumbo nuevo: oficina 3D y Atlas). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
+Última actualización: 07/10/2026 (resumen de estado para el chat nuevo; sesión 4: GUI de oficina + Catálogo). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
 
 ## ▶ SESIÓN 07/10/2026 — Pestaña de Modelos locales (rama `claude/youthful-edison-bi67hm`, sale de `main`)
 - **Tu equipo**: detecta GPU (nvidia-smi: VRAM total/libre), RAM, CPU e hilos (`localharness/hardware.py`). Si falla,
@@ -24,7 +24,107 @@
   calibraron con lo medido en la 3060 (Qwen2.5-Coder 7B Q8 ~32 tok/s). Qwen3.5 no está en el catálogo (no sé su
   repo exacto): añadirlo copiando una entrada o buscarlo con el buscador.
 
-## ▶ SIGUIENTE SESIÓN — EMPEZAR AQUÍ (06/10/2026, mediodía)
+## ▶ PUNTO DE PARTIDA PARA EL CHAT NUEVO (07/10/2026)
+
+Rama con todo lo último: `claude/gifted-carson-20grn9` (NO está aún en `main`). Instalar en otro PC: `docs/INSTALAR.md`.
+Objetivo del chat nuevo (Lucas): que Claude y el modelo local trabajen JUNTOS y repartirse bien las tareas.
+
+### Funciona (probado)
+- Núcleo: proyectos (repos git), agentes, tareas en worktree aislado, diff, aprobar / descartar / integrar en tu rama
+  (merge local, nunca push), conflictos detectados antes de integrar, limpieza de worktrees viejos. CLI y API.
+- Agentes Claude con tu suscripción (`claude -p` aislado, topes de turnos y $, uso de 5 h / 7 días): probado real.
+- Chat: conversar con un agente, contestarle, seguir en la misma rama; skills por conversación.
+- Modelos locales: lista tus GGUF, arrancar/parar llama-server desde la GUI con barra de carga, tok/s en vivo,
+  configuración por modelo; agentes locales que RESPONDEN (con el repo metido en el prompt).
+- Delegación Claude → local (`local_ask`, `local_write_file` por MCP): probado real con Haiku + Qwen2.5-Coder-7B
+  (0,048 $): Claude delegó solo, Qwen explicó archivos y escribió un test.
+- Jerarquía (planes): Director → subtareas → jefe técnico → N0/N1/N2 → bandeja. Probado real con Haiku. Funciona,
+  pero hoy aporta poco (ver abajo).
+- GUI nueva: Oficina 3D (los agentes entran cuando trabajan), Misión, Bandeja, Recursos, Inspector, Timeline /
+  Terminal / Diff, Catálogo (asignar skills, MCP, internet, modelo local; importar). Probada en Chromium con CLI falsa.
+
+### No funciona / limitaciones conocidas
+1. **Los agentes locales no son agentes**: no leen ni escriben archivos, no ejecutan nada, no navegan. Solo
+   contestan en un chat (`can_write=False`). Es el problema principal.
+2. **Claude delega poco**: aun con la casilla, suele hacerlo él (la guía se endureció en la sesión 4, sin probar real).
+   Y `local_write_file` solo escribe un archivo entero: no hay bucle «el local trabaja → Claude revisa → corrige».
+3. Por lo anterior **Planes y Pendiente de ti no tienen sentido aún** (fuera del menú; rutas vivas).
+4. Una tarea por repo a la vez; aprobaciones solo en las fronteras de la tarea (no acción a acción).
+5. Codex aparcado (no instalado). Rama de integración por proyecto (M6) pendiente.
+
+### Hecho pero SIN verificar con la CLI real (gasta plan: pedir permiso a Lucas)
+- «Puede navegar por internet» (WebSearch/WebFetch) y servidores MCP del Catálogo asignados a un agente Claude.
+- La guía de delegación más firme (¿delega más ahora?).
+
+### Propuesta para empezar el chat nuevo (decidir con Lucas)
+1. Bucle de agente propio para los locales: herramientas confinadas al worktree (leer, listar, buscar, escribir,
+   ejecutar comandos de una lista blanca como los tests) con tool calling de llama-server (Qwen3.5-9B lo hace nativo;
+   los Qwen2.5-Coder escriben el JSON como texto → parsearlo). Alternativa: adaptar una CLI de agente existente
+   (OpenCode, Aider, Qwen Code…) apuntando a llama-server.
+2. Claude como jefe: parte el trabajo, lo encarga a ese agente local (herramienta MCP «local_agent» con la tarea
+   entera, no un archivo), revisa diff + tests y devuelve notas hasta que esté bien; topes de vueltas/tiempo.
+3. Medir con el sandbox: misma tarea solo-Claude vs Claude+local (coste, tiempo, calidad).
+4. Con eso, recuperar Planes/Bandeja como el bucle trabajador → jefe → tú.
+
+## Sesión 4 (06/10/2026, tarde)
+
+### Feedback de Lucas tras probarlo todo (06/10/2026, tarde)
+- «Sigue siendo imposible que Claude use el modelo local para resolverlo en vez de contestar él.» Los modelos locales
+  responden bien pero **no tienen capacidades agénticas**: no modifican archivos de las carpetas ni navegan por internet.
+- **Planes** y **Pendiente de ti** no tienen sentido de momento (no hay bucle de agentes, ni local ni de Claude).
+- Orden de Lucas: primero **todo el aspecto nuevo + los arreglos fáciles** (hecho, abajo); después, otra pasada a
+  **cómo funciona y cómo se reparten las tareas**: «Claude debe poder funcionar junto al modelo local para que todo
+  tenga sentido». Ese es el trabajo de la sesión siguiente (ver «Próximo: el reparto» abajo).
+
+### Sesión 4 — hecho (85 pruebas en verde, GUI compilada y probada en Chromium con la CLI falsa)
+- **Oficina** (`/oficina`, sustituye al Inicio; `/` e `/inicio` redirigen): `OfficeView.vue` + `office/office3d.ts`
+  (three.js por npm, se carga aparte) + `office/OfficeDock.vue`. Sin gamificación (sin XP, logros, sonidos ni cámara cine).
+  - Puestos solo para quien tiene que ver con el trabajo (feedback de Lucas): trabajando, esperando tu decisión, que
+    trabajó en las últimas 2 h (`PRESENCE_MS`) o que llamas tú (abajo «Fuera de la oficina» o Catálogo → «En la
+    oficina»). Entran creciendo y conservan su sitio; el director, al centro. El rack del modelo local solo está con
+    llama-server encendido. Máx. 9 puestos; el tuyo al fondo con la baliza que parpadea si algo espera
+    tu decisión, el rack del **modelo local** (LED = memoria de cada GPU, lámpara = llama-server listo/cargando) y dos
+    pizarras: la misión y los worktrees. Accesorio del muñeco por rol (director antena, jefe casco verde, trabajador
+    casco de obra, consultas gafas); color por rol. Paquetes volando: tú → agente al arrancar, agente → tú al terminar,
+    agente → rack en cada encargo al modelo local. Clic en un puesto = inspector + cámara.
+  - Izquierda: **Misión** (selector de tareas sueltas y planes, «Seguir la actual», «＋ Nueva» con proyecto + agente +
+    petición → Ejecutar; pasos reales: encargo, trabajo, encargos al modelo local, revisar, integrar; para planes, las
+    subtareas) y **Bandeja de aprobaciones** (= `/api/inbox` con los mismos botones que tenía el Inicio + «Ver»).
+  - Derecha: **Recursos** (`GET /api/resources`: GPU por `nvidia-smi`, worktrees abiertos; modelo local, ventanas 5 h
+    y 7 días de Claude, tok/s con gráfica, coste 7 días) e **Inspector** (modelo real, qué hace, rama, tareas y coste,
+    skills, herramientas, «Asignar» en el catálogo, «Instrucción directa»: sigue su conversación abierta o crea tarea).
+  - Abajo: **Timeline / Terminal / Diff** con los eventos reales de la misión y `/api/tasks/{id}/review`.
+- **Catálogo** (botón en la barra superior, `CatalogOverlay.vue`): Agentes (asignar skills, `local`, internet y
+  servidores MCP con casillas que guardan al momento; borrar; «En la oficina»), Skills (`/api/skills`; las importadas
+  se borran) y Servidores MCP (`local` de serie + los importados). **Importar**: pegar/soltar JSON `mcpServers`,
+  `SKILL.md` o agentes (.md con `model`/`role`, o JSON con `agents`).
+- Backend del catálogo:
+  - Ajuste `mcp_servers` (se guarda entero, validado: stdio `command/args/env` o remoto `url`; «local» reservado;
+    «Restablecer» no lo borra). Agente Claude con `config.mcps` → `orchestrator._mcp_setup` escribe un `--mcp-config`
+    con esos servidores (+ `local` si delega) y los aprueba con la regla de servidor `mcp__<nombre>`.
+  - `config.web` («Puede navegar por internet» en Ajustes y Catálogo) → añade `WebSearch` y `WebFetch` a `--tools`.
+    ⚠ Sin verificar con la CLI real (gasta plan): que `WebSearch` funcione con la suscripción en `-p`.
+  - Skills importadas en `data/skills/<nombre>/SKILL.md` (fuera de git): `POST /api/skills`, `DELETE /api/skills/{n}`
+    (solo importadas; las de serie no se pisan).
+- Estética nueva en todas las páginas: paleta del prototipo (piedra cálida, índigo), Plus Jakarta Sans, Font Awesome
+  (npm), barra superior en vez de lateral, claro/oscuro. Menú: Oficina · Chat · Modelos locales · Ajustes.
+  **Planes y Pendiente de ti fuera del menú** (las rutas siguen para los enlaces de planes del chat).
+- Arreglos fáciles: `pip install -e .` fallaba (varios paquetes en la raíz: ahora `packages.find` solo `localharness*`);
+  abrir `/chat/<id>` directamente (o desde la bandeja) rompía la página (`review` usada antes de declararse); guía de
+  delegación más firme («OBLIGATORIA cuando encaje», empezar siempre por un encargo al modelo local salvo cambios de
+  1–2 líneas, no leer archivos tú para entenderlos).
+
+### Próximo: el reparto Claude ↔ modelo local (decidir con Lucas antes de tocar)
+El problema de fondo: un agente local solo «piensa en un chat» y Claude, aunque tenga `local_ask`/`local_write_file`,
+tiende a hacerlo todo él. Ideas a llevar a la conversación (de la tarea 8 de abajo):
+1. **Bucle de agente propio para los locales** con *tool calling* de llama-server (solo Qwen3.5-9B devolvió
+   `tool_calls` nativos; para los Qwen2.5-Coder, parsear el JSON del texto): leer/listar/buscar/escribir en su
+   worktree y ejecutar comandos de una lista blanca (tests). O reutilizar una CLI de agente con endpoint OpenAI local.
+2. **Claude como jefe, no como trabajador**: que Claude parta el trabajo y lo encargue a ese agente local autónomo
+   (no a `local_write_file` de un solo archivo), revise el diff y los tests, y devuelva notas hasta que esté bien.
+3. Con eso, Planes y la bandeja vuelven a tener sentido (el bucle trabajador → jefe técnico → tú).
+
+## Sesión anterior (06/10/2026, mediodía)
 
 ### Decisiones de Lucas de hoy
 - **GUI final = su prototipo** `docs/prototipos/localharness-gui-prototipo-v2_1.html` (ábrelo en el navegador): oficina

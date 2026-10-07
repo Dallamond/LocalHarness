@@ -3,6 +3,7 @@
   display: grid;
   gap: var(--gap);
   max-width: 1180px;
+  margin: 0 auto;
 }
 .page-head {
   display: flex;
@@ -28,10 +29,10 @@
 .field select,
 .field textarea,
 .input {
-  background: var(--panel);
-  border: 1px solid var(--line-strong);
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  padding: 8px 11px;
+  padding: 7px 10px;
   color: var(--ink);
   font: inherit;
   min-width: 0;

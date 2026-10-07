@@ -3,12 +3,12 @@
 Banco local de agentes: registras repos, creas tareas, un agente (Claude / Codex / modelo local)
 trabaja en un git worktree aislado y tú revisas el diff antes de integrar. Nunca hace push solo.
 
-Estado: M0–M3 y M5 hechos, M4 y M6 en curso; Claude puede delegar en el modelo local (MCP propio). Próximo: GUI de oficina 3D según `docs/prototipos/` y el agente Atlas. **Al retomar, leer `docs/ESTADO.md` (sección «SIGUIENTE SESIÓN»).** Ver `docs/HOJA-DE-RUTA.md` y `docs/VIABILIDAD.md`.
+Estado: M0–M3 y M5 hechos, M4 y M6 en curso; Claude puede delegar en el modelo local (MCP propio). GUI nueva: la **Oficina** 3D del prototipo con datos reales y el **Catálogo** (agentes, skills, servidores MCP). Próximo: repensar el reparto Claude ↔ modelo local (los locales aún no tienen herramientas). Instalar en otro PC: `docs/INSTALAR.md`. **Al retomar, leer `docs/ESTADO.md` (sección «SIGUIENTE SESIÓN»).** Ver `docs/HOJA-DE-RUTA.md` y `docs/VIABILIDAD.md`.
 En este PC `python` es el alias de la Store: usar `py -3.12`.
 
 ```
 py -3.12 -m venv .venv && .venv/Scripts/python -m pip install -e .[server]   # una vez
-.venv/Scripts/python -m unittest discover -s tests -t .   # 79 pruebas con CLIs falsas (nunca llaman a la real)
+.venv/Scripts/python -m unittest discover -s tests -t .   # 85 pruebas con CLIs falsas (nunca llaman a la real)
 py -3.12 -m localharness doctor                   # git, CLIs, login de suscripción
 py -3.12 -m localharness project add demo D:/ruta/al/repo
 py -3.12 -m localharness agent add sonnet-w --provider claude --model sonnet --max-turns 10 --budget 1
@@ -25,7 +25,7 @@ cd web && npm install && npm run build && cd ..   # una vez, y tras cambiar la w
 Desarrollo de la web con recarga: `cd web && npm run dev` (http://127.0.0.1:5174, /api va al 8095).
 
 - `localharness/api.py`       FastAPI + SSE: proyectos, agentes, tareas, eventos, diff, aprobar/rechazar/integrar/cancelar
-- `web/`                      Vue 3 + Vite (Inicio, Pendiente de ti, Planes, Tareas, Ajustes)
+- `web/`                      Vue 3 + Vite + three.js (Oficina, Chat, Modelos locales, Ajustes; Catálogo en la barra)
 - `localharness/settings.py`  ajustes editables desde la GUI (tabla `settings`)
 - `localharness/cli.py`       órdenes de M1 (doctor, project, agent, run, tasks, show, merge, discard)
 - `localharness/adapters/`   un adaptador por CLI: construye el comando y traduce su JSONL a eventos comunes

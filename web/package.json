@@ -9,10 +9,13 @@
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
-    "@fontsource-variable/figtree": "^5.3.0",
+    "@fontsource-variable/plus-jakarta-sans": "^5.3.0",
     "@fontsource/jetbrains-mono": "^5.3.0",
+    "@fortawesome/fontawesome-free": "^7.3.1",
+    "@types/three": "^0.170.0",
     "dompurify": "^3.4.16",
     "marked": "^18.1.0",
+    "three": "^0.170.0",
     "vue": "^3.5.43",
     "vue-router": "^5.3.1"
   },

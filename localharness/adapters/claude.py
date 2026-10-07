@@ -22,6 +22,7 @@ from localharness.events import Event
 
 READ_TOOLS = ["Read", "Glob", "Grep"]
 WRITE_TOOLS = ["Read", "Glob", "Grep", "Edit", "Write"]  # Bash/PowerShell solo si se conceden explícitamente
+WEB_TOOLS = ("WebFetch", "WebSearch")  # con config.web el agente puede buscar y leer páginas web
 SUBAGENT_TOOL = "Agent"  # antes «Task»; con config.subagents el agente puede lanzar subagentes (gasta más plan)
 
 

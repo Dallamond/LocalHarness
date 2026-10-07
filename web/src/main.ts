@@ -1,5 +1,6 @@
 import { createApp } from "vue";
-import "@fontsource-variable/figtree";
+import "@fontsource-variable/plus-jakarta-sans";
+import "@fortawesome/fontawesome-free/css/all.min.css";
 import "@fontsource/jetbrains-mono/400.css";
 import "./styles/tokens.css";
 import "./styles/base.css";
