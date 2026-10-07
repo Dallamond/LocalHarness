@@ -433,6 +433,15 @@ const modelFor = (name: string | null) => info.value?.models.find((m) => m.name 
         </select>
         <button class="btn btn--small" @click="load(); loadRatings()">Volver a buscar</button>
       </template>
+      <div v-if="info && !info.server" class="warnline block-warn">
+        <span><strong>No puedo arrancar modelos:</strong> no sé dónde está <code>llama-server.exe</code>.
+          Elige el archivo (o la carpeta de llama.cpp que descomprimiste).</span>
+        <button class="btn btn--primary btn--small" @click="pickServer">Elegir llama-server…</button>
+      </div>
+      <div v-if="status?.state === 'external'" class="warnline block-warn">
+        <span>Hay un llama-server <strong>lanzado fuera de la app</strong> en el puerto {{ status.port }}: los agentes ya lo usan,
+          pero para arrancar otro modelo desde aquí ciérralo antes (su ventana o Ctrl+C) o cambia el puerto abajo.</span>
+      </div>
       <p v-if="info && !info.dirs.length" class="empty">
         No hay ninguna carpeta de modelos. <button class="btn btn--primary btn--small" @click="pickDir">Elegir carpeta…</button>
       </p>
@@ -994,6 +1003,10 @@ const modelFor = (name: string | null) => info.value?.models.find((m) => m.name 
   border-radius: var(--radius-sm);
   background: var(--warn-weak);
   color: var(--warn);
+}
+.block-warn {
+  margin-bottom: 12px;
+  justify-content: space-between;
 }
 .log {
   max-height: 240px;
