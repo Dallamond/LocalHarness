@@ -15,7 +15,9 @@ REAL = Path(__file__).parent / "fixtures_reales"
 def make_repo(tmp: str) -> Path:
     repo = Path(tmp) / "repo"
     repo.mkdir()
-    for a in (["init", "-q", "-b", "main"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
+    # autocrlf fijo: si una prueba quita la config de sistema (en Windows suele ser true), el repo no sale «sucio»
+    for a in (["init", "-q", "-b", "main"], ["config", "user.email", "t@t"], ["config", "user.name", "t"],
+              ["config", "core.autocrlf", "false"]):
         subprocess.run(["git", *a], cwd=repo, check=True)
     (repo / "README.md").write_text("hola\n")
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True)

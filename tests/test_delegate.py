@@ -202,7 +202,7 @@ class McpServerTests(unittest.TestCase):
                 log = read_log(Path(tmp) / "log.jsonl")[0]
                 self.assertEqual((log["thinking"], log["completion_tokens"], log["tps"], log["model"]),
                                  ("Pienso en la suma.", 7, 33.3, "Qwen3-8B"))
-                state = json.loads(live.read_text())
+                state = json.loads(live.read_text(encoding="utf-8"))
                 self.assertEqual((state["tool"], state["task"], state["thinking"], state["text"], state["done"]),
                                  ("local_ask", "¿qué falla?", "Pienso en la suma.", "Hay que sumar.", True))
         finally:

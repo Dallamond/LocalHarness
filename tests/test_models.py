@@ -220,7 +220,9 @@ class ModelsApiTests(unittest.TestCase):
                 self.assertEqual(bad.status_code, 422)
                 self.assertEqual(c.post("/api/llama/download", json={"repo": "a/b", "files": ["../x.gguf"]}).status_code,
                                  422)
-                self.assertEqual(c.post("/api/llama/probe").status_code, 409)  # nada arrancado
+                # nada arrancado (se mira un puerto libre: en el PC de Lucas suele haber un llama-server en el 8080)
+                with unittest.mock.patch.object(llama, "health", return_value="off"):
+                    self.assertEqual(c.post("/api/llama/probe").status_code, 409)
                 # carpeta elegida al descargar: relativa no; una nueva se añade a las carpetas de modelos
                 self.assertEqual(c.post("/api/llama/download", json={"repo": "a/b", "files": ["x.gguf"],
                                                                      "dest": "relativa"}).status_code, 422)
