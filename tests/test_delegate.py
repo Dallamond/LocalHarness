@@ -353,7 +353,9 @@ class BossModeTests(unittest.IsolatedAsyncioTestCase):
     """Modo jefe: Claude sin Edit/Write (solo puede cambiar archivos delegando) y la guía en el prompt de sistema."""
 
     async def run_task(self, cfg: dict, prompt: str, llama_url: str | None):
-        tmp = self.enterContext(tempfile.TemporaryDirectory())
+        d = tempfile.TemporaryDirectory()  # enterContext es de 3.11: se soporta 3.10
+        self.addCleanup(d.cleanup)
+        tmp = d.name
         repo = make_repo(tmp)
         store = Store()
         if llama_url:

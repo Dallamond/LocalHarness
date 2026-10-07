@@ -157,7 +157,7 @@ def github_skills(url: str) -> dict:
         texts = list(pool.map(lambda p: _raw(o, r, ref, p), paths))
     installed = load_skills()
     found = []
-    for p, text in zip(paths, texts):
+    for p, text in zip(paths, texts, strict=True):
         meta, body = _front(text)
         if not meta.get("name"):
             continue  # sin frontmatter con name no se puede importar

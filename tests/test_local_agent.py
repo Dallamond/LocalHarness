@@ -176,7 +176,6 @@ class LocalAgentTests(unittest.IsolatedAsyncioTestCase):
 @unittest.skipIf(httpx is None, "falta httpx (pip install -e .[server])")
 class LocalAgentInTaskTests(unittest.IsolatedAsyncioTestCase):
     async def test_task_with_local_agent_ends_in_review_with_its_diff(self):
-        from localharness import llama as llama_mod
         from localharness.adapters import local_agent
         from localharness.orchestrator import execute_task
         script = [{"content": "", "tool_calls": [tool_call("escribir_archivo", {"ruta": "hola.txt", "contenido": "hola"})]},

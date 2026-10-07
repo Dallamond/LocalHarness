@@ -127,7 +127,6 @@ class OfficeTests(unittest.TestCase):
 
     def test_director_skips_agents_out_of_service(self):
         from localharness.hierarchy import Hierarchy
-        from localharness.policy import Policy
         from localharness.store import Store
         s = Store(":memory:")
         a = s.add_agent("w1", "claude", config={})

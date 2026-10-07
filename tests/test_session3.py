@@ -1,6 +1,6 @@
 """Sesión 3: subagentes, progreso de carga de llama-server, tokens/s, configuración por modelo y modelo real."""
 
-import json, tempfile, time, unittest
+import json, tempfile, unittest
 from pathlib import Path
 
 from localharness import llama, settings

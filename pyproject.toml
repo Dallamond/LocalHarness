@@ -22,3 +22,16 @@ include = ["localharness*"]
 
 [tool.setuptools.package-data]
 localharness = ["*.json"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = ["web", "data", "_referencias"]
+
+[tool.ruff.lint]
+# errores reales (F), sintaxis (E9), imports y bugs típicos (B); el estilo compacto de las pruebas se respeta
+select = ["E4", "E7", "E9", "F", "B", "UP"]
+ignore = ["E701", "E702", "E731", "E741", "B008", "UP015"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["E401", "B011"]

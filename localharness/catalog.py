@@ -11,7 +11,6 @@ Todo es aproximado (±10 %): llama.cpp reserva además búferes que dependen de 
 import json
 import re
 from pathlib import Path
-from typing import Any
 
 CATALOG_PATH = Path(__file__).with_name("model_catalog.json")
 

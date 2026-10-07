@@ -1,4 +1,4 @@
-import asyncio, subprocess, tempfile, unittest
+import subprocess, tempfile, unittest
 from pathlib import Path
 
 from localharness import workspace

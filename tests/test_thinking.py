@@ -1,6 +1,6 @@
 """Pensamiento activable (DISENO-OFICINA §5): apagado / normal / profundo por agente, rol, paso y conversación."""
 
-import json, tempfile, unittest
+import tempfile, unittest
 from pathlib import Path
 
 from localharness import orchestrator

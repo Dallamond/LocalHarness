@@ -133,7 +133,8 @@ def thinking_env(level: str | None) -> dict[str, str]:
 def login_method(binary: str = "claude") -> str | None:
     """`claude auth status` -> authMethod ('claude.ai' = suscripción; 'api_key' = pago por tokens).
     Solo se lee ese campo: el resto (email, organización) no se guarda."""
-    import json, subprocess
+    import json
+    import subprocess
     from localharness.binaries import resolve
     try:
         p = subprocess.run([*resolve(binary), "auth", "status"], capture_output=True, text=True, timeout=30)

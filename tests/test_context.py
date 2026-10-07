@@ -1,4 +1,4 @@
-import asyncio, json, os, tempfile, textwrap, unittest
+import json, tempfile, textwrap, unittest
 from pathlib import Path
 
 from localharness.context import build_prompt, load_memory, load_skills, parse_skill
