@@ -31,7 +31,7 @@ En este PC `python` es el alias de la Store: usar `py -3.12`.
 
 ```
 py -3.12 -m venv .venv && .venv/Scripts/python -m pip install -e .[server]   # una vez
-.venv/Scripts/python -m unittest discover -s tests -t .   # 136 pruebas con CLIs falsas (nunca llaman a la real)
+.venv/Scripts/python -m unittest discover -s tests -t .   # 152 pruebas con CLIs falsas (nunca llaman a la real)
 py -3.12 -m localharness doctor                   # git, CLIs, login de suscripción
 py -3.12 -m localharness project add demo D:/ruta/al/repo
 py -3.12 -m localharness agent add sonnet-w --provider claude --model sonnet --max-turns 10 --budget 1
@@ -67,7 +67,8 @@ Claude; sin llama-server los agentes locales no responden (todo lo demás funcio
 
 **Por la GUI** (http://127.0.0.1:8095):
 - **Oficina** (inicio): oficina 3D con un puesto por agente, misión, bandeja de aprobaciones, recursos, inspector,
-  timeline/terminal/diff. **Catálogo** (barra): agentes, skills y servidores MCP (importar JSON `mcpServers` y `SKILL.md`).
+  timeline/terminal/diff. **Catálogo** (barra): agentes (asistente para crear y editar), skills (biblioteca, instaladas,
+  desde GitHub) y servidores MCP (preparados para añadir con un clic), con categorías, vista previa y asignar a agentes.
 - **Chat**: conversaciones con un agente o con el equipo (Director); vincular carpeta; responder al agente.
 - **Pendiente de ti**: decisiones N2. **Planes**: nueva petición al Director e historial; detalle de cada plan.
 - **Modelos locales**: tu hardware, nota de cada GGUF para LocalHarness y prueba real, recomendados y descargas de
@@ -87,6 +88,7 @@ Claude; sin llama-server los agentes locales no responden (todo lo demás funcio
   - `local.py`   un mensaje a llama-server con el contexto del repo en el prompt; no escribe
   - `local_agent.py` bucle de agente con herramientas confinadas al worktree (leer, buscar, escribir, ejecutar…)
 - `localharness/mcp_local.py`  servidor MCP stdio propio: Claude encarga a Qwen `local_ask`, `local_write_file`, `local_research`
+- `localharness/library.py`    biblioteca del Catálogo (`biblioteca/`: skills, MCP, plantillas de agente) y skills de GitHub
 - `localharness/context.py`    M5: skills (`SKILL.md`) y memoria del proyecto inyectadas en el prompt
 - `localharness/llama.py`      lanzar llama-server (con `--api-key`), listar GGUF, progreso de carga
 - `localharness/workspace.py`  rama + worktree por tarea o plan, diff, checkpoint, merge con detección de conflictos

@@ -1,6 +1,6 @@
 # Estado y traspaso — leer primero al retomar (también desde Claude Code en la web)
 
-Última actualización: 07/10/2026, tarde (ramas unificadas en `main`). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
+Última actualización: 07/10/2026, noche (Catálogo con biblioteca y asistente de agentes). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
 
 ## ▶ EMPEZAR AQUÍ — TODO ESTÁ EN `main` (07/10/2026)
 Decisión de Lucas: **se trabaja siempre en `main`**. Se integraron en `main` las ramas `claude/gifted-carson-20grn9`
@@ -8,7 +8,30 @@ Decisión de Lucas: **se trabaja siempre en `main`**. Se integraron en `main` la
 editable), `claude/cool-dirac-vmw6s0` (análisis de Paperclip) y `claude/youthful-edison-bi67hm` (Modelos locales +
 rediseño de la oficina). Las secciones de abajo son el historial de cada una; donde digan «rama X», ya está en `main`.
 
-### Lo último (07/10/2026, tarde)
+### Lo último (07/10/2026, noche) — Catálogo ampliado y asistente de agentes
+- **Biblioteca** (`biblioteca/`, `localharness/library.py`): 27 skills en español con categoría (`biblioteca/skills`),
+  19 servidores MCP preparados (`biblioteca/mcp.json`: fetch, DuckDuckGo, Brave, Context7, DeepWiki, Microsoft Learn,
+  Hugging Face, GitHub, Git, Playwright, Chrome DevTools, sistema de archivos, SQLite, MarkItDown, memoria,
+  pensamiento secuencial, Serena, hora, everything) y 11 plantillas de agente (`biblioteca/agentes.json`).
+  Instalar una skill = copiarla a `data/skills`; un MCP con `params` (token, carpeta) pide los datos al añadirlo.
+- **Skills de GitHub**: `POST /api/library/github {url}` acepta `usuario/repo`, `…/tree/rama/carpeta`, un `blob` de un
+  SKILL.md o `raw.githubusercontent`. Para repos/carpetas usa la API de GitHub (60 consultas/h sin token; con
+  `GITHUB_TOKEN` en el entorno, más). Solo se importa el SKILL.md (con `source:` en el frontmatter). Probado real
+  con un archivo de `anthropics/skills`; el listado de un repo entero no (la API estaba bloqueada en el contenedor).
+- **Catálogo** (`CatalogOverlay.vue`): Skills → Biblioteca / Instaladas / Desde GitHub; MCP → Preparados / Añadidos;
+  filtro por categoría; panel de vista previa (SKILL.md renderizado, configuración con claves tapadas) desde el que se
+  instala y se asigna a agentes. Avisa si falta `npx`/`uvx` en el PC.
+- **Asistente de agentes** (`AgentWizard.vue`, `ui.wizard`/`openWizard()`): plantilla por rol → cerebro (Claude
+  Haiku/Sonnet/Opus, o modelo local «con herramientas»/«solo responde» con tus GGUF ordenados por la nota de
+  `catalog.rate_local` para el rol de la plantilla y el mejor marcado «recomendado») → skills y MCP (lo que venga de la
+  biblioteca se instala al guardar; los MCP con clave hay que configurarlos en el Catálogo) → nombre, descripción,
+  instrucciones y límites. Vista previa en vivo con avisos. Al crear lleva al agente a la oficina. **Editar** con el
+  mismo asistente desde el Catálogo, el inspector de la oficina y Ajustes (el formulario viejo queda como «Avanzado»).
+  API: `instructions` y `template` al crear; el PATCH acepta `provider`, `name` e `instructions`.
+- Windows: los MCP con `npx` se lanzan como `cmd /c npx …` (`orchestrator.win_shim`), que es lo que pide la CLI de Claude.
+- ⚠ Sin probar con la CLI real: que los MCP preparados arranquen bien en el PC de Lucas (necesitan Node/uv).
+
+### Antes (07/10/2026, tarde)
 - **Oficina rediseñada** (`web/src/office/office3d.ts`): muñecos androide (color del agente, accesorio por rol: corona
   director, casco trabajador, cascos con micro jefe técnico, gafas consultas, corbata tú), puestos de madera con
   cajonera, monitor con código animado, flexo y silla con ruedas, sala tipo Habbo (tarima, papel pintado, estanterías,
@@ -32,9 +55,8 @@ rediseño de la oficina). Las secciones de abajo son el historial de cada una; d
   y «Buscar actualizaciones» en Ajustes (versiones publicadas en GitHub Releases por una Action al etiquetar).
 
 ### Siguiente (lista de Lucas)
-1. **Catálogo con muchas más skills y funcionalidades** (importar desde repos de skills, plantillas, buscar).
-2. **Creador de agentes mejor** (en Ajustes es pobre y lento): asistente rápido con plantillas por rol, elegir skills
-   y servidores MCP al crear, proveedor/modelo local recomendado (usar `catalog.rate_local`), vista previa.
+1. ✅ Catálogo con muchas más skills y MCP (biblioteca, GitHub, categorías, vista previa). Hecho el 07/10 noche.
+2. ✅ Asistente de agentes (plantillas, modelo local recomendado, skills/MCP, vista previa, editar). Hecho el 07/10 noche.
 3. Probar la oficina nueva y los modelos locales en el PC del instituto (Lucas lo está haciendo) y ajustar.
 4. Pendiente de antes: Atlas «Analizar proyecto», Claude como jefe del agente local autónomo (ver secciones de abajo).
 
