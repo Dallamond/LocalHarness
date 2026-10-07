@@ -1,2 +1,7 @@
-*.bat text eol=crlf
+* text=auto eol=lf
+*.png binary
+*.woff binary
+*.woff2 binary
 *.ico binary
+# los .bat de Windows necesitan CRLF (con LF cmd.exe se confunde con las etiquetas y los bloques)
+*.bat text eol=crlf
