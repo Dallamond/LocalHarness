@@ -69,6 +69,8 @@ class ClaudeAdapter(Adapter):
             cmd += ["--resume", spec.session_id]
         if spec.thinking in EFFORT:  # pensamiento: «normal» no añade nada (lo de siempre)
             cmd += ["--effort", EFFORT[spec.thinking]]
+        if spec.system_append:  # reglas de trabajo (p. ej. cómo delegar): pesan más que si van en la tarea
+            cmd += ["--append-system-prompt", spec.system_append]
         if spec.json_schema:  # la CLI añade su herramienta StructuredOutput (gasta 1 turno)
             cmd += ["--json-schema", json.dumps(spec.json_schema, ensure_ascii=False, separators=(",", ":"))]
         tools = [*(spec.allowed_tools or (READ_TOOLS if spec.read_only else WRITE_TOOLS)), *spec.extra_tools]

@@ -376,7 +376,7 @@ function tools(a: Agent): { text: string; cls: string; icon: string }[] {
   }
   if (a.provider !== "claude") return [{ text: "sin herramientas (solo responde)", cls: "", icon: "fa-comment" }];
   out.push({ text: c.read_only ? "solo lectura" : "lee y edita", cls: "", icon: c.read_only ? "fa-eye" : "fa-pen" });
-  if (c.delegate_local) out.push({ text: "local", cls: live.local.state === "ready" ? "pill--ok" : "", icon: "fa-plug" });
+  if (c.delegate_local || c.coordinator) out.push({ text: c.coordinator ? "jefe del local" : "delega en local", cls: live.local.state === "ready" ? "pill--ok" : "", icon: c.coordinator ? "fa-user-tie" : "fa-plug" });
   for (const m of c.mcps ?? []) out.push({ text: m, cls: "pill--active", icon: "fa-plug" });
   if (c.web) out.push({ text: "internet", cls: "pill--active", icon: "fa-globe" });
   if (c.subagents) out.push({ text: "subagentes", cls: "", icon: "fa-sitemap" });

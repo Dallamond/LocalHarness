@@ -43,10 +43,11 @@ class McpServerTests(unittest.TestCase):
             self.assertEqual(init["result"]["protocolVersion"], "2025-03-26")  # se adapta al cliente
             self.assertIsNone(s.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}))
             names = [t["name"] for t in s.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]]
-            self.assertEqual(names, ["local_ask", "local_write_file", "local_execute_plan", "local_research"])
+            self.assertEqual(names, ["local_ask", "local_write_file", "local_execute_plan", "local_agent", "run_checks",
+                                     "local_research"])
             ro = server(tmp, write=False).handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
             # Director / jefe: pensar e investigar, nunca escribir
-            self.assertEqual([t["name"] for t in ro["result"]["tools"]], ["local_ask", "local_research"])
+            self.assertEqual([t["name"] for t in ro["result"]["tools"]], ["local_ask", "run_checks", "local_research"])
             self.assertIn("error", s.handle({"jsonrpc": "2.0", "id": 3, "method": "otra/cosa"}))
 
     def test_ask_reads_files_itself(self):
@@ -289,18 +290,109 @@ class EndToEndTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("delegado.txt", res["diff"])  # sin la casilla, Claude no tiene la herramienta
 
 
+
+
+def tool_call(name: str, args: dict, i: int = 0) -> dict:
+    return {"choices": [{"message": {"content": "", "tool_calls": [
+        {"id": f"c{i}", "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}]},
+        "finish_reason": "tool_calls"}], "usage": {"prompt_tokens": 50, "completion_tokens": 10}}
+
+
+class LocalAgentToolTests(unittest.TestCase):
+    """`local_agent`: Claude encarga una tarea entera al agente local con herramientas, en el mismo worktree."""
+
+    def test_agent_does_the_work_and_reports_changed_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = make_repo(tmp)
+            script = [tool_call("leer_archivo", {"ruta": "README.md"}, 0),
+                      tool_call("escribir_archivo", {"ruta": "suma.py", "contenido": "def suma(a, b):\n    return a + b\n"}, 1),
+                      tool_call("terminar", {"resumen": "Creada suma()", "comprobacion": "leído"}, 2)]
+            bodies = []
+
+            def llm(body):
+                bodies.append(body)
+                return script[len(bodies) - 1]
+            s = Server({"LH_ROOT": str(repo), "LH_LOG": str(Path(tmp) / "log.jsonl"), "LH_WRITE": "1"}, transport=llm)
+            r = call(s, "local_agent", {"task": "crea suma.py", "files": ["README.md"]})["result"]
+            text = r["content"][0]["text"]
+            self.assertFalse(r.get("isError"), text)
+            self.assertIn("Creada suma()", text)
+            self.assertIn("Archivos que cambió: suma.py", text)
+            self.assertTrue((repo / "suma.py").is_file())
+            self.assertIn("Empieza leyendo: README.md", bodies[0]["messages"][1]["content"])
+            log = read_log(Path(tmp) / "log.jsonl")
+            self.assertEqual([e["text"].split()[0] for e in log if e.get("progress")], ["leer_archivo", "escribir_archivo"])
+            final = [e for e in log if not e.get("progress")][-1]
+            self.assertEqual((final["tool"], final["files"], final["ok"]), ("local_agent", ["suma.py"], True))
+
+    def test_agent_without_llama_tells_claude(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            s = Server({"LH_ROOT": tmp, "LH_LOCAL_URL": "http://127.0.0.1:9", "LH_WRITE": "1"})
+            r = call(s, "local_agent", {"task": "x"})["result"]
+            self.assertTrue(r["isError"])
+            self.assertIn("llama-server", r["content"][0]["text"])
+
+    def test_read_only_has_no_agent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            names = [x["name"] for x in server(tmp, write=False).tools()]
+            self.assertNotIn("local_agent", names)
+            self.assertIn("run_checks", names)
+
+    def test_run_checks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            s = Server({"LH_ROOT": tmp, "LH_COMMANDS": json.dumps(["python -c"])})
+            out = call(s, "run_checks", {"command": "python -c \"print('tests ok')\""})["result"]["content"][0]["text"]
+            self.assertIn("código de salida 0", out); self.assertIn("tests ok", out)
+            bad = call(s, "run_checks", {"command": "rm -rf /"})["result"]
+            self.assertTrue(bad["isError"]); self.assertIn("no permitida", bad["content"][0]["text"])
+            off = Server({"LH_ROOT": tmp, "LH_COMMANDS": "[]"})
+            self.assertNotIn("run_checks", [x["name"] for x in off.tools()])
+
+
+class BossModeTests(unittest.IsolatedAsyncioTestCase):
+    """Modo jefe: Claude sin Edit/Write (solo puede cambiar archivos delegando) y la guía en el prompt de sistema."""
+
+    async def run_task(self, cfg: dict, prompt: str, llama_url: str | None):
+        tmp = self.enterContext(tempfile.TemporaryDirectory())
+        repo = make_repo(tmp)
+        store = Store()
+        if llama_url:
+            settings.save(store, {"local_base_url": llama_url})
+        else:
+            settings.save(store, {"local_base_url": "http://127.0.0.1:9"})
+        p = store.add_project("demo", str(repo))
+        ag = store.add_agent("sonnet", "claude", config=cfg)
+        t = store.add_task(p["id"], "x", prompt, ag["id"])
+        res = await execute_task(store, t["id"], binaries={"claude": FAKE}, worktree_root=str(Path(tmp) / "wt"))
+        return res, store.list_events(t["id"])
+
+    async def test_boss_mode(self):
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), FakeLlama)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        res, events = await self.run_task({"coordinator": True}, "DELEGA el saludo",
+                                          f"http://127.0.0.1:{httpd.server_port}")
+        session = json.loads(next(e for e in events if e["kind"] == "session")["data"])
+        self.assertEqual(session["tools"], ["Read", "Glob", "Grep"])  # sin Edit ni Write: tiene que delegar
+        self.assertIn("delegado.txt", res["diff"])
+        self.assertIn("Modo coordinador", " ".join(e["text"] or "" for e in events if e["kind"] == "progress"))
+
+    async def test_boss_mode_without_local_model_falls_back(self):
+        res, events = await self.run_task({"coordinator": True}, "crea el archivo a.txt",
+                                          None)
+        session = json.loads(next(e for e in events if e["kind"] == "session")["data"])
+        self.assertIn("Write", session["tools"])
+        warnings = " ".join(e["text"] for e in events if e["kind"] == "warning")
+        self.assertIn("Claude trabaja solo", warnings)
+
+    def test_guide_goes_to_system_prompt(self):
+        cmd = get_adapter("claude").build_command(RunSpec(prompt="x", cwd=".", system_append="REGLAS"))
+        self.assertEqual(cmd[cmd.index("--append-system-prompt") + 1], "REGLAS")
+        from localharness.orchestrator import delegate_guide
+        self.assertIn("local_agent", delegate_guide(True, coordinator=True))
+        self.assertIn("No tienes Edit, Write ni Bash", delegate_guide(True, coordinator=True))
+        self.assertNotIn("local_agent", delegate_guide(False, coordinator=True))  # solo lectura: no encarga cambios
+
+
 if __name__ == "__main__":
     unittest.main()
-
-
-class ResumeTests(unittest.TestCase):
-    def test_had_delegation(self):
-        from localharness.orchestrator import _had_delegation
-        s = Store()
-        p = s.add_project("d", "/x")
-        a = s.add_agent("w", "claude")
-        t = s.add_task(p["id"], "t", "x", a["id"])
-        s.add_event(t["id"], "session", data={"tools": ["Read", "Edit"]})
-        self.assertFalse(_had_delegation(s, t["id"]))  # empezó sin la casilla: al continuar se le explica
-        s.add_event(t["id"], "session", data={"tools": ["Read", "mcp__local__local_ask"]})
-        self.assertTrue(_had_delegation(s, t["id"]))

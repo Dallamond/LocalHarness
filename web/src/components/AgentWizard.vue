@@ -69,7 +69,7 @@ function applyTemplate(t: AgentTemplate) {
   Object.assign(f, {
     template: t.id, role: t.role, brain: t.provider, claude_model: t.claude_model, local_provider: t.local_provider,
     local_use: t.local_use, description: t.description, instructions: t.instructions, skills: [...t.skills],
-    mcps: [...t.mcps], web: t.web, delegate_local: t.delegate_local, coordinator: false, read_only: t.read_only,
+    mcps: [...t.mcps], web: t.web, delegate_local: t.delegate_local || !!t.coordinator, coordinator: !!t.coordinator, read_only: t.read_only,
     thinking: t.thinking === "normal" ? "" : t.thinking,
     max_turns: t.max_turns, max_budget_usd: t.max_budget_usd,
   });
@@ -86,7 +86,7 @@ function fromAgent(a: Agent) {
     local_provider: a.provider === "local" ? "local" : "local_agent",
     local_use: a.role === "director" ? "director" : a.role === "jefe" ? "jefe técnico" : "agente con herramientas",
     description: c.description ?? "", instructions: c.instructions ?? "", skills: [...(c.skills ?? [])],
-    mcps: [...(c.mcps ?? [])], web: !!c.web, delegate_local: !!c.delegate_local, coordinator: !!c.coordinator,
+    mcps: [...(c.mcps ?? [])], web: !!c.web, delegate_local: !!c.delegate_local || !!c.coordinator, coordinator: !!c.coordinator,
     read_only: !!c.read_only,
     thinking: c.thinking && c.thinking !== "normal" ? c.thinking : "", max_turns: c.max_turns ?? null, max_budget_usd: c.max_budget_usd ?? null,
     timeout_min: c.timeout_s ? Math.round(c.timeout_s / 60) : null,
@@ -200,7 +200,7 @@ const usesMcp = computed(() => provider.value === "claude");
 const toolsList = computed(() => [
   ...(usesMcp.value ? f.mcps : []),
   ...(f.web ? ["internet"] : []),
-  ...(usesMcp.value && (f.delegate_local || f.coordinator) ? [f.coordinator ? "solo coordina (el modelo local genera)" : "modelo local"] : []),
+  ...(usesMcp.value && (f.delegate_local || f.coordinator) ? [f.coordinator && !f.read_only ? "jefe del modelo local" : "delega en el modelo local"] : []),
   ...(provider.value === "local_agent" ? ["leer", "buscar", f.read_only ? null : "escribir", f.read_only ? null : "ejecutar tests"].filter(Boolean) as string[] : []),
 ]);
 const nameOk = computed(() => /^[\w.-]{1,60}$/.test(f.name) && !live.agents.some((a) => a.name === f.name && a.id !== editing.value?.id));
@@ -226,8 +226,8 @@ async function save() {
       skills: f.skills, read_only: f.read_only, thinking: f.thinking || null,
       max_turns: f.max_turns || null, max_budget_usd: isClaude ? f.max_budget_usd || null : null,
       timeout_s: f.timeout_min ? f.timeout_min * 60 : null,
-      web: provider.value === "local" ? null : f.web, mcps: isClaude ? mcps : [], delegate_local: isClaude && (f.delegate_local || f.coordinator),
-      coordinator: isClaude && f.coordinator,
+      web: provider.value === "local" ? null : f.web, mcps: isClaude ? mcps : [], delegate_local: isClaude && f.delegate_local,
+      coordinator: isClaude && f.delegate_local && f.coordinator && !f.read_only,
     };
     let id: number;
     if (editing.value) {
@@ -372,12 +372,21 @@ async function save() {
             <p v-else class="muted small">Los agentes locales usan sus propias herramientas (leer, buscar, escribir, ejecutar, buscar_web); los servidores MCP son solo para Claude.</p>
             <div class="toggles">
               <label v-if="provider !== 'local'" class="check"><input v-model="f.web" type="checkbox"> Internet <span class="muted small">{{ provider === "claude" ? "(WebSearch/WebFetch, gasta plan)" : "(buscar_web, gratis)" }}</span></label>
-              <label v-if="provider === 'claude'" class="check"><input v-model="f.delegate_local" type="checkbox"> Puede delegar en el modelo local <span class="muted small">(ahorra plan)</span></label>
-              <label v-if="provider === 'claude'" class="check" title="Claude separa la petición en bloques, planifica y encarga el plan entero al modelo local; luego revisa y presenta. Sin Edit ni Write."><input v-model="f.coordinator" type="checkbox"> Solo coordina <span class="muted small">(el modelo local genera todos los archivos)</span></label>
+              <label v-if="provider === 'claude'" class="check"><input v-model="f.delegate_local" type="checkbox"> Trabaja con el modelo local <span class="muted small">(ahorra plan)</span></label>
               <label class="check"><input v-model="f.read_only" type="checkbox"> Solo lectura <span class="muted small">(no modifica archivos)</span></label>
               <label class="check">Pensamiento
                 <select v-model="f.thinking" class="input mini"><option value="">normal</option><option value="apagado">apagado</option><option value="profundo">profundo</option></select>
               </label>
+            </div>
+            <div v-if="provider === 'claude' && f.delegate_local && !f.read_only" class="seg modes">
+              <button type="button" :class="{ on: f.coordinator }" @click="f.coordinator = true">
+                <b><i class="fa-solid fa-user-tie" /> Jefe del modelo local (solo coordina)</b>
+                <small>Claude no escribe: encarga cada cambio al modelo local, lo revisa y pide correcciones. Gasta mucho menos plan. Sin modelo arrancado, trabaja solo.</small>
+              </button>
+              <button type="button" :class="{ on: !f.coordinator }" @click="f.coordinator = false">
+                <b><i class="fa-solid fa-handshake" /> Con ayuda del local</b>
+                <small>Claude puede escribir él mismo y delega lo que encaje (leer, resumir, tests, archivos nuevos).</small>
+              </button>
             </div>
           </section>
 
@@ -756,6 +765,12 @@ h4 {
 }
 .mini {
   opacity: 0.7;
+}
+.modes {
+  margin-top: 10px;
+}
+.modes button small {
+  line-height: 1.3;
 }
 .toggles {
   display: flex;

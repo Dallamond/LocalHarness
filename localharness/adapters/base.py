@@ -35,6 +35,7 @@ class RunSpec:
     session_id: str | None = None    # para reanudar
     json_schema: dict | None = None  # Claude: salida estructurada validada (llega en result.structured_output)
     extra_args: list[str] = field(default_factory=list)
+    system_append: str | None = None  # Claude: texto añadido al prompt de sistema (--append-system-prompt)
     thinking: str | None = None      # apagado | normal | profundo (None = normal: lo que haga el modelo por defecto)
     # agente local: pregunta al Director del plan (reanuda su sesión) → (respuesta, coste en $). None = sin Director
     ask_director: Callable[[str], Awaitable[tuple[str, float]]] | None = None

@@ -438,7 +438,7 @@ const EXAMPLES: Record<string, string> = {
               <div class="l">Modelo <span>{{ modelText(a) }}</span></div>
               <div class="chips">
                 <span v-for="s in a.config.skills ?? []" :key="s" class="pill"><i class="fa-solid fa-bolt" />{{ s }}</span>
-                <span v-if="a.config.delegate_local" class="pill pill--ok"><i class="fa-solid fa-plug" />local</span>
+                <span v-if="a.config.delegate_local || a.config.coordinator" class="pill pill--ok"><i class="fa-solid" :class="a.config.coordinator ? 'fa-user-tie' : 'fa-plug'" />{{ a.config.coordinator ? "jefe del local" : "local" }}</span>
                 <span v-for="m in a.config.mcps ?? []" :key="m" class="pill pill--active"><i class="fa-solid fa-plug" />{{ m }}</span>
                 <span v-if="a.config.web" class="pill pill--active"><i class="fa-solid fa-globe" />internet</span>
                 <span v-if="!(a.config.skills ?? []).length && !a.config.delegate_local && !(a.config.mcps ?? []).length && !a.config.web" class="muted small">Sin skills ni herramientas extra</span>
@@ -465,6 +465,9 @@ const EXAMPLES: Record<string, string> = {
                   <template v-if="a.provider === 'claude'">
                     <label title="local_ask / local_write_file: el modelo arrancado en llama-server hace el trabajo gratis">
                       <input type="checkbox" :checked="!!a.config.delegate_local" @change="patch(a, { delegate_local: ($event.target as HTMLInputElement).checked })">local (modelo local)
+                    </label>
+                    <label v-if="a.config.delegate_local && !a.config.read_only" title="Jefe: Claude no escribe; encarga cada cambio al modelo local y lo revisa">
+                      <input type="checkbox" :checked="a.config.coordinator" @change="patch(a, { coordinator: ($event.target as HTMLInputElement).checked })">jefe del local
                     </label>
                     <label title="WebSearch y WebFetch">
                       <input type="checkbox" :checked="!!a.config.web" @change="patch(a, { web: ($event.target as HTMLInputElement).checked })">internet
@@ -551,8 +554,8 @@ const EXAMPLES: Record<string, string> = {
                 <div><b class="mono">local</b><small><span class="dotst" :class="{ on: live.local.state === 'ready' }" /> {{ live.local.model ?? "sin modelo arrancado" }}</small></div>
                 <span class="badge team">de serie</span>
               </div>
-              <p>El modelo local de LocalHarness: Claude le encarga leer, resumir, escribir archivos e investigar sin gastar plan.</p>
-              <div class="chips"><span class="pill"><i class="fa-solid fa-wrench" />local_ask</span><span class="pill"><i class="fa-solid fa-wrench" />local_write_file</span><span class="pill"><i class="fa-solid fa-wrench" />local_research</span></div>
+              <p>El modelo local de LocalHarness: Claude le encarga leer, resumir, escribir archivos, tareas enteras (local_agent), pasar los tests e investigar, sin gastar plan.</p>
+              <div class="chips"><span class="pill"><i class="fa-solid fa-wrench" />local_ask</span><span class="pill"><i class="fa-solid fa-wrench" />local_write_file</span><span class="pill"><i class="fa-solid fa-wrench" />local_research</span><span class="pill"><i class="fa-solid fa-wrench" />local_agent</span><span class="pill"><i class="fa-solid fa-wrench" />run_checks</span></div>
               <div class="chips">
                 <span v-for="a in usesMcp('local')" :key="a.id" class="pill"><i class="fa-solid fa-circle" :style="{ color: agentColor(a), fontSize: '7px' }" />{{ a.name }}</span>
               </div>

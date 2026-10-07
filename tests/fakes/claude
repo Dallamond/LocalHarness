@@ -96,7 +96,8 @@ elif "--mcp-config" in sys.argv and ("DELEGA" in prompt or "COORDINA" in prompt)
     res = rpc(3, "tools/call", {"name": tool, "arguments": args})["result"]
     srv.stdin.close(); srv.wait(timeout=10)
     builtin = sys.argv[sys.argv.index("--tools") + 1]
-    coord = "MODO COORDINADOR" in prompt
+    system = sys.argv[sys.argv.index("--append-system-prompt") + 1] if "--append-system-prompt" in sys.argv else ""
+    coord = "MODO COORDINADOR" in system  # la guía va en el prompt de sistema, no en la tarea
     finish(f"Herramientas MCP: {','.join(names)}. Integradas: {builtin}. Coordinador: {coord}. "
            f"{res['content'][0]['text'][:80]}")
 elif "--resume" in sys.argv and "te pregunta:" in prompt:

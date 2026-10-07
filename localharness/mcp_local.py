@@ -12,6 +12,11 @@ Claude lo recibe con `--mcp-config` cuando su agente tiene «Puede delegar en el
   planifica y presenta, el modelo local genera. Solo si la tarea puede escribir.
 - `local_research`: Qwen busca en la web (DuckDuckGo HTML, sin clave: lo más sencillo para empezar), lee las
   primeras páginas y devuelve una respuesta con fuentes. Claude no gasta tokens buscando ni leyendo. LH_WEB=0 la quita.
+- `local_agent`: encarga una TAREA ENTERA al agente local con herramientas (adapters/local_agent.py: lee, busca,
+  escribe y ejecuta los tests él solo, en este mismo worktree). Claude recibe su resumen y la lista de archivos que
+  cambió, y revisa. Es la pieza del modo «jefe» (Claude dirige y revisa; el local hace). Solo si LH_WRITE=1.
+- `run_checks`: ejecuta una orden de la lista blanca (tests, linter) y devuelve la salida. No usa ningún modelo:
+  así Claude puede comprobar el trabajo sin tener Bash.
 
 Todo confinado a LH_ROOT (el worktree de la tarea): nada fuera, nada dentro de .git. Cada encargo se apunta en
 LH_LOG (JSONL) para que LocalHarness lo muestre y cuente los tokens ahorrados.
@@ -21,8 +26,14 @@ protocolo; los avisos van a stderr.
 
 Variables: LH_LOCAL_URL (llama-server), LH_LOCAL_KEY (su --api-key), LH_ROOT, LH_LOG, LH_WRITE (1/0),
 LH_MAX_TOKENS (por defecto 8192), LH_MAX_INPUT_CHARS (texto de archivos por encargo, por defecto 40000),
-LH_WEB (1/0, búsqueda web), LH_COORDINATOR (1: Claude no puede hacerlo él; los errores no le dicen «hazlo tú»).
+LH_WEB (1/0, búsqueda web), LH_COORDINATOR (1: Claude no puede hacerlo él; los errores no le dicen «hazlo tú»),
+LH_COMMANDS (JSON: lista blanca de órdenes de comprobación; por defecto CHECK_COMMANDS), LH_AGENT_TURNS (pasos del
+agente local por encargo, 25), LH_AGENT_TIMEOUT (segundos por encargo de `local_agent`, 1200).
 """
+
+import asyncio
+import hashlib
+import subprocess
 
 import html
 import json
@@ -127,6 +138,37 @@ RESEARCH = {
     },
 }
 
+AGENT = {
+    "name": "local_agent",
+    "description": (
+        "Encarga una TAREA ENTERA de programación a un agente local GRATIS que trabaja solo en este repositorio: "
+        "lee los archivos, los modifica y ejecuta los tests. Dale una tarea concreta y autocontenida: qué cambiar, "
+        "en qué archivos, criterios de aceptación y qué orden de tests ejecutar. Te devuelve su resumen y los "
+        "archivos que cambió: revísalos tú (Read) y comprueba con `run_checks`. Si algo está mal, vuelve a "
+        "encargárselo diciendo exactamente qué corregir."),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "task": {"type": "string", "description": "La tarea completa, con criterios de aceptación"},
+            "files": {"type": "array", "items": {"type": "string"},
+                      "description": "Archivos por los que debe empezar (rutas relativas)"},
+            "max_turns": {"type": "integer", "description": "Tope de pasos del agente (por defecto 25)"},
+        },
+        "required": ["task"],
+    },
+}
+CHECKS = {
+    "name": "run_checks",
+    "description": (
+        "Ejecuta una orden de comprobación (tests o linter, de una lista permitida) en el repositorio y devuelve "
+        "el código de salida y la salida. No gasta cuota. Úsalo para verificar lo que haya hecho el modelo local."),
+    "inputSchema": {
+        "type": "object",
+        "properties": {"command": {"type": "string", "description": "Orden, p. ej. «python -m unittest» o «npm test»"}},
+        "required": ["command"],
+    },
+}
+
 SYSTEM_ASK = ("Eres un asistente de programación que ayuda a otro agente más caro a ahorrar trabajo. Responde en "
               "español, concreto y sin relleno. Si te faltan datos, dilo en vez de inventar.")
 SYSTEM_WRITE = ("Eres un programador. Devuelve ÚNICAMENTE el contenido completo del archivo pedido, dentro de un solo "
@@ -165,12 +207,19 @@ class Server:
         self.max_input = int(env.get("LH_MAX_INPUT_CHARS") or 40_000)
         self.web = env.get("LH_WEB", "1") == "1"
         self.coordinator = env.get("LH_COORDINATOR") == "1"
+        try:
+            self.commands = json.loads(env["LH_COMMANDS"]) if env.get("LH_COMMANDS") else None
+        except ValueError:
+            self.commands = None
+        self.agent_turns = int(env.get("LH_AGENT_TURNS") or 25)
+        self.agent_timeout = float(env.get("LH_AGENT_TIMEOUT") or 1200)
         self.transport = transport  # pruebas: función (body) -> respuesta JSON de /v1/chat/completions
         self.http_get = http_get or _http_get  # pruebas: función (url, data) -> HTML; sin red de verdad
 
     # --- protocolo
     def tools(self) -> list[dict]:
-        return [ASK] + ([WRITE, PLAN] if self.write else []) + ([RESEARCH] if self.web else [])
+        return ([ASK] + ([WRITE, PLAN, AGENT] if self.write else []) + ([CHECKS] if self.commands != [] else [])
+                + ([RESEARCH] if self.web else []))
 
     def handle(self, msg: dict) -> dict | None:
         mid, method = msg.get("id"), msg.get("method")
@@ -208,6 +257,15 @@ class Server:
             elif name == "local_execute_plan" and self.write:
                 text, stats = self.execute_plan(args.get("blocks"), str(args.get("check") or ""))
                 entry["task"] = f"plan: {stats['ok']} de {stats['blocks']} bloques"
+            elif name == "local_agent" and self.write:
+                entry["task"] = str(args.get("task", ""))[:300]
+                text, stats = self.agent(str(args.get("task") or ""), args.get("files") or [], args.get("max_turns"))
+            elif name == "run_checks" and self.commands != []:
+                entry["task"] = str(args.get("command", ""))[:300]
+                text = self.run_check(str(args.get("command") or ""))
+                if not text.startswith("código de salida"):
+                    raise ToolError(text)  # orden no permitida, mal escrita o que no se pudo lanzar
+                stats = {"exit": text.split("\n", 1)[0]}
             elif name == "local_research" and self.web:
                 entry["task"] = str(args.get("question", ""))[:300]
                 text, stats = self.research(str(args.get("question") or ""), str(args.get("query") or ""),
@@ -308,9 +366,10 @@ class Server:
             argv = shlex.split(command)
         except ValueError as e:
             return f"orden mal escrita: {e}"
-        allowed = [shlex.split(c) for c in CHECK_COMMANDS]
+        commands = CHECK_COMMANDS if self.commands is None else self.commands
+        allowed = [shlex.split(c) for c in commands]
         if not argv or not any(argv[: len(p)] == p for p in allowed):
-            return f"orden no permitida. Permitidas: {'; '.join(CHECK_COMMANDS)}"
+            return f"orden no permitida. Permitidas: {'; '.join(commands)}"
         exe = sys.executable if argv[0] in ("python", "python3") else (shutil.which(argv[0]) or argv[0])
         env = {k: v for k, v in os.environ.items() if k not in ENV_DROP}
         try:
@@ -356,6 +415,87 @@ class Server:
         answer, stats = self.complete(SYSTEM_RESEARCH, user)
         refs = "\n".join(f"[{i}] {u['title']} — {u['url']}" for i, u in enumerate(used, 1))
         return f"{answer}\n\nFuentes:\n{refs}", {**stats, "sources": [u["url"] for u in used]}
+
+    def agent(self, task: str, files: list, max_turns) -> tuple[str, dict]:
+        """El bucle del agente local (adapters/local_agent.py) sobre este worktree, como un encargo más."""
+        from localharness.adapters.base import RunSpec
+        from localharness.adapters.local_agent import LocalAgentAdapter
+        from localharness.events import Event
+        if not task.strip():
+            raise ToolError("falta `task`")
+        try:
+            turns = max(3, min(60, int(max_turns or self.agent_turns)))
+        except (TypeError, ValueError):
+            turns = self.agent_turns
+        start = [f for f in files if isinstance(f, str)]
+        prompt = task + (f"\n\nEmpieza leyendo: {', '.join(start)}" if start else "")
+        before = self.snapshot()
+        adapter = LocalAgentAdapter(base_url=self.url, api_key=self.key or None, transport=self._httpx(),
+                                    http_get=self.http_get, web=self.web,
+                                    commands=CHECK_COMMANDS if self.commands is None else self.commands)
+        seen: dict = {"tools": 0, "errors": [], "usage": {}, "model": None}
+
+        def on_event(ev: Event) -> None:
+            if ev.kind == "tool":
+                seen["tools"] += 1
+                inp = ev.data.get("input") or {}
+                what = inp.get("ruta") or inp.get("comando") or inp.get("texto") or inp.get("consulta") or ""
+                self._log({"tool": "local_agent", "progress": True, "text": f"{ev.text} {what}".strip()[:200],
+                           "at": time.time()})
+            elif ev.kind == "error":
+                seen["errors"].append(ev.text)
+            elif ev.kind == "usage":
+                seen["usage"] = ev.data.get("usage") or {}
+                seen["model"] = ev.data.get("model")
+        res = asyncio.run(adapter.execute(RunSpec(prompt=prompt, cwd=str(self.root), max_turns=turns), on_event,
+                                          self.agent_timeout))
+        changed = self.changed(before, self.snapshot())
+        stats = {"prompt_tokens": seen["usage"].get("prompt_tokens"), "completion_tokens":
+                 seen["usage"].get("completion_tokens"), "model": seen["model"], "files": changed,
+                 "status": res["status"]}
+        if res["status"] != "done" and not seen["tools"] and seen["errors"]:
+            raise ToolError(f"{seen['errors'][-1]}; hazlo tú")
+        lines = [f"El agente local terminó: {'OK' if res['status'] == 'done' else res['status']} "
+                 f"({seen['tools']} acciones)."]
+        if res.get("final"):
+            lines.append(f"Su resumen:\n{res['final'].strip()}")
+        if seen["errors"]:
+            lines.append("Problemas: " + " | ".join(seen["errors"][-3:]))
+        lines.append("Archivos que cambió: " + (", ".join(changed) if changed else "ninguno"))
+        lines.append("Revisa los cambios (Read) y comprueba con `run_checks` antes de darlo por bueno.")
+        return "\n\n".join(lines), stats
+
+    def snapshot(self) -> dict[str, str]:
+        """Huella de los archivos con cambios sin guardar en git (modificados o nuevos) para saber qué tocó."""
+        try:
+            raw = subprocess.run(["git", "status", "--porcelain", "-z", "--untracked-files=all"], cwd=self.root,
+                                 capture_output=True, timeout=30).stdout.decode("utf-8", "replace")
+        except (OSError, subprocess.TimeoutExpired):
+            return {}
+        out = {}
+        for item in raw.split("\0"):
+            if len(item) < 4:
+                continue
+            rel = item[3:]
+            p = self.root / rel
+            out[rel] = hashlib.sha1(p.read_bytes()).hexdigest() if p.is_file() else "borrado"
+        return out
+
+    @staticmethod
+    def changed(before: dict[str, str], after: dict[str, str]) -> list[str]:
+        return sorted([p for p, h in after.items() if before.get(p) != h] + [p for p in before if p not in after])
+
+    def _httpx(self):
+        """Pruebas: el `transport` de función se envuelve en un transporte de httpx para el agente local."""
+        if not self.transport:
+            return None
+        import httpx
+
+        def handler(request):
+            if request.url.path.endswith("/v1/models"):
+                return httpx.Response(200, json={"data": [{"id": "modelo-de-prueba.gguf"}]})
+            return httpx.Response(200, json=self.transport(json.loads(request.content)))
+        return httpx.MockTransport(handler)
 
     def search(self, query: str) -> list[dict]:
         try:
@@ -534,6 +674,8 @@ def read_log(path: Path) -> list[dict]:
 
 
 def main() -> None:
+    # la CLI de Claude lo lanza por ruta desde el worktree: el paquete (para `local_agent`) tiene que estar en el path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     server = Server()
     stdin = sys.stdin.buffer
     out = sys.stdout.buffer
