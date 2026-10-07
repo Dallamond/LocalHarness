@@ -8,6 +8,23 @@ Decisión de Lucas: **se trabaja siempre en `main`**. Se integraron en `main` la
 editable), `claude/cool-dirac-vmw6s0` (análisis de Paperclip) y `claude/youthful-edison-bi67hm` (Modelos locales +
 rediseño de la oficina). Las secciones de abajo son el historial de cada una; donde digan «rama X», ya está en `main`.
 
+### Modo coordinador (07/10/2026, noche) — Claude planifica, el modelo local genera
+Problema (Lucas): con «Puede delegar», Claude seguía resolviendo la tarea él (Glob → Read ×4 → Edit ×4) y no
+encargaba nada. La guía de delegación sola no basta: mientras tenga Edit/Write, lo hace él.
+- Config nueva del agente `coordinator` («Solo coordina» en Ajustes; rol `roles/coordinador.md`, Sonnet). Implica
+  `delegate_local`. Claude se lanza con **solo Read/Glob/Grep** + las herramientas del modelo local: no puede escribir
+  ni ejecutar, así que el trabajo lo tiene que hacer el modelo local.
+- Herramienta MCP nueva **`local_execute_plan`** (`mcp_local.py`): Claude manda TODOS los bloques en una llamada
+  (`write` con `path` / `ask`), el modelo local los hace en orden (cada bloque lee sus `files`, también lo escrito
+  por bloques anteriores), y el servidor ejecuta `check` (tests, lista blanca `CHECK_COMMANDS`, sin shell). Devuelve
+  un informe por bloque. Un bloque que falla no para el resto; sin llama-server se para y lo dice.
+- Guía `COORDINATOR_GUIDE` (orchestrator): separar en bloques → explorar lo justo (`local_ask` para diagnosticar,
+  no Read) → escribir el plan → `local_execute_plan` entero → leer informe y repetir solo lo fallido (máx. 2
+  rondas) → presentar. Con `LH_COORDINATOR=1` los errores dicen «díselo al usuario» en vez de «hazlo tú».
+- Aviso al empezar si el llama-server no contesta (`/health`). Los delegadores normales también ven `local_execute_plan`.
+- **Pendiente: prueba real** en el PC de Lucas (sandbox: agente `coordinador` + «arregla todos los errores del repo»).
+  Siguiente paso posible: que el coordinador **arranque él el último modelo** si está apagado (hoy solo avisa).
+
 ### Lo último (07/10/2026, noche) — Catálogo ampliado y asistente de agentes
 - **Biblioteca** (`biblioteca/`, `localharness/library.py`): 27 skills en español con categoría (`biblioteca/skills`),
   19 servidores MCP preparados (`biblioteca/mcp.json`: fetch, DuckDuckGo, Brave, Context7, DeepWiki, Microsoft Learn,

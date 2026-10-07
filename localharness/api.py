@@ -99,6 +99,7 @@ class AgentIn(BaseModel):
     description: str | None = None  # en qué es bueno: el Director lo lee para repartir subtareas
     subagents: bool = False  # solo claude: puede lanzar subagentes (herramienta Agent; gasta más)
     delegate_local: bool = False  # solo claude: puede encargar trabajo al modelo local (MCP local_ask/local_write_file)
+    coordinator: bool = False  # solo claude: solo planifica y presenta; el modelo local genera todo (sin Edit/Write)
     mcps: list[str] | None = None  # solo claude: servidores MCP del Catálogo (Ajustes → mcp_servers)
     temperature: float | None = Field(default=None, ge=0, le=2)  # solo local
     max_tokens: int | None = Field(default=None, ge=64, le=131_072)  # solo local
@@ -126,6 +127,7 @@ class AgentPatch(BaseModel):
     description: str | None = None
     subagents: bool | None = None
     delegate_local: bool | None = None
+    coordinator: bool | None = None
     mcps: list[str] | None = None
     temperature: float | None = Field(default=None, ge=0, le=2)
     max_tokens: int | None = Field(default=None, ge=64, le=131_072)
@@ -143,8 +145,8 @@ class AgentPatch(BaseModel):
 
 
 AGENT_CFG = ("max_turns", "max_budget_usd", "read_only", "skills", "base_url", "description", "subagents",
-             "delegate_local", "web", "mcps", "temperature", "max_tokens", "repo_context", "tool_mode", "commands",
-             "command_timeout_s", "timeout_s", "thinking", "off", "instructions")
+             "delegate_local", "coordinator", "web", "mcps", "temperature", "max_tokens", "repo_context", "tool_mode",
+             "commands", "command_timeout_s", "timeout_s", "thinking", "off", "instructions")
 KEEP_FALSY = ("web", "commands")  # web=False y commands=[] significan algo (apagar), no «quitar el ajuste»
 
 
@@ -460,6 +462,7 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
                                  "skills": body.skills or None, "base_url": body.base_url or None,
                                  "description": (body.description or "").strip() or None,
                                  "subagents": body.subagents or None, "delegate_local": body.delegate_local or None,
+                                 "coordinator": body.coordinator or None,
                                  "mcps": body.mcps or None,
                                  "temperature": body.temperature,
                                  "max_tokens": body.max_tokens, "repo_context": body.repo_context,

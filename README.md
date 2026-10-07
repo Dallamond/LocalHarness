@@ -21,6 +21,7 @@ en `manual/director.md`; los roles del equipo, en `roles/*.md`. Guía de funcion
 | M5 Skills y memoria | ✅ |
 | M6 Flujo git (conflictos, limpieza) | 🔄 falta rama de integración por proyecto |
 | Delegación de Claude en el modelo local (MCP propio) | ✅ verificada con Haiku real |
+| Modo coordinador (Claude planifica, el modelo local genera todo) | 🔄 probado con CLI falsa; falta prueba real |
 
 Próximo (ver `docs/OBJETIVOS.md`): plan editable en el Inicio, ver a los subagentes trabajando, catálogo de roles
 y skills, oficina 3D del prototipo (`docs/prototipos/`) y el agente Atlas.
@@ -87,7 +88,8 @@ Claude; sin llama-server los agentes locales no responden (todo lo demás funcio
   - `codex.py`   `codex exec --json` (aparcado, sin verificar con la CLI real)
   - `local.py`   un mensaje a llama-server con el contexto del repo en el prompt; no escribe
   - `local_agent.py` bucle de agente con herramientas confinadas al worktree (leer, buscar, escribir, ejecutar…)
-- `localharness/mcp_local.py`  servidor MCP stdio propio: Claude encarga a Qwen `local_ask`, `local_write_file`, `local_research`
+- `localharness/mcp_local.py`  servidor MCP stdio propio: Claude encarga a Qwen `local_ask`, `local_write_file`,
+  `local_execute_plan` (el plan entero por bloques + tests), `local_research`
 - `localharness/library.py`    biblioteca del Catálogo (`biblioteca/`: skills, MCP, plantillas de agente) y skills de GitHub
 - `localharness/context.py`    M5: skills (`SKILL.md`) y memoria del proyecto inyectadas en el prompt
 - `localharness/llama.py`      lanzar llama-server (con `--api-key`), listar GGUF, progreso de carga
