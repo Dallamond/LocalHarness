@@ -3,7 +3,7 @@
 Banco local de agentes: registras repos, creas tareas, un agente (Claude / Codex / modelo local)
 trabaja en un git worktree aislado y tú revisas el diff antes de integrar. Nunca hace push solo.
 
-Estado: M0–M3 y M5 hechos, M4 y M6 en curso; Claude puede delegar en el modelo local (MCP propio). GUI nueva: la **Oficina** 3D del prototipo con datos reales y el **Catálogo** (agentes, skills, servidores MCP). Próximo: repensar el reparto Claude ↔ modelo local (los locales aún no tienen herramientas). **Al retomar, leer `docs/ESTADO.md` (sección «SIGUIENTE SESIÓN»).** Ver `docs/HOJA-DE-RUTA.md` y `docs/VIABILIDAD.md`.
+Estado: M0–M3 y M5 hechos, M4 y M6 en curso; Claude puede delegar en el modelo local (MCP propio). GUI nueva: la **Oficina** 3D del prototipo con datos reales y el **Catálogo** (agentes, skills, servidores MCP). Próximo: repensar el reparto Claude ↔ modelo local (los locales aún no tienen herramientas). Instalar en otro PC: `docs/INSTALAR.md`. **Al retomar, leer `docs/ESTADO.md` (sección «SIGUIENTE SESIÓN»).** Ver `docs/HOJA-DE-RUTA.md` y `docs/VIABILIDAD.md`.
 En este PC `python` es el alias de la Store: usar `py -3.12`.
 
 ```

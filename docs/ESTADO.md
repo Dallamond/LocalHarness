@@ -1,8 +1,50 @@
 # Estado y traspaso — leer primero al retomar (también desde Claude Code en la web)
 
-Última actualización: 06/10/2026, tarde (sesión 4: GUI de oficina + Catálogo + arreglos fáciles). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
+Última actualización: 07/10/2026 (resumen de estado para el chat nuevo; sesión 4: GUI de oficina + Catálogo). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
 
-## ▶ SIGUIENTE SESIÓN — EMPEZAR AQUÍ (06/10/2026, tarde)
+## ▶ PUNTO DE PARTIDA PARA EL CHAT NUEVO (07/10/2026)
+
+Rama con todo lo último: `claude/gifted-carson-20grn9` (NO está aún en `main`). Instalar en otro PC: `docs/INSTALAR.md`.
+Objetivo del chat nuevo (Lucas): que Claude y el modelo local trabajen JUNTOS y repartirse bien las tareas.
+
+### Funciona (probado)
+- Núcleo: proyectos (repos git), agentes, tareas en worktree aislado, diff, aprobar / descartar / integrar en tu rama
+  (merge local, nunca push), conflictos detectados antes de integrar, limpieza de worktrees viejos. CLI y API.
+- Agentes Claude con tu suscripción (`claude -p` aislado, topes de turnos y $, uso de 5 h / 7 días): probado real.
+- Chat: conversar con un agente, contestarle, seguir en la misma rama; skills por conversación.
+- Modelos locales: lista tus GGUF, arrancar/parar llama-server desde la GUI con barra de carga, tok/s en vivo,
+  configuración por modelo; agentes locales que RESPONDEN (con el repo metido en el prompt).
+- Delegación Claude → local (`local_ask`, `local_write_file` por MCP): probado real con Haiku + Qwen2.5-Coder-7B
+  (0,048 $): Claude delegó solo, Qwen explicó archivos y escribió un test.
+- Jerarquía (planes): Director → subtareas → jefe técnico → N0/N1/N2 → bandeja. Probado real con Haiku. Funciona,
+  pero hoy aporta poco (ver abajo).
+- GUI nueva: Oficina 3D (los agentes entran cuando trabajan), Misión, Bandeja, Recursos, Inspector, Timeline /
+  Terminal / Diff, Catálogo (asignar skills, MCP, internet, modelo local; importar). Probada en Chromium con CLI falsa.
+
+### No funciona / limitaciones conocidas
+1. **Los agentes locales no son agentes**: no leen ni escriben archivos, no ejecutan nada, no navegan. Solo
+   contestan en un chat (`can_write=False`). Es el problema principal.
+2. **Claude delega poco**: aun con la casilla, suele hacerlo él (la guía se endureció en la sesión 4, sin probar real).
+   Y `local_write_file` solo escribe un archivo entero: no hay bucle «el local trabaja → Claude revisa → corrige».
+3. Por lo anterior **Planes y Pendiente de ti no tienen sentido aún** (fuera del menú; rutas vivas).
+4. Una tarea por repo a la vez; aprobaciones solo en las fronteras de la tarea (no acción a acción).
+5. Codex aparcado (no instalado). Rama de integración por proyecto (M6) pendiente.
+
+### Hecho pero SIN verificar con la CLI real (gasta plan: pedir permiso a Lucas)
+- «Puede navegar por internet» (WebSearch/WebFetch) y servidores MCP del Catálogo asignados a un agente Claude.
+- La guía de delegación más firme (¿delega más ahora?).
+
+### Propuesta para empezar el chat nuevo (decidir con Lucas)
+1. Bucle de agente propio para los locales: herramientas confinadas al worktree (leer, listar, buscar, escribir,
+   ejecutar comandos de una lista blanca como los tests) con tool calling de llama-server (Qwen3.5-9B lo hace nativo;
+   los Qwen2.5-Coder escriben el JSON como texto → parsearlo). Alternativa: adaptar una CLI de agente existente
+   (OpenCode, Aider, Qwen Code…) apuntando a llama-server.
+2. Claude como jefe: parte el trabajo, lo encarga a ese agente local (herramienta MCP «local_agent» con la tarea
+   entera, no un archivo), revisa diff + tests y devuelve notas hasta que esté bien; topes de vueltas/tiempo.
+3. Medir con el sandbox: misma tarea solo-Claude vs Claude+local (coste, tiempo, calidad).
+4. Con eso, recuperar Planes/Bandeja como el bucle trabajador → jefe → tú.
+
+## Sesión 4 (06/10/2026, tarde)
 
 ### Feedback de Lucas tras probarlo todo (06/10/2026, tarde)
 - «Sigue siendo imposible que Claude use el modelo local para resolverlo en vez de contestar él.» Los modelos locales
