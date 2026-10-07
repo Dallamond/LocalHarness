@@ -380,7 +380,13 @@ def cmd_serve(args) -> int:
     db = Path(args.db or os.environ.get("LOCALHARNESS_DB") or DEFAULT_DB)
     db.parent.mkdir(parents=True, exist_ok=True)
     print(f"LocalHarness en http://{args.host}:{args.port}  (base de datos {db})")
-    uvicorn.run(create_app(db), host=args.host, port=args.port, log_level="warning")
+    from localharness.api import LOCAL_HOSTS
+    # escuchar en otra dirección (p. ej. la LAN) es decisión explícita: entonces se acepta también ese nombre
+    hosts = LOCAL_HOSTS if args.host in ("127.0.0.1", "localhost", "::1") else (*LOCAL_HOSTS, args.host)
+    if args.host in ("0.0.0.0", "::"):
+        hosts = None
+        print("AVISO: escuchando en todas las interfaces y SIN contraseña: cualquiera de tu red puede usarlo")
+    uvicorn.run(create_app(db, allowed_hosts=hosts), host=args.host, port=args.port, log_level="warning")
     return 0
 
 
