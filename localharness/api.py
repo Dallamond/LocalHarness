@@ -369,8 +369,20 @@ def autostart_llama(store: Store, manager: "llama.LlamaManager") -> str | None:
     return f"arrancando {model.name}"
 
 
+LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1", "testserver")  # testserver = el TestClient de las pruebas
+
+
+def _hostname(value: str) -> str:
+    """'127.0.0.1:8095' → '127.0.0.1'; '[::1]:8095' → '::1'; 'http://localhost:5174' → 'localhost'."""
+    v = value.strip().lower().split("://", 1)[-1].split("/", 1)[0]
+    if v.startswith("["):
+        return v[1:].split("]", 1)[0]
+    return v.rsplit(":", 1)[0] if v.count(":") == 1 else v
+
+
 def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | None = None,
-               worktree_root: str | None = None, web_dist: Path | None = WEB_DIST) -> FastAPI:
+               worktree_root: str | None = None, web_dist: Path | None = WEB_DIST,
+               allowed_hosts: tuple[str, ...] | None = LOCAL_HOSTS) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         store = Store(db_path)
@@ -398,6 +410,24 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         store.close()
 
     app = FastAPI(title="LocalHarness", version=__version__, lifespan=lifespan)
+
+    if allowed_hosts:
+        from fastapi.responses import JSONResponse
+        hosts = {h.lower() for h in allowed_hosts}
+
+        @app.middleware("http")
+        async def only_local(request: Request, call_next):
+            """La API no tiene contraseña y puede lanzar programas (agentes, servidores MCP): solo se atiende a esta
+            máquina. Host evita el «DNS rebinding» (una web que hace que su dominio apunte a 127.0.0.1) y Origin
+            que otra web abierta en el navegador mande peticiones a http://127.0.0.1:8095."""
+            if _hostname(request.headers.get("host", "")) not in hosts:
+                return JSONResponse({"detail": "Host no permitido: LocalHarness solo atiende a esta máquina"}, 403)
+            origin = request.headers.get("origin")
+            if origin and origin != "null" and _hostname(origin) not in hosts:
+                return JSONResponse({"detail": "Origen no permitido"}, 403)
+            if origin == "null" and request.method not in ("GET", "HEAD", "OPTIONS"):
+                return JSONResponse({"detail": "Origen no permitido"}, 403)
+            return await call_next(request)
 
     def st(request: Request) -> Store:
         return request.app.state.store
