@@ -1,12 +1,28 @@
 # Estado y traspaso — leer primero al retomar (también desde Claude Code en la web)
 
-Última actualización: 07/10/2026, noche (Catálogo con biblioteca y asistente de agentes). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
+Última actualización: 07/10/2026, noche (revisión completa + delegación unificada: ver `docs/REVISION.md`). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
 
 ## ▶ EMPEZAR AQUÍ — TODO ESTÁ EN `main` (07/10/2026)
 Decisión de Lucas: **se trabaja siempre en `main`**. Se integraron en `main` las ramas `claude/gifted-carson-20grn9`
 (oficina 3D + Catálogo), `claude/hopeful-euler-p8m838` (agente local con herramientas, roles, pensamiento, plan
 editable), `claude/cool-dirac-vmw6s0` (análisis de Paperclip) y `claude/youthful-edison-bi67hm` (Modelos locales +
 rediseño de la oficina). Las secciones de abajo son el historial de cada una; donde digan «rama X», ya está en `main`.
+
+### Revisión completa y delegación unificada (07/10/2026, noche) — LEER `docs/REVISION.md`
+- **Delegación**: el modo coordinador de abajo y el «modo jefe» de otra sesión se unificaron en `coordinator`.
+  Además: herramienta **`local_agent`** (encarga una tarea entera al agente local con herramientas en el mismo
+  worktree; devuelve resumen + archivos cambiados; sus pasos salen en vivo como `progress`), **`run_checks`**
+  (tests de la lista blanca `LH_COMMANDS`/`CHECK_COMMANDS`, sin modelo), las guías (coordinador / delegar / solo
+  lectura) van en **`--append-system-prompt`** (`RunSpec.system_append`), aviso «Claude no le encargó nada».
+  Coordinador sin llama-server → aviso y **Claude trabaja solo esa vez** (antes: tarea que no podía hacer nada).
+  Asistente: «Trabaja con el modelo local» + «Jefe del modelo local (solo coordina)» / «Con ayuda». Rol
+  `programador` y plantillas programador/frontend en modo coordinador.
+- **`localharness probar-delegacion`**: prueba gratis (sin Claude) la mitad local contra tu llama-server.
+- **Seguridad**: la API solo atiende a Host/Origin locales (antes una web cualquiera podía añadir un «MCP» que
+  ejecuta un programa). `serve --host 0.0.0.0` lo desactiva y avisa.
+- **Calidad**: `ruff` (config en `pyproject.toml`) limpio, **CI** en `.github/workflows/ci.yml` (Linux + Windows,
+  Python 3.10/3.12, web). 165 pruebas.
+- **Pendiente**: prueba real en el PC de Lucas (pasos en `docs/REVISION.md` §3 P1).
 
 ### Modo coordinador (07/10/2026, noche) — Claude planifica, el modelo local genera
 Problema (Lucas): con «Puede delegar», Claude seguía resolviendo la tarea él (Glob → Read ×4 → Edit ×4) y no

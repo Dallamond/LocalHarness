@@ -21,7 +21,7 @@ en `manual/director.md`; los roles del equipo, en `roles/*.md`. Guía de funcion
 | M5 Skills y memoria | ✅ |
 | M6 Flujo git (conflictos, limpieza) | 🔄 falta rama de integración por proyecto |
 | Delegación de Claude en el modelo local (MCP propio) | ✅ verificada con Haiku real |
-| Modo coordinador (Claude planifica, el modelo local genera todo) | 🔄 probado con CLI falsa; falta prueba real |
+| Modo coordinador (Claude planifica y revisa; el modelo local hace: `local_agent`, `local_execute_plan`) | 🔄 probado con CLI falsa; falta prueba real (`probar-delegacion` primero) |
 
 Próximo (ver `docs/OBJETIVOS.md`): plan editable en el Inicio, ver a los subagentes trabajando, catálogo de roles
 y skills, oficina 3D del prototipo (`docs/prototipos/`) y el agente Atlas.
@@ -32,7 +32,7 @@ En este PC `python` es el alias de la Store: usar `py -3.12`.
 
 ```
 py -3.12 -m venv .venv && .venv/Scripts/python -m pip install -e .[server]   # una vez
-.venv/Scripts/python -m unittest discover -s tests -t .   # 152 pruebas con CLIs falsas (nunca llaman a la real)
+.venv/Scripts/python -m unittest discover -s tests -t .   # 165 pruebas con CLIs falsas (nunca llaman a la real)
 py -3.12 -m localharness doctor                   # git, CLIs, login de suscripción
 py -3.12 -m localharness project add demo D:/ruta/al/repo
 py -3.12 -m localharness agent add sonnet-w --provider claude --model sonnet --max-turns 10 --budget 1
@@ -65,6 +65,7 @@ Claude; sin llama-server los agentes locales no responden (todo lo demás funcio
 | `lh skills` · `project memory <proyecto> [ruta]` | Catálogo de skills · carpeta de memoria del proyecto |
 | `lh llama models\|serve <modelo>\|status` | Modelos GGUF y llama-server a mano |
 | `lh cleanup [--dry-run]` | Borra worktrees y ramas de lo ya cerrado |
+| `lh probar-delegacion` | Prueba gratis (sin Claude) que el modelo local recibe encargos, cambia archivos y pasa tests |
 
 **Por la GUI** (http://127.0.0.1:8095):
 - **Oficina** (inicio): oficina 3D con un puesto por agente, misión, bandeja de aprobaciones, recursos, inspector,
@@ -114,6 +115,7 @@ Claude; sin llama-server los agentes locales no responden (todo lo demás funcio
 | [`docs/GUIA.md`](docs/GUIA.md) | Funciones e implementación: conceptos, proveedores, jerarquía, git, API, eventos, configuración |
 | [`docs/OBJETIVOS.md`](docs/OBJETIVOS.md) | Rumbo nuevo: manual + catálogo, objetivos en orden |
 | [`docs/DISENO-OFICINA.md`](docs/DISENO-OFICINA.md) | Diseño de la oficina y de cómo se comunican los agentes (borrador) |
+| [`docs/REVISION.md`](docs/REVISION.md) | Revisión completa: lo que está bien, lo arreglado y lo que falta por prioridad |
 | [`docs/ESTADO.md`](docs/ESTADO.md) | Estado y traspaso entre sesiones: leer primero al retomar |
 | [`docs/HOJA-DE-RUTA.md`](docs/HOJA-DE-RUTA.md) | Decisiones cerradas, cumplimiento con la suscripción, hitos M0–M6 |
 | [`docs/PROBAR.md`](docs/PROBAR.md) | Pruebas manuales paso a paso con el sandbox |
