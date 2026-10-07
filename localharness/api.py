@@ -139,6 +139,7 @@ class AgentPatch(BaseModel):
     off: bool | None = None  # fuera de servicio: fuera de la oficina y el Director no le encarga nada
     instructions: str | None = Field(default=None, max_length=8000)
     provider: str | None = None  # el asistente puede cambiar de Claude a local y al revés
+    name: str | None = Field(default=None, min_length=1, max_length=60)
 
 
 AGENT_CFG = ("max_turns", "max_budget_usd", "read_only", "skills", "base_url", "description", "subagents",
@@ -479,6 +480,12 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
             raise HTTPException(404, f"No existe el agente #{aid}")
         sent = body.model_fields_set
         cols = {k: getattr(body, k) or None for k in ("model", "role") if k in sent}
+        if body.name and body.name != a["name"]:
+            if json.loads(a["config"] or "{}").get("from_role"):
+                raise HTTPException(409, "Es un agente de rol: el nombre lo pone su archivo de roles/")
+            if store.find_agent(body.name):
+                raise HTTPException(409, f"Ya existe un agente llamado {body.name!r}")
+            cols["name"] = body.name
         if body.provider and body.provider != a["provider"]:
             if body.provider not in ADAPTERS:
                 raise HTTPException(422, f"Proveedor desconocido: {body.provider}")

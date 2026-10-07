@@ -21,7 +21,7 @@ export interface Agent {
     mcps?: string[];
     temperature?: number; max_tokens?: number; repo_context?: number;
     tool_mode?: string; web?: boolean; commands?: string[]; command_timeout_s?: number; timeout_s?: number;
-    from_role?: string; instructions?: string; thinking?: Thinking; off?: boolean;
+    from_role?: string; instructions?: string; thinking?: Thinking; off?: boolean; template?: string;
   };
 }
 
@@ -146,7 +146,65 @@ export interface Skill {
   path: string;
   chars: number;
   imported?: boolean;
+  category?: string;
+  source?: string | null;
 }
+
+/** Skill de la biblioteca (biblioteca/skills) o encontrada en GitHub: se previsualiza antes de instalarla. */
+export interface LibrarySkill {
+  name: string;
+  description: string;
+  category: string;
+  content: string;
+  chars: number;
+  installed: boolean;
+  tags?: string;
+  path?: string; // GitHub
+  url?: string;  // GitHub
+}
+
+export interface McpParam { key: string; label: string; placeholder?: string; secret?: boolean; folder?: boolean; file?: boolean }
+
+/** Servidor MCP preparado (biblioteca/mcp.json). */
+export interface LibraryMcp {
+  id: string;
+  name: string;
+  category: string;
+  icon: string;
+  description: string;
+  tools: string[];
+  needs?: string;
+  config: McpServer & { headers?: Record<string, string> };
+  params?: McpParam[];
+  homepage?: string;
+  available: boolean;
+  added_as: string[];
+}
+
+/** Plantilla por rol del asistente de agentes (biblioteca/agentes.json). */
+export interface AgentTemplate {
+  id: string;
+  name: string;
+  icon: string;
+  role: string;
+  summary: string;
+  description: string;
+  provider: "claude" | "local";
+  claude_model: string;
+  local_use: string;
+  local_provider: "local" | "local_agent";
+  read_only: boolean;
+  max_turns: number;
+  max_budget_usd: number;
+  thinking: Thinking;
+  skills: string[];
+  mcps: string[];
+  web: boolean;
+  delegate_local: boolean;
+  instructions: string;
+}
+
+export interface Library { skills: LibrarySkill[]; mcps: LibraryMcp[]; templates: AgentTemplate[] }
 
 /** Servidor MCP del Catálogo (formato mcpServers de Claude/Cursor). */
 export interface McpServer {
@@ -604,6 +662,7 @@ export const ROLE_TEXT: Record<string, string> = {
   director: "Director",
   jefe: "Jefe técnico",
   trabajador: "Trabajador",
+  consultas: "Consultas",
 };
 
 const ROLE_HEX: Record<string, string> = {
@@ -622,7 +681,7 @@ export function agentColor(a: Agent | undefined): string {
 }
 
 export const PROVIDER_TEXT: Record<string, string> = {
-  claude: "Suscripción", local: "Local · GPU", codex: "Codex", human: "Humano",
+  claude: "Suscripción", local: "Local · GPU", local_agent: "Local · agente", codex: "Codex", human: "Humano",
 };
 
 /** Qué modelo usa de verdad: los locales, el que esté arrancado en llama-server. */
@@ -635,7 +694,13 @@ export function modelText(a: Agent): string {
 export const ui = reactive({
   catalog: null as null | { tab: "agents" | "skills" | "mcp"; open?: number | null },
   focusAgent: null as number | null, // la oficina enfoca este agente al abrirse
+  wizard: null as null | { agentId?: number; template?: string }, // asistente de agentes (crear o editar)
 });
+
+/** Abre el asistente de agentes: sin id crea uno nuevo (opcionalmente con una plantilla); con id lo edita. */
+export function openWizard(agentId?: number, template?: string): void {
+  ui.wizard = { agentId, template };
+}
 
 export function openCatalog(tab: "agents" | "skills" | "mcp" = "agents", open: number | null = null): void {
   ui.catalog = { tab, open };

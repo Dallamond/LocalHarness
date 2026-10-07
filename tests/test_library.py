@@ -188,6 +188,9 @@ class LibraryApiTests(unittest.TestCase):
             self.assertNotIn("instructions", a["config"])
             self.assertEqual(a["config"]["mcps"], ["context7"])
             self.assertEqual(c.patch(f"/api/agents/{a['id']}", json={"provider": "nada"}).status_code, 422)
+            c.post("/api/agents", json={"name": "otro"})
+            self.assertEqual(c.patch(f"/api/agents/{a['id']}", json={"name": "otro"}).status_code, 409)
+            self.assertEqual(c.patch(f"/api/agents/{a['id']}", json={"name": "investigador"}).json()["name"], "investigador")
 
 
 if __name__ == "__main__":

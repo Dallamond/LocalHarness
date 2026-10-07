@@ -9,7 +9,7 @@ import OfficeDock from "../office/OfficeDock.vue";
 import { MAX_STATIONS, Office, type BoardStep, type GitRow, type Placement, type StationKind, type StationSpec, type StationState } from "../office/office3d";
 import {
   PLAN_TEXT, PROVIDER_TEXT, ROLE_TEXT, STATUS_TEXT, agentColor, agentName, api, describeActivity, duration, live,
-  modelText, onTaskEvent, openCatalog, parseTs, pct, planChip, planList, post, projectName, refreshAll, speedText,
+  modelText, onTaskEvent, openCatalog, openWizard, parseTs, pct, planChip, planList, post, projectName, refreshAll, speedText,
   statusChip, tps, ui, usd,
   type Agent, type Gpu, type InboxItem, type Review, type Task, type TaskEvent, type Worktree,
 } from "../api";
@@ -369,6 +369,11 @@ const agentStats = computed(() => {
 });
 function tools(a: Agent): { text: string; cls: string; icon: string }[] {
   const c = a.config, out: { text: string; cls: string; icon: string }[] = [];
+  if (a.provider === "local_agent") {
+    out.push({ text: c.read_only ? "lee y busca" : "lee, escribe y ejecuta", cls: "", icon: c.read_only ? "fa-eye" : "fa-pen" });
+    if (c.web !== false) out.push({ text: "internet", cls: "pill--active", icon: "fa-globe" });
+    return out;
+  }
   if (a.provider !== "claude") return [{ text: "sin herramientas (solo responde)", cls: "", icon: "fa-comment" }];
   out.push({ text: c.read_only ? "solo lectura" : "lee y edita", cls: "", icon: c.read_only ? "fa-eye" : "fa-pen" });
   if (c.delegate_local) out.push({ text: "local", cls: live.local.state === "ready" ? "pill--ok" : "", icon: "fa-plug" });
@@ -384,6 +389,7 @@ const host = ref<HTMLElement>();
 const labelsEl = ref<HTMLElement>();
 const dock = ref<InstanceType<typeof OfficeDock>>();
 let office: Office | null = null;
+let stopFocus: (() => void) | null = null;
 const view = ref("iso");
 function goView(k: string) {
   view.value = k;
@@ -487,6 +493,8 @@ onMounted(() => {
   loadLayout().then(syncScene);
   syncScene();
   if (ui.focusAgent) { callIn(ui.focusAgent); ui.focusAgent = null; }
+  // el asistente de agentes puede crear uno estando ya en la oficina: que entre y se enfoque
+  stopFocus = watch(() => ui.focusAgent, (id) => { if (id) { callIn(id); ui.focusAgent = null; } });
   offEvents = onTaskEvent((ev) => {
     if (missionTaskIds.value.has(ev.task_id) && ev.kind !== "speed") events.value.push({ ...ev, ts: undefined });
     // paquetes entre puestos: encargos al modelo local, arranques y entregas
@@ -506,6 +514,7 @@ onUnmounted(() => {
   clearInterval(clock);
   clearInterval(resTimer);
   offEvents?.();
+  stopFocus?.();
   office?.dispose();
   office = null;
 });
@@ -666,9 +675,10 @@ watch(() => [gpus.value, live.local.state, tpsNow.value > 0], () =>
           </button>
           <button v-if="Object.keys(layout).length" title="Volver a la colocación por defecto" @click="resetLayout"><i class="fa-solid fa-rotate-left" /></button>
         </div>
-        <div v-if="away.length || hidden.length" class="more">
+        <div class="more">
+          <button class="away away--new" title="Crear un agente nuevo con el asistente" @click="openWizard()"><i class="fa-solid fa-user-plus" /> Nuevo agente</button>
           <template v-if="hidden.length">{{ hidden.length }} sin puesto (caben {{ MAX_STATIONS }}) · </template>
-          <span>Fuera de la oficina:</span>
+          <span v-if="away.length">Fuera de la oficina:</span>
           <button v-for="a in away" :key="a.id" class="away" :class="{ 'away--off': isOff(a) }" :style="{ '--c': agentColor(a) }"
                   :title="isOff(a) ? `${a.name} está fuera de servicio: pulsa para volver a ponerlo a trabajar` : `Llamar a ${a.name} a la oficina`" @click="callIn(a.id)">
             <i class="d" />{{ a.name }}<small v-if="isOff(a)"> · fuera de servicio</small>
@@ -680,8 +690,7 @@ watch(() => [gpus.value, live.local.state, tpsNow.value > 0], () =>
           (Misión → Nueva) o cuando los llamas desde abajo.
         </p>
         <p v-if="!live.agents.length" class="hint">
-          <i class="fa-solid fa-user-plus" /> Aún no hay agentes. Créalos en <RouterLink to="/ajustes">Ajustes</RouterLink> o en
-          <RouterLink to="/modelos">Modelos locales</RouterLink>.
+          <i class="fa-solid fa-user-plus" /> Aún no hay agentes. <a href="#" @click.prevent="openWizard()">Crea el primero con el asistente</a>.
         </p>
       </div>
       <OfficeDock ref="dock" :events="events" :review="review" :review-title="diffTask ? `#${diffTask.id} ${diffTask.title}` : ''" />
@@ -804,6 +813,7 @@ watch(() => [gpus.value, live.local.state, tpsNow.value > 0], () =>
           </div>
           <p v-if="!locked" class="small muted">Arrastra su puesto en la oficina para recolocarlo.</p>
           <div class="row btns">
+            <button class="btn btn--small" @click="openWizard(selAgent.id)"><i class="fa-solid fa-pen" /> Editar</button>
             <button class="btn btn--small" @click="openCatalog('agents', selAgent.id)"><i class="fa-solid fa-boxes-stacked" /> Asignar</button>
             <button v-if="agentStats.last" class="btn btn--small" @click="router.push(`/chat/${agentStats.last.id}`)"><i class="fa-solid fa-comments" /> Chat</button>
           </div>
@@ -1357,6 +1367,11 @@ watch(() => [gpus.value, live.local.state, tpsNow.value > 0], () =>
   font: inherit;
   font-weight: 700;
   cursor: pointer;
+}
+.away--new {
+  background: var(--accent, #5b5bf0);
+  border-color: transparent;
+  color: #fff;
 }
 .away:hover {
   background: #d6d2c8;

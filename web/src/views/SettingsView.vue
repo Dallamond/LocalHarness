@@ -4,7 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import AgentAvatar from "../components/AgentAvatar.vue";
 import Card from "../components/Card.vue";
 import {
-  ROLE_TEXT, api, applyLook, live, look, post, refreshAll,
+  ROLE_TEXT, api, applyLook, live, look, openWizard, post, refreshAll,
   type Agent, type Project, type Settings, type Skill,
 } from "../api";
 
@@ -310,7 +310,8 @@ watch(look, applyLook, { deep: true });
     <template v-if="section === 'agentes'">
       <Card title="Agentes" subtitle="Cada agente es una configuración: proveedor, modelo, rol, límites y skills.">
         <template #actions>
-          <button class="btn btn--primary btn--small" @click="showNew = !showNew">{{ showNew ? "Cerrar" : "Nuevo agente" }}</button>
+          <button class="btn btn--primary btn--small" @click="openWizard()"><i class="fa-solid fa-wand-magic-sparkles" /> Nuevo agente</button>
+          <button class="btn btn--small btn--ghost" title="El formulario completo de antes, con todos los campos" @click="showNew = !showNew">{{ showNew ? "Cerrar" : "Formulario avanzado" }}</button>
         </template>
 
         <form v-if="showNew" class="agent-form new-agent" @submit.prevent="addAgent">
@@ -396,8 +397,9 @@ watch(look, applyLook, { deep: true });
               <span v-if="a.config.from_role" class="small rolefile" title="Agente de rol: se cambia editando su archivo; al arrancar LocalHarness lo vuelve a leer">
                 rol · <code>roles/{{ a.config.from_role }}.md</code></span>
               <div class="row agent__actions">
-                <button v-if="!a.config.from_role" class="btn btn--small" @click="editing === a.id ? (editing = null) : startEdit(a)">
-                  {{ editing === a.id ? "Cerrar" : "Editar" }}
+                <button class="btn btn--small btn--primary" @click="openWizard(a.id)">Editar</button>
+                <button v-if="!a.config.from_role" class="btn btn--small" title="Todos los campos (temperatura, comandos permitidos…)" @click="editing === a.id ? (editing = null) : startEdit(a)">
+                  {{ editing === a.id ? "Cerrar" : "Avanzado" }}
                 </button>
                 <button class="btn btn--small btn--ghost" title="Solo si no tiene historial" @click="removeAgent(a)">Borrar</button>
               </div>

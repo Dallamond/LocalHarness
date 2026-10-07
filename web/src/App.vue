@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useRoute } from "vue-router";
+import AgentWizard from "./components/AgentWizard.vue";
 import CatalogOverlay from "./components/CatalogOverlay.vue";
 import { live, openCatalog, pct, ui } from "./api";
 
@@ -60,6 +61,7 @@ const links = [
       <RouterView />
     </main>
     <CatalogOverlay v-if="ui.catalog" />
+    <AgentWizard v-if="ui.wizard" />
   </div>
 </template>
 
