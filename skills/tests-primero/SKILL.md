@@ -1,6 +1,7 @@
 ---
 name: tests-primero
 description: Para arreglar un fallo o añadir una función: primero un test que lo demuestre, luego el código
+category: Calidad y tests
 ---
 
 1. Antes de tocar el código, escribe (o amplía) un test que reproduzca el fallo o describa la función nueva.

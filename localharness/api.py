@@ -19,7 +19,8 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from localharness import actions, catalog, context, hardware, hf, llama, maintenance, modelinfo, roles, settings, workspace
+from localharness import (actions, catalog, context, hardware, hf, library, llama, maintenance, modelinfo, roles,
+                          settings, workspace)
 from localharness.adapters import ADAPTERS
 from localharness.context import load_skills
 from localharness.events import Event
@@ -109,6 +110,8 @@ class AgentIn(BaseModel):
     command_timeout_s: float | None = Field(default=None, gt=0, le=3600)
     timeout_s: float | None = Field(default=None, gt=0, le=86_400)  # tope de tiempo de cada tarea del agente
     thinking: Literal["apagado", "normal", "profundo"] | None = None  # pensamiento por defecto del agente
+    instructions: str | None = Field(default=None, max_length=8000)  # se añaden al prompt de cada tarea
+    template: str | None = Field(default=None, max_length=40)  # plantilla del asistente con la que se creó
 
 
 class AgentPatch(BaseModel):
@@ -134,17 +137,31 @@ class AgentPatch(BaseModel):
     timeout_s: float | None = Field(default=None, gt=0, le=86_400)
     thinking: Literal["apagado", "normal", "profundo"] | None = None
     off: bool | None = None  # fuera de servicio: fuera de la oficina y el Director no le encarga nada
+    instructions: str | None = Field(default=None, max_length=8000)
+    provider: str | None = None  # el asistente puede cambiar de Claude a local y al revés
 
 
 AGENT_CFG = ("max_turns", "max_budget_usd", "read_only", "skills", "base_url", "description", "subagents",
              "delegate_local", "web", "mcps", "temperature", "max_tokens", "repo_context", "tool_mode", "commands",
-             "command_timeout_s", "timeout_s", "thinking", "off")
+             "command_timeout_s", "timeout_s", "thinking", "off", "instructions")
 KEEP_FALSY = ("web", "commands")  # web=False y commands=[] significan algo (apagar), no «quitar el ajuste»
 
 
 class SkillIn(BaseModel):
     content: str = Field(min_length=10, max_length=200_000)  # el SKILL.md entero, con frontmatter `name`
     overwrite: bool = False
+    source: str | None = Field(default=None, max_length=500)  # de dónde viene (GitHub): se apunta en el frontmatter
+    category: str | None = Field(default=None, max_length=40)
+
+
+class GithubIn(BaseModel):
+    url: str = Field(min_length=3, max_length=500)
+
+
+class LibraryMcpIn(BaseModel):
+    name: str | None = Field(default=None, max_length=40)  # por defecto, el id de la biblioteca
+    params: dict[str, str] = {}
+    replace: bool = False
 
 
 class ProjectPatch(BaseModel):
@@ -447,7 +464,9 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
                                  "max_tokens": body.max_tokens, "repo_context": body.repo_context,
                                  "tool_mode": body.tool_mode, "web": body.web, "commands": body.commands,
                                  "command_timeout_s": body.command_timeout_s, "timeout_s": body.timeout_s,
-                                 "thinking": body.thinking}.items()
+                                 "thinking": body.thinking,
+                                 "instructions": (body.instructions or "").strip() or None,
+                                 "template": body.template}.items()
                if v is not None}
         a = st(request).add_agent(body.name, body.provider, model=body.model, role=body.role, config=cfg)
         return {**a, "config": cfg}
@@ -460,6 +479,10 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
             raise HTTPException(404, f"No existe el agente #{aid}")
         sent = body.model_fields_set
         cols = {k: getattr(body, k) or None for k in ("model", "role") if k in sent}
+        if body.provider and body.provider != a["provider"]:
+            if body.provider not in ADAPTERS:
+                raise HTTPException(422, f"Proveedor desconocido: {body.provider}")
+            cols["provider"] = body.provider
         cfg = json.loads(a["config"] or "{}")
         for k in sent & set(AGENT_CFG):
             v = getattr(body, k)
@@ -752,11 +775,20 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
     async def skills() -> list[dict]:
         return [s.summary() for s in (await asyncio.to_thread(load_skills)).values()]
 
+    @app.get("/api/skills/{name}")
+    async def skill_detail(name: str) -> dict:
+        """Una skill instalada con su SKILL.md entero (vista previa del Catálogo)."""
+        s = (await asyncio.to_thread(load_skills)).get(name)
+        if not s:
+            raise HTTPException(404, f"No existe la skill {name!r}")
+        return {**s.summary(), "content": s.path.read_text(encoding="utf-8", errors="replace")}
+
     @app.post("/api/skills", status_code=201)
     async def add_skill(body: SkillIn) -> dict:
         """Importar un SKILL.md desde el Catálogo (se guarda en data/skills, fuera de git)."""
+        content = library.with_source(body.content, body.source, body.category) if body.source else body.content
         try:
-            return (await asyncio.to_thread(context.import_skill, body.content, body.overwrite)).summary()
+            return (await asyncio.to_thread(context.import_skill, content, body.overwrite)).summary()
         except FileExistsError as e:
             raise HTTPException(409, str(e)) from None
         except ValueError as e:
@@ -770,6 +802,58 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
             raise HTTPException(404, str(e)) from None
         except PermissionError as e:
             raise HTTPException(409, str(e)) from None
+
+    # --- biblioteca del Catálogo: skills y MCP preparados, plantillas de agente, skills de GitHub
+    @app.get("/api/library")
+    async def get_library(request: Request) -> dict:
+        configured = settings.load(st(request)).get("mcp_servers") or {}
+        return await asyncio.to_thread(lambda: {"skills": library.skill_library(),
+                                                "mcps": library.mcp_library(configured),
+                                                "templates": library.templates()})
+
+    @app.post("/api/library/skills/{name}", status_code=201)
+    async def install_library_skill(name: str) -> dict:
+        try:
+            content = library.library_skill(name)
+            return (await asyncio.to_thread(context.import_skill, content)).summary()
+        except LookupError as e:
+            raise HTTPException(404, str(e)) from None
+        except FileExistsError as e:
+            raise HTTPException(409, str(e)) from None
+
+    @app.post("/api/library/github")
+    async def github_skills(body: GithubIn) -> dict:
+        """Busca los SKILL.md de un repo/carpeta/archivo de GitHub para previsualizarlos (no instala)."""
+        try:
+            return await asyncio.to_thread(library.github_skills, body.url)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+        except LookupError as e:
+            raise HTTPException(404, str(e)) from None
+        except OSError as e:  # urllib: red, 404, límite de la API de GitHub (60/h sin token)
+            code = getattr(e, "code", None)
+            msg = {404: "No existe ese repo o carpeta (¿es privado?)",
+                   403: "GitHub ha limitado las consultas (60/hora sin token): espera o define GITHUB_TOKEN"}.get(code)
+            raise HTTPException(502, msg or f"No se pudo leer GitHub: {e}") from None
+
+    @app.post("/api/library/mcp/{entry}", status_code=201)
+    async def add_library_mcp(request: Request, entry: str, body: LibraryMcpIn) -> dict:
+        """Añade un servidor de la biblioteca a `mcp_servers` con sus parámetros rellenados."""
+        try:
+            cfg = library.fill_mcp(entry, body.params)
+        except LookupError as e:
+            raise HTTPException(404, str(e)) from None
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+        name = (body.name or entry).strip()
+        current = settings.load(st(request)).get("mcp_servers") or {}
+        if name in current and not body.replace:
+            raise HTTPException(409, f"Ya hay un servidor MCP llamado {name!r}")
+        try:
+            values = settings.save(st(request), {"mcp_servers": {**current, name: cfg}})
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+        return {"name": name, "server": values["mcp_servers"][name]}
 
     # --- recursos para la oficina: GPU (nvidia-smi), worktrees abiertos
     @app.get("/api/resources")

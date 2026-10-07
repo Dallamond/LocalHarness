@@ -28,10 +28,14 @@ class Skill:
     description: str
     path: Path
     body: str
+    category: str = ""
+    source: str = ""
 
     def summary(self) -> dict:
+        imported = is_imported(self.path)
         return {"name": self.name, "description": self.description, "path": str(self.path), "chars": len(self.body),
-                "imported": is_imported(self.path)}
+                "imported": imported, "category": self.category or ("Importadas" if imported else "Otras"),
+                "source": self.source or None}
 
 
 def is_imported(path: Path) -> bool:
@@ -58,7 +62,7 @@ def parse_skill(path: Path) -> Skill | None:
                 meta[k.strip()] = v.strip().strip('"').strip("'")
         text = text[m.end():]
     name = meta.get("name") or path.parent.name
-    return Skill(name, meta.get("description", ""), path, text.strip())
+    return Skill(name, meta.get("description", ""), path, text.strip(), meta.get("category", ""), meta.get("source", ""))
 
 
 def skill_dirs() -> list[Path]:

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -208,13 +209,25 @@ def _had_delegation(store: Store, task_id: int) -> bool:
     return False
 
 
+NPM_SHIMS = {"npx", "npm", "pnpm", "yarn", "bunx"}
+
+
+def win_shim(srv: dict, nt: bool | None = None) -> dict:
+    """En Windows `npx` es un .cmd y la CLI de Claude no lo arranca directamente: hay que pasar por `cmd /c`."""
+    nt = os.name == "nt" if nt is None else nt
+    cmd = str(srv.get("command") or "")
+    if nt and cmd.lower().removesuffix(".cmd") in NPM_SHIMS:
+        return {**srv, "command": "cmd", "args": ["/c", cmd, *(srv.get("args") or [])]}
+    return srv
+
+
 def _mcp_setup(store: Store, root: Path, cfg: dict, write: bool) -> dict | None:
     """Archivo `--mcp-config` de un agente Claude: los servidores del Catálogo que tiene asignados (`config.mcps`)
     y, con «Puede delegar en el modelo local», el servidor `local` (localharness.mcp_local). Va en una carpeta
     temporal (puede llevar la clave del llama-server) que se borra al terminar la tarea. None si no lleva ninguno."""
     catalog = settings.load(store).get("mcp_servers") or {}
     wanted = [n for n in cfg.get("mcps") or [] if n != "local"]
-    servers = {n: {k: v for k, v in catalog[n].items() if k != "description"} for n in wanted if n in catalog}
+    servers = {n: win_shim({k: v for k, v in catalog[n].items() if k != "description"}) for n in wanted if n in catalog}
     delegate = bool(cfg.get("delegate_local"))
     if not servers and not delegate:
         return None
