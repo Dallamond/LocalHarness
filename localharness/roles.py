@@ -129,3 +129,23 @@ def sync_roles(store: Store, roles: dict[str, Role] | None = None) -> list[str]:
         else:
             log.append(f"rol {r.name}: ya hay un agente propio con ese nombre, no se toca")
     return log
+
+
+def retire_role_agents(store: Store) -> list[str]:
+    """Agentes a medida (designer.py) en lugar de los de rol: los que se crearon solos desde roles/*.md se quitan.
+    Sin tareas se borran; con historial se quedan fuera de servicio (`off`) para no perder lo hecho. Una sola vez
+    por agente (`retired`): si lo vuelves a llamar a la oficina, se queda."""
+    log = []
+    for a in store.list_agents():
+        cfg = json.loads(a.get("config") or "{}")
+        if not cfg.get("from_role") or cfg.get("retired"):
+            continue
+        used = store.db.execute("SELECT 1 FROM tasks WHERE agent_id=? UNION SELECT 1 FROM plans WHERE director_agent_id=? "
+                                "OR reviewer_agent_id=? LIMIT 1", (a["id"], a["id"], a["id"])).fetchone()
+        if used:
+            store.update_agent(a["id"], config={**cfg, "off": True, "retired": True})
+            log.append(f"rol {a['name']}: fuera de servicio (tiene historial)")
+        else:
+            store.delete_agent(a["id"])
+            log.append(f"rol {a['name']}: quitado (ahora los agentes se diseñan para cada tarea)")
+    return log

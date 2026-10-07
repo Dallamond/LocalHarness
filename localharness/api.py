@@ -19,8 +19,8 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from localharness import (actions, catalog, context, hardware, hf, library, llama, maintenance, mcp_local, modelinfo,
-                          orchestrator, roles, settings, workspace)
+from localharness import (actions, analytics, catalog, context, designer, hardware, hf, library, llama, maintenance, mcp_local,
+                          modelinfo, orchestrator, roles, settings, usage, workspace)
 from localharness.adapters import ADAPTERS
 from localharness.context import load_skills
 from localharness.events import Event
@@ -150,6 +150,16 @@ AGENT_CFG = ("max_turns", "max_budget_usd", "read_only", "skills", "base_url", "
              "delegate_local", "coordinator", "local_skills", "web", "mcps", "temperature", "max_tokens", "repo_context", "tool_mode",
              "commands", "command_timeout_s", "timeout_s", "thinking", "off", "instructions")
 KEEP_FALSY = ("web", "commands")  # web=False y commands=[] significan algo (apagar), no «quitar el ajuste»
+
+
+class DesignIn(BaseModel):
+    project_id: int
+    prompt: str = Field(min_length=1, max_length=20_000)
+
+
+class GeneratedIn(BaseModel):
+    spec: dict
+    prompt: str = Field(default="", max_length=20_000)
 
 
 class WorkerIn(BaseModel):
@@ -396,7 +406,9 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         store = Store(db_path)
         store.mark_interrupted()
         settings.apply(store)
-        app.state.roles_log = roles.sync_roles(store)  # objetivo 5: los roles de roles/*.md son agentes listos
+        # agentes a medida por tarea (designer.py); con «roles_autosync» vuelven los agentes fijos de roles/*.md
+        app.state.roles_log = (roles.sync_roles(store) if settings.load(store).get("roles_autosync")
+                               else roles.retire_role_agents(store))
         app.state.store = store
         app.state.hub = EventHub()
         app.state.runner = Runner(store, app.state.hub, binaries, worktree_root)
@@ -488,6 +500,33 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
     @app.get("/api/agents")
     async def agents(request: Request) -> list[dict]:
         return [{**a, "config": json.loads(a["config"] or "{}")} for a in st(request).list_agents()]
+
+    @app.post("/api/agents/design")
+    async def design_agent(request: Request, body: DesignIn) -> dict:
+        """Agente a medida para una petición: propuesta (no se guarda) con modelo, skills, MCP, herramientas y motivo."""
+        store = st(request)
+        project = store.get_project(body.project_id)
+        if not project:
+            raise HTTPException(404, f"No existe el proyecto #{body.project_id}")
+        port = settings.load(store)["llama"]["port"]
+        status = await asyncio.to_thread(request.app.state.llama.status, port)
+        ready = status["state"] in ("ready", "external")
+        model = Path(status["model"]).name if ready and status.get("model") else None
+        binary = (request.app.state.runner.binaries or {}).get("claude")
+        return await designer.design(store, body.prompt, project, binary=binary, local_ready=ready, local_model=model)
+
+    @app.post("/api/agents/generated", status_code=201)
+    async def create_generated(request: Request, body: GeneratedIn) -> dict:
+        """Guarda una propuesta del diseñador (quizá retocada en la GUI) como agente para la tarea."""
+        store = st(request)
+        cat = await asyncio.to_thread(designer.catalog, store)
+        port = settings.load(store)["llama"]["port"]
+        ready = (await asyncio.to_thread(request.app.state.llama.status, port))["state"] in ("ready", "external")
+        spec = {**designer.normalize(body.spec, cat, ready), "designed_by": body.spec.get("designed_by")}
+        if body.spec.get("reason"):
+            spec["reason"] = str(body.spec["reason"])[:1200]
+        a = await asyncio.to_thread(designer.create_agent, store, spec, body.prompt)
+        return {**a, "config": json.loads(a["config"] or "{}") if isinstance(a.get("config"), str) else a.get("config")}
 
     @app.post("/api/agents", status_code=201)
     async def add_agent(request: Request, body: AgentIn) -> dict:
@@ -921,7 +960,26 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
                 if p["branch"] and p["status"] not in maintenance.CLOSED_PLAN:
                     wts.append({"kind": "plan", "id": p["id"], "branch": p["branch"], "status": p["status"],
                                 "project": names.get(p["project_id"])})
-            return {"gpus": gpus(), "worktrees": wts}
+            return {"gpus": gpus(), "worktrees": wts, "system": usage.system()}
+        return await asyncio.to_thread(gather)
+
+    @app.get("/api/llama/usage")
+    async def llama_usage(request: Request) -> dict:
+        """Consumo en vivo para Modelos locales: PC (CPU/RAM), GPU, el proceso de llama-server y dónde está cargado
+        el modelo (capas y MB en GPU o en RAM, del log de llama-server)."""
+        cfg = settings.load(st(request))["llama"]
+        mgr = request.app.state.llama
+
+        def gather() -> dict:
+            status = mgr.status(cfg["port"])
+            pid = status.get("pid") or (usage.find_llama_pid(cfg["port"]) if status["state"] != "off" else None)
+            proc = usage.process(pid)
+            if proc is not None:
+                proc["vram_mb"] = usage.gpu_by_pid().get(pid)
+            own = status.get("pid") is not None
+            return {"state": status["state"], "model": status.get("model"), "system": usage.system(), "gpus": gpus(),
+                    "process": proc, "placement": usage.placement(mgr.log_text()) if own else None,
+                    "psutil": usage.psutil is not None}
         return await asyncio.to_thread(gather)
 
     # --- inicio: qué hace cada agente ahora y qué ha cambiado últimamente
@@ -978,6 +1036,11 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
     async def task_events(request: Request, tid: int, after: int = 0) -> list[dict]:
         task_or_404(st(request), tid)
         return [{**e, "data": json.loads(e["data"] or "{}")} for e in st(request).list_events(tid, after)]
+
+    @app.get("/api/analytics")
+    async def get_analytics(request: Request, days: int = 30) -> dict:
+        """Peticiones, tokens (Claude y modelo local), coste, encargos y uso por agente de los últimos `days` días."""
+        return await asyncio.to_thread(analytics.compute, st(request), max(1, min(days, 365)))
 
     @app.get("/api/tasks/{tid}/worker")
     async def task_worker(request: Request, tid: int) -> dict:

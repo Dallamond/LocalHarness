@@ -10,7 +10,7 @@ import OfficeDock from "../office/OfficeDock.vue";
 import { MAX_STATIONS, Office, type BoardStep, type GitRow, type Placement, type StationKind, type StationSpec, type StationState } from "../office/office3d";
 import {
   PLAN_TEXT, PROVIDER_TEXT, ROLE_TEXT, STATUS_TEXT, agentColor, agentName, api, describeActivity, duration, live,
-  modelText, onTaskEvent, openCatalog, openWizard, parseTs, pct, planChip, planList, post, projectName, refreshAll, speedText,
+  modelText, onTaskEvent, openCatalog, putTask, openWizard, parseTs, pct, planChip, planList, post, projectName, refreshAll, speedText,
   statusChip, tps, ui, usd,
   type Agent, type Gpu, type InboxItem, type Review, type Task, type TaskEvent, type Worktree,
 } from "../api";
@@ -37,8 +37,12 @@ function lastSeen(aid: number): number {
 // «Quitar de la oficina» = fuera de servicio (config.off): no aparece aunque haya trabajado y el Director no le
 // encarga nada. Si aún le queda una tarea en marcha o esperando tu decisión, sigue en su puesto hasta acabar.
 const isOff = (a: Agent) => !!a.config.off;
+// los agentes a medida son de UNA tarea: están mientras esa tarea sigue abierta; cerrada (integrada o descartada), se van
+const CLOSED = ["merged", "rejected", "discarded", "cancelled", "failed", "timeout", "interrupted"];
+const generatedOpen = (a: Agent) => mine(a.id).some((t) => !CLOSED.includes(t.status)) || mine(a.id).length === 0;
 const present = computed(() => agentsSorted.value.filter((a) => runningOf(a.id) || waitingOf(a.id) ||
-  (!isOff(a) && (summoned.value.has(a.id) || now.value - lastSeen(a.id) < PRESENCE_MS))));
+  (!isOff(a) && (summoned.value.has(a.id) ||
+    (a.config.generated ? generatedOpen(a) : now.value - lastSeen(a.id) < PRESENCE_MS)))));
 const shown = computed(() => present.value.slice(0, MAX_STATIONS));
 const hidden = computed(() => present.value.slice(MAX_STATIONS));
 const away = computed(() => agentsSorted.value.filter((a) => !present.value.includes(a)));
@@ -68,6 +72,17 @@ const isLocalEv = (e: { kind: string; text: string }) => ["delegate", "worker", 
   || (e.kind === "progress" && String(e.text).startsWith("Modelo local:"));
 const delegates = (a?: Agent) => !!a && a.provider === "claude" && !!(a.config.delegate_local || a.config.coordinator);
 const workerEvents = reactive<Record<number, TaskEvent[]>>({});
+// lo que el trabajador local está pensando/escribiendo AHORA (eventos `worker_live`, no se guardan)
+interface WorkerLive { tool?: string; task?: string; thinking: string; text: string; done: boolean; at: number; skills?: string[] }
+const workerLive = reactive<Record<number, WorkerLive>>({});
+const liveNow = (tid: number) => {
+  const l = workerLive[tid];
+  return l && !l.done && Date.now() / 1000 - l.at < 8 ? l : null;
+};
+const workerSkills = (tid: number): string[] => {
+  const last = [...(workerEvents[tid] ?? [])].reverse().find((e) => e.kind === "worker");
+  return (last?.data?.skills as string[] | undefined) ?? workerLive[tid]?.skills ?? [];
+};
 const workerLoaded = new Set<number>();
 // candidatas: tareas de un Claude que delega en marcha, la misión elegida y la tarea del trabajador que miras
 const workerCandidates = computed(() => tasks.value.filter((t) => delegates(live.agents.find((a) => a.id === t.agent_id))
@@ -92,12 +107,14 @@ function workerBusy(tid: number): boolean {
     if (e.kind === "tool" && !String(e.text).endsWith("local_prepare")) open++;
     if (e.kind === "delegate" && tool !== "local_prepare" && !tool.includes("/")) open = Math.max(0, open - 1);
   }
-  return open > 0 && live.tasks[tid]?.status === "running";
+  return (open > 0 || !!liveNow(tid)) && live.tasks[tid]?.status === "running";
 }
 function workerBubble(tid: number): string {
   const evs = workerEvents[tid] ?? [];
   const last = [...evs].reverse().find((e) => e.kind === "delegate" || e.kind === "tool" || e.kind === "progress");
   if (!last || live.tasks[tid]?.status !== "running") return "";
+  const l = liveNow(tid);
+  if (l) return l.text ? `✍️ ${l.text.slice(-70)}` : l.thinking ? `💭 ${l.thinking.slice(-70)}` : "Con un encargo…";
   if (workerBusy(tid)) return last.kind === "progress" ? String(last.text).replace(/^Modelo local:\s*/, "") : "Con un encargo…";
   return "Esperando encargo";
 }
@@ -123,7 +140,9 @@ function bubbleOf(sid: string): string {
 function stateText(sid: string): { text: string; cls: string } {
   if (sid.startsWith("w")) {
     const tid = Number(sid.slice(1));
-    return workerBusy(tid) ? { text: "trabajando", cls: "working" } : { text: `para #${tid}`, cls: "" };
+    const n = workerSkills(tid).length;
+    const sk = n ? ` · ${n} skill${n > 1 ? "s" : ""}` : "";
+    return workerBusy(tid) ? { text: `trabajando${sk}`, cls: "working" } : { text: `para #${tid}${sk}`, cls: "" };
   }
   if (sid === "you") return live.inbox.length ? { text: "decide", cls: "waiting" } : { text: "director", cls: "" };
   const a = agentOf(sid);
@@ -164,11 +183,59 @@ async function loadEvents() {
   events.value = all.flat().sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
 }
 watch(() => [curKey.value, [...missionTaskIds.value].join(",")], () => loadEvents().catch(() => {}), { immediate: true });
+// ---------- resumen de la misión: el encargo y lo que está haciendo el modelo local, encargo a encargo
+const briefOpen = ref(false);
+const curAgent = computed(() => (curTask.value ? live.agents.find((a) => a.id === curTask.value!.agent_id) : undefined));
+interface LocalJob { key: string; title: string; kind: string; state: "run" | "ok" | "bad"; meta?: string; children: { title: string; ok: boolean }[] }
+const LOCAL_KIND: Record<string, string> = { local_ask: "pregunta", local_write_file: "escribe", local_execute_plan: "plan",
+  local_agent: "tarea", local_research: "investiga", run_checks: "tests" };
+const localJobs = computed<LocalJob[]>(() => {
+  const t = curTask.value;
+  if (!t) return [];
+  const out: LocalJob[] = [];
+  for (const e of workerEvents[t.id] ?? []) {
+    const d = (e.data ?? {}) as Record<string, unknown>;
+    if (e.kind === "tool") {
+      const tool = String(e.text).replace(/^mcp__local__/, "");
+      if (tool === "local_prepare") continue;
+      const inp = (d.input ?? {}) as Record<string, unknown>;
+      const blocks = inp.blocks as { title?: string; path?: string }[] | undefined;
+      const title = blocks ? `${blocks.length} bloques: ${blocks.map((b) => b.title ?? b.path).join(", ")}`
+        : String(inp.task ?? inp.path ?? inp.question ?? inp.command ?? tool);
+      out.push({ key: `j${e.id ?? out.length}`, title, kind: LOCAL_KIND[tool] ?? tool, state: "run", children: [] });
+    } else if (e.kind === "delegate") {
+      const tool = String(d.tool ?? "");
+      if (tool === "local_prepare") continue;
+      const open = out.find((j) => j.state === "run");
+      if (tool.includes("/")) { // un bloque de un plan
+        open?.children.push({ title: String(d.task ?? d.path ?? "bloque"), ok: d.ok !== false });
+        continue;
+      }
+      const meta = [d.seconds != null ? `${d.seconds} s` : "", d.completion_tokens ? `${d.completion_tokens} tokens` : ""].filter(Boolean).join(" · ");
+      if (open) { open.state = d.ok === false ? "bad" : "ok"; open.meta = d.ok === false ? String(d.error ?? "falló").slice(0, 120) : meta; }
+      else out.push({ key: `d${e.id}`, title: String(d.task ?? d.path ?? tool), kind: LOCAL_KIND[tool] ?? tool, state: d.ok === false ? "bad" : "ok", meta, children: [] });
+    }
+  }
+  if (t.status !== "running") out.forEach((j) => { if (j.state === "run") j.state = "bad"; });
+  return out;
+});
+const curLive = computed(() => (curTask.value ? liveNow(curTask.value.id) : null));
+
 // encargos de verdad: sin equipar (local_prepare) ni los bloques sueltos de un plan
 const delegations = computed(() => events.value.filter((e) => e.kind === "delegate"
   && !String(e.data?.tool ?? "").includes("/") && e.data?.tool !== "local_prepare").length);
 // (aquí y no arriba: usa la misión elegida, que se define más abajo que los puestos)
 watch(() => workerCandidates.value.map((t) => t.id).join(), () => loadWorkerEvents().catch(() => {}), { immediate: true });
+// cuando el trabajador local entra a trabajar y estabas mirando a su Claude (o a ti), se le enfoca para verlo
+const seenWorkers = new Set<number>();
+watch(() => workers.value.map((t) => t.id).join(), () => {
+  for (const t of workers.value) {
+    if (seenWorkers.has(t.id)) continue;
+    seenWorkers.add(t.id);
+    if (t.status === "running" && (sel.value === `a${t.agent_id}` || sel.value === "you")) setTimeout(() => pick(`w${t.id}`), 600);
+  }
+});
+
 
 interface Step extends BoardStep { icon: string; sub?: string }
 const FAILED = ["failed", "timeout", "cancelled", "interrupted"];
@@ -247,25 +314,55 @@ watch(() => [diffTask.value?.id, diffTask.value?.status, diffTask.value?.head_co
 
 // ---------- nueva misión
 const composing = ref(false);
-const form = reactive({ project_id: null as number | null, agent_id: null as number | null, prompt: "" });
+// agent_id 0 = «agente a medida»: el diseñador lo crea desde cero para esta petición (designer.py)
+const form = reactive({ project_id: null as number | null, agent_id: 0 as number | null, prompt: "" });
 const formError = ref("");
 const sending = ref(false);
 watch(() => [live.projects.length, live.agents.length], () => {
   form.project_id ??= live.projects[0]?.id ?? null;
-  form.agent_id ??= agentsSorted.value.find((a) => a.provider === "claude")?.id ?? agentsSorted.value[0]?.id ?? null;
 }, { immediate: true });
+// ---------- agente a medida: propuesta del diseñador que puedes retocar antes de lanzar
+interface Proposal {
+  name: string; description: string; provider: string; model: string | null; coordinator: boolean; read_only: boolean;
+  web: boolean; thinking: string; skills: string[]; local_skills: string[]; mcps: string[]; max_turns: number;
+  max_budget_usd?: number; instructions: string; reason: string; designed_by: string; design_cost_usd: number;
+}
+const proposal = ref<Proposal | null>(null);
+const designing = ref(false);
+async function design() {
+  designing.value = true;
+  formError.value = "";
+  try {
+    proposal.value = await post<Proposal>("/api/agents/design", { project_id: form.project_id, prompt: form.prompt.trim() });
+  } catch (e) {
+    formError.value = (e as Error).message;
+  } finally {
+    designing.value = false;
+  }
+}
+watch(() => [form.prompt, form.project_id], () => (proposal.value = null)); // otra petición: otro agente
+const dropFrom = (key: "skills" | "local_skills" | "mcps", name: string) => {
+  if (proposal.value) proposal.value[key] = proposal.value[key].filter((x) => x !== name);
+};
 async function launch() {
-  if (!form.project_id || !form.agent_id || !form.prompt.trim()) return;
+  if (!form.project_id || form.agent_id === null || !form.prompt.trim()) return;
+  if (form.agent_id === 0 && !proposal.value) return design();
   sending.value = true;
   formError.value = "";
   try {
+    if (form.agent_id === 0 && proposal.value) {
+      const a = await post<Agent>("/api/agents/generated", { spec: proposal.value, prompt: form.prompt.trim() });
+      await refreshAll();
+      form.agent_id = a.id;
+    }
     const t = await post<Task>("/api/tasks", { project_id: form.project_id, agent_id: form.agent_id, prompt: form.prompt.trim() });
-    live.tasks[t.id] = t;
+    putTask(t);
     summoned.value = new Set([...summoned.value, form.agent_id]);
     chosen.value = `t${t.id}`;
     form.prompt = "";
     composing.value = false;
     sel.value = `a${form.agent_id}`;
+    if (proposal.value) { proposal.value = null; form.agent_id = 0; }
   } catch (e) {
     formError.value = (e as Error).message;
   } finally {
@@ -345,9 +442,11 @@ function showInbox(i: InboxItem) {
 // ---------- recursos: GPU (nvidia-smi), worktrees, tokens/s
 const gpus = ref<Gpu[]>([]);
 const worktrees = ref<Worktree[]>([]);
+interface SysUsage { cpu_pct: number | null; per_core: number[]; cores: number | null; ram_total_gb: number | null; ram_used_gb: number | null; ram_pct: number | null }
+const sys = ref<SysUsage | null>(null);
 async function loadResources() {
-  const r = await api<{ gpus: Gpu[]; worktrees: Worktree[] }>("/api/resources").catch(() => null);
-  if (r) { gpus.value = r.gpus; worktrees.value = r.worktrees; }
+  const r = await api<{ gpus: Gpu[]; worktrees: Worktree[]; system?: SysUsage }>("/api/resources").catch(() => null);
+  if (r) { gpus.value = r.gpus; worktrees.value = r.worktrees; sys.value = r.system ?? null; }
 }
 let resTimer: ReturnType<typeof setInterval>;
 const gpuFrac = (g: Gpu) => (g.mem_used_mb && g.mem_total_mb ? g.mem_used_mb / g.mem_total_mb : 0);
@@ -406,7 +505,7 @@ async function sendNudge() {
     } else {
       if (!tgt.project) throw new Error("Primero vincula un proyecto (Chat → Vincular carpeta)");
       const t = await post<Task>("/api/tasks", { project_id: tgt.project, agent_id: a.id, prompt: text });
-      live.tasks[t.id] = t;
+      putTask(t);
       chosen.value = `t${t.id}`;
     }
     nudge.value = "";
@@ -518,6 +617,47 @@ function resetLayout() {
   location.reload();
 }
 const localOn = computed(() => live.local.state !== "off");
+
+// ---------- tamaño de los paneles: arrastrar las asas entre columnas y sobre el panel de abajo
+const SIZE_DEFAULT = { left: 330, right: 330, dock: 230 };
+const sizes = reactive({ ...SIZE_DEFAULT });
+try { Object.assign(sizes, JSON.parse(localStorage.getItem("lh-office-sizes") ?? "{}")); } catch { /* sin almacenamiento */ }
+const officeEl = ref<HTMLElement>();
+const drag = ref<{ which: "left" | "right" | "dock"; x: number; y: number; start: number } | null>(null);
+function clampSizes() {
+  const w = officeEl.value?.clientWidth ?? 1400, h = officeEl.value?.clientHeight ?? 900;
+  const maxSide = Math.max(260, (w - 320) / 2); // la oficina nunca baja de ~320 px
+  sizes.left = Math.round(Math.min(maxSide, Math.max(220, sizes.left)));
+  sizes.right = Math.round(Math.min(maxSide, Math.max(220, sizes.right)));
+  sizes.dock = Math.round(Math.min(h - 160, Math.max(40, sizes.dock)));
+}
+function saveSizes() {
+  try { localStorage.setItem("lh-office-sizes", JSON.stringify(sizes)); } catch { /* sin almacenamiento */ }
+}
+function onDrag(e: PointerEvent) {
+  const d = drag.value;
+  if (!d) return;
+  if (d.which === "left") sizes.left = d.start + (e.clientX - d.x);
+  else if (d.which === "right") sizes.right = d.start - (e.clientX - d.x);
+  else sizes.dock = d.start - (e.clientY - d.y);
+  clampSizes();
+}
+function endDrag() {
+  drag.value = null;
+  window.removeEventListener("pointermove", onDrag);
+  window.removeEventListener("pointerup", endDrag);
+  saveSizes();
+}
+function startDrag(which: "left" | "right" | "dock", e: PointerEvent) {
+  drag.value = { which, x: e.clientX, y: e.clientY, start: sizes[which] };
+  window.addEventListener("pointermove", onDrag);
+  window.addEventListener("pointerup", endDrag);
+  e.preventDefault();
+}
+function resetSizes(which: "left" | "right" | "dock") {
+  sizes[which] = SIZE_DEFAULT[which];
+  saveSizes();
+}
 function pick(id: string) {
   sel.value = id;
   view.value = id;
@@ -533,6 +673,8 @@ onMounted(() => {
   }, 500);
   loadResources();
   resTimer = setInterval(loadResources, 3000);
+  clampSizes();
+  window.addEventListener("resize", clampSizes);
   try {
     office = new Office(host.value!, labelsEl.value!, pick);
     office.movable = !locked.value;
@@ -549,11 +691,12 @@ onMounted(() => {
   // el asistente de agentes puede crear uno estando ya en la oficina: que entre y se enfoque
   stopFocus = watch(() => ui.focusAgent, (id) => { if (id) { callIn(id); ui.focusAgent = null; } });
   offEvents = onTaskEvent((ev) => {
-    if (missionTaskIds.value.has(ev.task_id) && ev.kind !== "speed") events.value.push({ ...ev, ts: undefined });
+    if (missionTaskIds.value.has(ev.task_id) && !["speed", "worker_live"].includes(ev.kind)) events.value.push({ ...ev, ts: undefined });
     // paquetes entre puestos: encargos al modelo local, arranques y entregas
     const t = live.tasks[ev.task_id];
     if (!t || !office) return;
     const me = `a${t.agent_id}`;
+    if (ev.kind === "worker_live") workerLive[ev.task_id] = ev.data as unknown as WorkerLive;
     if (isLocalEv(ev) && (workerEvents[ev.task_id] || delegates(live.agents.find((a) => a.id === t.agent_id)))) {
       workerEvents[ev.task_id] = [...(workerEvents[ev.task_id] ?? []), { ...ev, ts: undefined }];
     }
@@ -572,6 +715,8 @@ onMounted(() => {
   });
 });
 onUnmounted(() => {
+  window.removeEventListener("resize", clampSizes);
+  endDrag();
   clearInterval(clock);
   clearInterval(resTimer);
   offEvents?.();
@@ -598,10 +743,11 @@ watch(() => [missionTitle.value, JSON.stringify(steps.value.map((s) => [s.label,
 watch(worktrees, (w) => office?.drawGit(w.map((x) => ({ name: x.branch, status: wtState(x) }))));
 watch(() => [gpus.value, live.local.state, tpsNow.value > 0], () =>
   office?.setGpu(gpus.value.map(gpuFrac), Math.max(0, ...gpus.value.map((g) => (g.util ?? 0) / 100)), live.local.state));
+watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) / 100));
 </script>
 
 <template>
-  <div class="office">
+  <div ref="officeEl" class="office" :class="{ dragging: !!drag }" :style="{ '--lw': `${sizes.left}px`, '--rw': `${sizes.right}px`, '--dockh': `${sizes.dock}px` }">
     <!-- izquierda: misión + bandeja -->
     <aside class="col">
       <section class="card pad mission">
@@ -626,7 +772,8 @@ watch(() => [gpus.value, live.local.state, tpsNow.value > 0], () =>
             <select v-model="form.project_id" class="input" title="Proyecto">
               <option v-for="p in live.projects" :key="p.id" :value="p.id">{{ p.name }}</option>
             </select>
-            <select v-model="form.agent_id" class="input" title="Agente">
+            <select v-model="form.agent_id" class="input" title="Agente" @change="proposal = null">
+              <option :value="0">✨ Agente a medida</option>
               <option v-for="a in agentsSorted" :key="a.id" :value="a.id">{{ a.name }} · {{ a.provider }}</option>
             </select>
           </div>
@@ -634,10 +781,42 @@ watch(() => [gpus.value, live.local.state, tpsNow.value > 0], () =>
             v-model="form.prompt" class="input" rows="3" placeholder="¿Qué hay que hacer? (Enter para ejecutar)"
             @keydown.enter.exact.prevent="launch"
           />
+          <!-- propuesta del diseñador: qué agente se va a crear y por qué (quita lo que no quieras) -->
+          <div v-if="proposal" class="prop">
+            <div class="prop-h">
+              <i class="fa-solid fa-wand-magic-sparkles" />
+              <b>{{ proposal.name }}</b>
+              <span class="prov" :class="`prov--${proposal.provider}`">{{ proposal.provider === "claude" ? `Claude ${proposal.model}` : "Modelo local" }}</span>
+            </div>
+            <div class="chips">
+              <span v-if="proposal.coordinator" class="pill pill--ok" title="Claude planifica y el modelo local hace el trabajo"><i class="fa-solid fa-user-tie" />coordina al local</span>
+              <span v-if="proposal.read_only" class="pill"><i class="fa-solid fa-eye" />solo lectura</span>
+              <span v-if="proposal.web" class="pill pill--active"><i class="fa-solid fa-globe" />internet</span>
+              <span v-if="proposal.thinking !== 'normal'" class="pill"><i class="fa-solid fa-brain" />pensar {{ proposal.thinking }}</span>
+              <span class="pill"><i class="fa-solid fa-repeat" />{{ proposal.max_turns }} turnos</span>
+            </div>
+            <div v-if="proposal.skills.length" class="prop-row"><span>Skills</span>
+              <button v-for="x in proposal.skills" :key="x" type="button" class="pill pill--active" title="Quitar" @click="dropFrom('skills', x)"><i class="fa-solid fa-bolt" />{{ x }} ×</button>
+            </div>
+            <div v-if="proposal.local_skills.length" class="prop-row"><span>Su modelo local</span>
+              <button v-for="x in proposal.local_skills" :key="x" type="button" class="pill pill--active" title="Quitar" @click="dropFrom('local_skills', x)"><i class="fa-solid fa-robot" />{{ x }} ×</button>
+            </div>
+            <div v-if="proposal.mcps.length" class="prop-row"><span>MCP</span>
+              <button v-for="x in proposal.mcps" :key="x" type="button" class="pill pill--active" title="Quitar" @click="dropFrom('mcps', x)"><i class="fa-solid fa-plug" />{{ x }} ×</button>
+            </div>
+            <p v-if="proposal.reason" class="small muted">{{ proposal.reason }}</p>
+            <p class="small muted">Diseñado por {{ proposal.designed_by === "claude" ? `Claude Haiku (${usd(proposal.design_cost_usd)})` : "reglas (sin Claude)" }}</p>
+          </div>
           <p v-if="formError" class="error small">{{ formError }}</p>
-          <button class="btn btn--primary" :disabled="sending || !form.prompt.trim() || !form.project_id || !form.agent_id">
-            <i class="fa-solid fa-play" /> Ejecutar
-          </button>
+          <div class="row">
+            <button class="btn btn--primary" :disabled="sending || designing || !form.prompt.trim() || !form.project_id || form.agent_id === null">
+              <i class="fa-solid" :class="designing ? 'fa-spinner fa-spin' : form.agent_id === 0 && !proposal ? 'fa-wand-magic-sparkles' : 'fa-play'" />
+              {{ designing ? "Diseñando el agente…" : form.agent_id === 0 && !proposal ? "Diseñar agente" : form.agent_id === 0 ? "Crear agente y ejecutar" : "Ejecutar" }}
+            </button>
+            <button v-if="proposal" type="button" class="btn btn--small" :disabled="designing" @click="design">
+              <i class="fa-solid fa-rotate" /> Otra propuesta
+            </button>
+          </div>
         </form>
 
         <template v-if="curKey && !composing">
@@ -653,7 +832,27 @@ watch(() => [gpus.value, live.local.state, tpsNow.value > 0], () =>
               <StatusChip :state="planChip(curPlan.status)" :text="PLAN_TEXT[curPlan.status] ?? curPlan.status" />
             </template>
           </div>
+          <!-- el encargo entero (recortado) y, si el agente es a medida, por qué es así -->
+          <div v-if="curTask" class="m-sum" :class="{ open: briefOpen }" title="Pulsa para ver el encargo entero" @click="briefOpen = !briefOpen">
+            <p>{{ curTask.prompt }}</p>
+            <small v-if="curAgent?.config.generated && curAgent.config.design_reason"><i class="fa-solid fa-wand-magic-sparkles" /> {{ curAgent.config.design_reason }}</small>
+          </div>
           <div class="m-prog"><span :style="{ width: `${progress * 100}%` }" /></div>
+          <!-- qué está haciendo el modelo local, encargo a encargo -->
+          <div v-if="curTask && (localJobs.length || curLive)" class="ljobs">
+            <div class="ljobs__h"><i class="fa-solid fa-robot" /> Modelo local <em>{{ localJobs.filter((j) => j.state === "ok").length }}/{{ localJobs.length }} hechos</em>
+              <button v-if="workers.some((w) => w.id === curTask!.id)" class="linkish" @click="pick(`w${curTask.id}`)">ver →</button>
+            </div>
+            <div v-for="j in localJobs.slice(-8)" :key="j.key" class="ljob" :class="j.state">
+              <i class="fa-solid" :class="j.state === 'run' ? 'fa-gear fa-spin' : j.state === 'ok' ? 'fa-check' : 'fa-xmark'" />
+              <div>
+                <b><span class="tag">{{ j.kind }}</span> {{ j.title.length > 110 ? j.title.slice(0, 110) + "…" : j.title }}</b>
+                <small v-if="j.meta">{{ j.meta }}</small>
+                <small v-for="(c, k) in j.children" :key="k" :class="{ bad: !c.ok }">{{ c.ok ? "✓" : "✗" }} {{ c.title }}</small>
+                <small v-if="j.state === 'run' && curLive" class="livetxt">{{ curLive.text ? `✍️ ${curLive.text.slice(-140)}` : curLive.thinking ? `💭 ${curLive.thinking.slice(-140)}` : "leyendo…" }}</small>
+              </div>
+            </div>
+          </div>
           <div class="steps">
             <div v-for="(s, i) in steps" :key="i" class="step" :class="s.state" :style="{ '--c': s.color }">
               <div class="dot"><i class="fa-solid" :class="s.state === 'wait' ? 'fa-lock' : s.icon" /></div>
@@ -677,7 +876,8 @@ watch(() => [gpus.value, live.local.state, tpsNow.value > 0], () =>
       </section>
 
       <section class="card pad grow">
-        <h3 class="card-title">Bandeja de aprobaciones <em>{{ live.inbox.length }} pendiente{{ live.inbox.length === 1 ? "" : "s" }}</em></h3>
+        <h3 class="card-title">Bandeja de aprobaciones <em>{{ live.inbox.length }} pendiente{{ live.inbox.length === 1 ? "" : "s" }}</em>
+          <RouterLink to="/trabajo" class="tolink" title="Revisar con el diff archivo a archivo">Revisar →</RouterLink></h3>
         <p v-if="actError" class="error small">{{ actError }}</p>
         <div v-if="!live.inbox.length" class="empty-box">
           <i class="fa-regular fa-circle-check" />
@@ -704,6 +904,7 @@ watch(() => [gpus.value, live.local.state, tpsNow.value > 0], () =>
         </div>
       </section>
     </aside>
+    <div class="gutter" title="Arrastra para cambiar el ancho (doble clic: por defecto)" @pointerdown="startDrag('left', $event)" @dblclick="resetSizes('left')" />
 
     <!-- centro: oficina 3D + dock -->
     <main class="stage">
@@ -755,8 +956,10 @@ watch(() => [gpus.value, live.local.state, tpsNow.value > 0], () =>
           <i class="fa-solid fa-user-plus" /> Aún no hay agentes. <a href="#" @click.prevent="openWizard()">Crea el primero con el asistente</a>.
         </p>
       </div>
+      <div class="gutter gutter--h" title="Arrastra para cambiar el alto del panel de abajo (doble clic: por defecto)" @pointerdown="startDrag('dock', $event)" @dblclick="resetSizes('dock')" />
       <OfficeDock ref="dock" :events="events" :review="review" :review-title="diffTask ? `#${diffTask.id} ${diffTask.title}` : ''" />
     </main>
+    <div class="gutter" title="Arrastra para cambiar el ancho (doble clic: por defecto)" @pointerdown="startDrag('right', $event)" @dblclick="resetSizes('right')" />
 
     <!-- derecha: recursos + inspector -->
     <aside class="col">
@@ -767,6 +970,17 @@ watch(() => [gpus.value, live.local.state, tpsNow.value > 0], () =>
           <span class="meter" :title="g.name"><span :style="{ width: `${gpuFrac(g) * 100}%`, background: gpuColor(gpuFrac(g)) }" /></span>
         </div>
         <div v-if="!gpus.length" class="res-row"><div class="l">GPU <span>sin datos (nvidia-smi no encontrado)</span></div></div>
+        <div class="res-row">
+          <div class="l">CPU <span>{{ sys?.cpu_pct != null ? `${Math.round(sys.cpu_pct)} %` : "—" }}{{ sys?.cores ? ` · ${sys.cores} hilos` : "" }}</span></div>
+          <span class="meter"><span :style="{ width: `${sys?.cpu_pct ?? 0}%`, background: gpuColor((sys?.cpu_pct ?? 0) / 100) }" /></span>
+          <div v-if="sys?.per_core?.length" class="cores" :title="`Uso por núcleo: ${sys.per_core.map((c) => Math.round(c)).join(' · ')} %`">
+            <i v-for="(c, k) in sys.per_core" :key="k" :style="{ height: `${Math.max(8, c)}%`, background: gpuColor(c / 100) }" />
+          </div>
+        </div>
+        <div class="res-row">
+          <div class="l">RAM <span>{{ sys?.ram_used_gb != null ? `${sys.ram_used_gb}/${sys.ram_total_gb} GB · ${Math.round(sys.ram_pct ?? 0)} %` : "—" }}</span></div>
+          <span class="meter"><span :style="{ width: `${sys?.ram_pct ?? 0}%`, background: gpuColor((sys?.ram_pct ?? 0) / 100) }" /></span>
+        </div>
         <div class="res-row">
           <div class="l">Modelo local <span :class="`ls-${live.local.state}`">{{ LOCAL_TEXT[live.local.state] ?? live.local.state }}</span></div>
           <div class="sub">
@@ -834,7 +1048,7 @@ watch(() => [gpus.value, live.local.state, tpsNow.value > 0], () =>
 
         <!-- el trabajador del modelo local de una tarea -->
         <LocalWorkerPanel
-          v-else-if="selWorker" :task="selWorker" :events="workerEvents[selWorker.id] ?? []"
+          v-else-if="selWorker" :task="selWorker" :events="workerEvents[selWorker.id] ?? []" :stream="liveNow(selWorker.id)"
           :agent="live.agents.find((a) => a.id === selWorker!.agent_id)"
         />
 
@@ -905,12 +1119,50 @@ watch(() => [gpus.value, live.local.state, tpsNow.value > 0], () =>
 
 <style scoped>
 .office {
-  --colw: 330px;
+  --lw: 330px;
+  --rw: 330px;
   height: 100%;
   display: grid;
-  grid-template-columns: var(--colw) minmax(0, 1fr) var(--colw);
-  gap: 12px;
+  grid-template-columns: var(--lw) 12px minmax(0, 1fr) 12px var(--rw);
   min-height: 0;
+}
+.office.dragging {
+  user-select: none;
+  cursor: col-resize;
+}
+.office.dragging :deep(.dock) {
+  transition: none;
+}
+/* asas para cambiar el tamaño de los paneles (se guarda en este navegador) */
+.gutter {
+  position: relative;
+  cursor: col-resize;
+  touch-action: none;
+}
+.gutter::after {
+  content: "";
+  position: absolute;
+  inset: 30% 5px;
+  border-radius: 3px;
+  background: var(--line);
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+}
+.gutter:hover::after,
+.dragging .gutter::after {
+  opacity: 1;
+}
+.gutter:hover::after {
+  background: var(--accent);
+}
+.gutter--h {
+  flex: 0 0 8px;
+  cursor: row-resize;
+  margin: -4px 0;
+  z-index: 3;
+}
+.gutter--h::after {
+  inset: 3px 40%;
 }
 .col {
   display: flex;
@@ -954,6 +1206,112 @@ watch(() => [gpus.value, live.local.state, tpsNow.value > 0], () =>
 }
 .compose textarea {
   resize: vertical;
+}
+.m-sum {
+  font-size: 12.5px;
+  color: var(--ink-dim);
+  background: var(--panel-raised);
+  border-radius: 12px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+.m-sum p {
+  margin: 0;
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.m-sum.open p {
+  display: block;
+}
+.m-sum small {
+  display: block;
+  margin-top: 6px;
+  color: var(--ink-faint);
+}
+.tolink {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.ljobs {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(14, 165, 233, 0.1);
+  display: grid;
+  gap: 6px;
+}
+.ljobs__h {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 800;
+  font-size: 12px;
+  color: #0284c7;
+}
+.ljobs__h em {
+  font-style: normal;
+  font-weight: 600;
+  color: var(--ink-faint);
+}
+.linkish {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  color: #0284c7;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.ljob {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  gap: 6px;
+  font-size: 12px;
+}
+.ljob > i {
+  margin-top: 3px;
+  font-size: 11px;
+}
+.ljob.ok > i {
+  color: var(--ok);
+}
+.ljob.bad > i {
+  color: var(--crit);
+}
+.ljob.run > i {
+  color: #0284c7;
+}
+.ljob b {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.ljob small {
+  display: block;
+  color: var(--ink-faint);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.ljob small.bad {
+  color: var(--crit);
+}
+.ljob .livetxt {
+  color: var(--ink-dim);
+  font-style: italic;
+}
+.ljob .tag {
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: #0284c7;
+  margin-right: 2px;
 }
 .m-title {
   font-weight: 800;
@@ -1462,9 +1820,54 @@ watch(() => [gpus.value, live.local.state, tpsNow.value > 0], () =>
   padding: 10px 14px;
 }
 
+/* propuesta de agente a medida */
+.prop {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: var(--accent-weak);
+}
+.prop-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.prop-h .prov {
+  margin-left: auto;
+}
+.prop-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+.prop-row > span {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink-dim);
+  margin-right: 2px;
+}
+.prop p {
+  margin: 0;
+}
+
 /* recursos */
 .res-row {
   margin-bottom: 10px;
+}
+.cores {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 18px;
+  margin-top: 4px;
+}
+.cores i {
+  flex: 1;
+  border-radius: 2px;
+  min-width: 2px;
+  opacity: 0.85;
 }
 .l {
   display: flex;
@@ -1604,12 +2007,10 @@ button.pill {
   margin: 6px 0 0;
 }
 
-@media (max-width: 1280px) {
-  .office {
-    --colw: 280px;
-  }
-}
 @media (max-width: 980px) {
+  .gutter {
+    display: none;
+  }
   .office {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: 60vh auto auto;

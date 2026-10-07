@@ -128,7 +128,7 @@ defineExpose({ show: (t: "time" | "term" | "diff") => { tab.value = t; min.value
 
 <style scoped>
 .dock {
-  height: 230px;
+  height: var(--dockh, 230px);
   display: flex;
   flex-direction: column;
   min-height: 0;

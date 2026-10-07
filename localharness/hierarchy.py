@@ -237,8 +237,16 @@ class Hierarchy:
     async def plan(self, pid: int) -> dict:
         plan = self.store.get_plan(pid)
         project = self.store.get_project(plan["project_id"])
-        sync_roles(self.store)  # los roles de roles/*.md, al día (también desde la CLI, sin servidor)
+        if settings.load(self.store).get("roles_autosync"):
+            sync_roles(self.store)  # los roles de roles/*.md, al día (también desde la CLI, sin servidor)
         workers = self._workers(plan)
+        if not workers:  # sin agentes fijos: uno diseñado a medida para la petición del plan
+            from localharness import designer
+            spec = await designer.design(self.store, plan["request"], project,
+                                         binary=(self.binaries or {}).get("claude"))
+            designer.create_agent(self.store, {**spec, "coordinator": False, "delegate_local": False,
+                                               "read_only": False}, plan["request"])
+            workers = self._workers(plan)
         if not workers:
             return self._fail(pid, "No hay agentes capaces de modificar archivos (claude/codex) para las subtareas")
         ws = workspace.create(project["repo_path"], f"plan-{pid}", self.worktree_root)

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
+import ResourceUsage from "../components/ResourceUsage.vue";
 import Card from "../components/Card.vue";
 import LaunchDialog from "../components/LaunchDialog.vue";
 import StatusChip from "../components/StatusChip.vue";
@@ -409,6 +410,8 @@ const modelFor = (name: string | null) => info.value?.models.find((m) => m.name 
     </section>
 
     <!-- hardware -->
+    <ResourceUsage />
+
     <Card title="Tu equipo" :subtitle="hw ? (hw.budget.manual ? 'Valores puestos a mano' : 'Detectado automáticamente') : 'Detectando…'">
       <template #actions>
         <button class="btn btn--small btn--ghost" @click="editHw = !editHw">{{ editHw ? "Cancelar" : "Corregir" }}</button>

@@ -34,7 +34,9 @@ LH_MAX_TOKENS (por defecto 8192), LH_MAX_INPUT_CHARS (texto de archivos por enca
 LH_WEB (1/0, búsqueda web), LH_COORDINATOR (1: Claude no puede hacerlo él; los errores no le dicen «hazlo tú»),
 LH_COMMANDS (JSON: lista blanca de órdenes de comprobación; por defecto CHECK_COMMANDS), LH_AGENT_TURNS (pasos del
 agente local por encargo, 25), LH_AGENT_TIMEOUT (segundos por encargo de `local_agent`, 1200), LH_WORKER (estado
-del trabajador: skills y herramientas), LH_SKILLS (JSON {nombre: {description, body}}: skills que puede llevar).
+del trabajador: skills y herramientas), LH_SKILLS (JSON {nombre: {description, body}}: skills que puede llevar),
+LH_LIVE (JSON que se reescribe ~1 vez por segundo con lo que el modelo local está pensando y escribiendo AHORA: las
+peticiones a llama-server van en streaming para que la oficina lo vea trabajar en vivo).
 """
 
 import asyncio
@@ -246,6 +248,8 @@ class Server:
         self.agent_timeout = float(env.get("LH_AGENT_TIMEOUT") or 1200)
         self.worker_path = Path(env["LH_WORKER"]) if env.get("LH_WORKER") else None
         self.skills_path = Path(env["LH_SKILLS"]) if env.get("LH_SKILLS") else None
+        self.live_path = Path(env["LH_LIVE"]) if env.get("LH_LIVE") else None
+        self.current: dict = {}  # encargo en curso (para el directo)
         self.transport = transport  # pruebas: función (body) -> respuesta JSON de /v1/chat/completions
         self.http_get = http_get or _http_get  # pruebas: función (url, data) -> HTML; sin red de verdad
 
@@ -280,6 +284,8 @@ class Server:
     def call(self, name: str, args: dict) -> dict:
         t0 = time.monotonic()
         entry: dict = {"tool": name, "at": time.time()}
+        self.current = {"tool": name, "task": str(args.get("task") or args.get("path") or args.get("question")
+                                                  or args.get("command") or "")[:300]}
         try:
             if name == "local_prepare" and self.worker_path:
                 text, stats = self.prepare(args.get("skills") or [], args.get("tools"), str(args.get("reason") or ""))
@@ -423,6 +429,7 @@ class Server:
             title = str(b.get("title") or path or str(b.get("instructions") or "")[:60])
             files = [f for f in b.get("files") or [] if isinstance(f, str)]
             entry: dict = {"tool": f"local_execute_plan/{kind}", "at": time.time(), "block": bid, "task": title[:300]}
+            self.current = {"tool": entry["tool"], "task": title[:300]}
             if path:
                 entry["path"] = path
             t0 = time.monotonic()
@@ -533,10 +540,12 @@ class Server:
                 seen["tools"] += 1
                 inp = ev.data.get("input") or {}
                 what = inp.get("ruta") or inp.get("comando") or inp.get("texto") or inp.get("consulta") or ""
+                self._live("\n\n".join(seen["thinking"]), f"→ {ev.text} {what}".strip())
                 self._log({"tool": "local_agent", "progress": True, "text": f"{ev.text} {what}".strip()[:200],
                            "at": time.time()})
             elif ev.kind == "thinking" and ev.text:
                 seen["thinking"].append(ev.text)
+                self._live("\n\n".join(seen["thinking"]), "")
                 self._log({"tool": "local_agent", "progress": True, "thinking": ev.text[-MAX_LOG_THINKING:],
                            "text": "pensando…", "at": time.time()})
             elif ev.kind == "error":
@@ -546,6 +555,7 @@ class Server:
                 seen["model"] = ev.data.get("model")
         res = asyncio.run(adapter.execute(RunSpec(prompt=prompt, cwd=str(self.root), max_turns=turns), on_event,
                                           self.agent_timeout))
+        self._live("\n\n".join(seen["thinking"]), res.get("final") or "", done=True)
         changed = self.changed(before, self.snapshot())
         stats = {"prompt_tokens": seen["usage"].get("prompt_tokens"), "completion_tokens":
                  seen["usage"].get("completion_tokens"), "model": seen["model"], "files": changed,
@@ -670,15 +680,74 @@ class Server:
         headers = {"Content-Type": "application/json"}
         if self.key:
             headers["Authorization"] = f"Bearer {self.key}"
+        # en streaming: así se puede enseñar en vivo lo que piensa y escribe (LH_LIVE)
+        body = {**body, "stream": True, "stream_options": {"include_usage": True}}
         req = urllib.request.Request(self.url + "/v1/chat/completions", data=json.dumps(body).encode(),
                                      headers=headers, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=900) as r:
-                return json.loads(r.read())
+                if "text/event-stream" not in (r.headers.get("Content-Type") or ""):
+                    return json.loads(r.read())  # servidor que no hace streaming: la respuesta entera
+                return self.read_stream(r)
         except urllib.error.HTTPError as e:
+            if e.code == 401:  # no sigue con más bloques: todos fallarían igual
+                raise NoModel("llama-server rechaza la clave (401): ese llama-server no lo arrancó esta sesión de "
+                              "LocalHarness o se lanzó a mano con otra --api-key. Páralo y arráncalo desde Modelos "
+                              "locales; hazlo tú") from None
             raise ToolError(f"llama-server HTTP {e.code}: {e.read()[:200].decode('utf-8', 'replace')}") from None
         except (OSError, ValueError):
             raise NoModel("no hay ningún modelo local arrancado (Modelos locales → Arrancar); hazlo tú") from None
+
+    def read_stream(self, lines) -> dict:
+        """Respuesta SSE de llama-server (`data: {...}` por trozo) → la misma forma que sin streaming. Mientras
+        llega, cada ~0,8 s deja en LH_LIVE lo que lleva pensado y escrito."""
+        content: list[str] = []
+        reasoning: list[str] = []
+        model = finish = None
+        usage: dict = {}
+        timings: dict = {}
+        last = 0.0
+        for raw in lines:
+            line = (raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)).strip()
+            if not line.startswith("data:"):
+                continue
+            payload = line[5:].strip()
+            if payload == "[DONE]":
+                break
+            try:
+                chunk = json.loads(payload)
+            except ValueError:
+                continue
+            model = chunk.get("model") or model
+            usage = chunk.get("usage") or usage
+            timings = chunk.get("timings") or timings
+            for c in chunk.get("choices") or []:
+                delta = c.get("delta") or {}
+                if delta.get("content"):
+                    content.append(delta["content"])
+                if delta.get("reasoning_content"):
+                    reasoning.append(delta["reasoning_content"])
+                finish = c.get("finish_reason") or finish
+            if time.monotonic() - last > 0.8:
+                last = time.monotonic()
+                self._live("".join(reasoning), "".join(content))
+        self._live("".join(reasoning), "".join(content), done=True)
+        return {"model": model, "usage": usage, "timings": timings,
+                "choices": [{"message": {"content": "".join(content), "reasoning_content": "".join(reasoning)},
+                             "finish_reason": finish}]}
+
+    def _live(self, thinking: str, text: str, done: bool = False) -> None:
+        """Lo que el modelo local está haciendo AHORA (lo lee el orquestador cada segundo para la oficina)."""
+        if not self.live_path:
+            return
+        data = {**self.current, "thinking": thinking[-4000:], "text": text[-3000:], "done": done, "at": time.time(),
+                "skills": self.worker().get("skills") or []}
+        tmp = self.live_path.with_suffix(".tmp")
+        try:
+            tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, self.live_path)
+        except OSError:
+            pass
 
     def _log(self, entry: dict) -> None:
         if not self.log:

@@ -89,6 +89,9 @@ Claude; sin llama-server los agentes locales no responden (todo lo demás funcio
   - `codex.py`   `codex exec --json` (aparcado, sin verificar con la CLI real)
   - `local.py`   un mensaje a llama-server con el contexto del repo en el prompt; no escribe
   - `local_agent.py` bucle de agente con herramientas confinadas al worktree (leer, buscar, escribir, ejecutar…)
+- `localharness/designer.py`   agentes a medida: Claude Haiku (o reglas) diseña el agente de cada tarea
+- `localharness/analytics.py`  analíticas (peticiones, tokens Claude/local, encargos, uso por agente)
+- `localharness/usage.py`      consumo en vivo (CPU/RAM, proceso de llama-server, dónde está cargado el modelo)
 - `localharness/mcp_local.py`  servidor MCP stdio propio: Claude encarga a Qwen `local_ask`, `local_write_file`,
   `local_execute_plan` (el plan entero por bloques + tests), `local_research`
 - `localharness/library.py`    biblioteca del Catálogo (`biblioteca/`: skills, MCP, plantillas de agente) y skills de GitHub

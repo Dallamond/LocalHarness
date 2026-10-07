@@ -44,6 +44,9 @@ DEFAULTS: dict[str, Any] = {
     # Catálogo de servidores MCP (formato `mcpServers` de Claude/Cursor): {nombre: {command, args, env} | {url}}.
     # Cada agente Claude elige los suyos (config.mcps); `local` (el modelo local) es de serie y no va aquí.
     "mcp_servers": {},
+    # Agentes: False = cada tarea recibe un agente diseñado a medida (designer.py) y los roles de roles/*.md no se
+    # crean solos como agentes; True = lo de antes (un agente fijo por rol, sincronizado al arrancar)
+    "roles_autosync": False,
     # Oficina: dónde has colocado cada puesto ({"you" | "a<id>" | "rack": [x, z, giro en cuartos de vuelta]})
     "office_layout": {},
 }
@@ -55,7 +58,7 @@ def clean_office_layout(v: Any) -> dict[str, list[float]]:
         raise ValueError("office_layout debe ser un objeto {puesto: [x, z, giro]}")
     out = {}
     for k, p in v.items():
-        if not re.match(r"^(you|rack|a\d{1,9})$", str(k)) or not isinstance(p, list) or len(p) != 3 \
+        if not re.match(r"^(you|rack|[aw]\d{1,9})$", str(k)) or not isinstance(p, list) or len(p) != 3 \
                 or not all(isinstance(n, (int, float)) and not isinstance(n, bool) for n in p):
             raise ValueError(f"Posición no válida para {k!r}")
         out[k] = [max(-20.0, min(20.0, float(p[0]))), max(-20.0, min(20.0, float(p[1]))), int(p[2]) % 4]

@@ -5,7 +5,7 @@ import AgentAvatar from "../components/AgentAvatar.vue";
 import Markdown from "../components/Markdown.vue";
 import StatusChip from "../components/StatusChip.vue";
 import {
-  ROLE_TEXT, STATUS_TEXT, agentName, ago, api, live, onTaskEvent, parseTs, pickPath, post, projectName,
+  ROLE_TEXT, STATUS_TEXT, agentName, ago, api, live, onTaskEvent, parseTs, pickPath, post, projectName, putTask,
   refreshAll, speedText, statusChip, taskList, usd,
   type Plan, type Project, type Review, type Skill, type Task, type TaskEvent, THINKING_TEXT
 } from "../api";
@@ -35,8 +35,8 @@ type Msg =
   | { type: "agent"; text: string }
   | { type: "tools"; items: { name: string; target: string }[] }
   | { type: "note"; text: string; tone: "ok" | "warn" | "crit" | "dim" }
-  | { type: "delegate"; ok: boolean; what: string; tool: string; detail: string }
-  | { type: "thinking"; text: string };
+  | { type: "delegate"; ok: boolean; what: string; tool: string; detail: string; thinking: string; answer: string; request: string; skills: string[] }
+  | { type: "thinking"; text: string; local?: boolean };
 
 const TERMINAL = new Set(["review", "done", "failed", "timeout", "cancelled", "interrupted", "merged", "rejected"]);
 
@@ -73,8 +73,18 @@ const messages = computed<Msg[]>(() => {
       out.push({ type: "note", text: `📣 ${e.text}`, tone: "ok" });
     } else if (e.kind === "warning") {
       out.push({ type: "note", text: e.text, tone: "warn" });
+    } else if (e.kind === "worker") {
+      const d = e.data as Record<string, unknown>;
+      out.push({ type: "note", text: `🧰 ${e.text}${d.reason ? ` — «${d.reason}»` : ""}`, tone: "dim" });
+    } else if (e.kind === "worker_thinking") {
+      out.push({ type: "thinking", text: e.text, local: true });
     } else if (e.kind === "delegate") {
       const d = e.data as Record<string, unknown>;
+      if (d.tool === "local_prepare") continue; // lo cuenta el evento `worker`
+      if (d.tool === "local_execute_plan") {
+        out.push({ type: "note", text: `📋 Modelo local: ${d.task ?? "plan terminado"}`, tone: "ok" });
+        continue;
+      }
       const toks = Number(d.completion_tokens ?? 0);
       out.push({
         type: "delegate", ok: !!d.ok, tool: String(d.tool ?? ""),
@@ -83,6 +93,8 @@ const messages = computed<Msg[]>(() => {
           ? [d.model, toks ? `${toks} tokens` : null, d.tps ? `${d.tps} tok/s` : null, d.seconds ? `${d.seconds} s` : null]
               .filter(Boolean).join(" · ")
           : String(d.error ?? "falló"),
+        thinking: String(d.thinking ?? ""), answer: String(d.answer ?? ""), request: String(d.request ?? ""),
+        skills: (d.skills as string[] | undefined) ?? [],
       });
     } else if (e.kind === "delegate_summary") {
       const d = e.data as Record<string, unknown>;
@@ -126,8 +138,16 @@ async function load() {
   }
 }
 
+// el modelo local pensando/escribiendo AHORA (eventos `worker_live`, no se guardan)
+const localLive = ref<{ tool?: string; task?: string; thinking: string; text: string; done: boolean; at: number } | null>(null);
+const localNow = computed(() => (localLive.value && !localLive.value.done && busy.value ? localLive.value : null));
 const off = onTaskEvent((ev) => {
   if (ev.task_id !== props.id) return;
+  if (ev.kind === "worker_live") {
+    localLive.value = ev.data as unknown as NonNullable<typeof localLive.value>;
+    toBottom();
+    return;
+  }
   if (ev.id != null && events.value.some((e) => e.id === ev.id)) return;
   events.value.push(ev);
   toBottom();
@@ -208,7 +228,7 @@ async function send() {
         thinking: form.thinking || null,
       });
       form.skills = [];
-      live.tasks[t.id] = t;
+      putTask(t);
       router.push(`/chat/${t.id}`);
     }
     draft.value = "";
@@ -325,16 +345,40 @@ const placeholder = computed(() => {
               </ul>
             </div>
             <div v-else-if="m.type === 'delegate'" class="deleg" :class="{ 'deleg--bad': !m.ok }">
-              <span class="deleg__who">🦙 Modelo local</span>
-              <span>{{ m.tool === "local_write_file" ? "escribió" : m.tool === "local_research" ? "investigó en la web" : "respondió a" }} <strong>{{ m.what }}</strong></span>
-              <span class="muted small">{{ m.detail }}</span>
+              <div class="deleg__h">
+                <span class="deleg__who">🦙 Modelo local</span>
+                <span>{{ m.tool.includes("write") ? "escribió" : m.tool === "local_research" ? "investigó en la web" : m.tool === "local_agent" ? "hizo la tarea" : "respondió a" }} <strong>{{ m.what }}</strong></span>
+                <span class="muted small">{{ m.detail }}</span>
+                <span v-for="sk in m.skills" :key="sk" class="pill pill--active small">⚡ {{ sk }}</span>
+              </div>
+              <details v-if="m.thinking" class="deleg__more" open>
+                <summary>💭 Cómo lo pensó</summary>
+                <p class="deleg__think">{{ m.thinking }}</p>
+              </details>
+              <details v-if="m.answer && m.ok" class="deleg__more">
+                <summary>💬 Su respuesta</summary>
+                <Markdown :text="m.answer.length > 4000 ? m.answer.slice(0, 4000) + '\n\n…' : m.answer" />
+              </details>
+              <details v-if="m.request" class="deleg__more">
+                <summary>📨 Lo que le pidió Claude</summary>
+                <p class="deleg__think">{{ m.request }}</p>
+              </details>
             </div>
-            <details v-else-if="m.type === 'thinking'" class="think">
-              <summary>💭 Pensamiento ({{ m.text.length }} caracteres)</summary>
+            <details v-else-if="m.type === 'thinking'" class="think" :class="{ 'think--local': m.local }" :open="m.local">
+              <summary>💭 {{ m.local ? "Pensamiento del modelo local" : "Pensamiento" }} ({{ m.text.length }} caracteres)</summary>
               <p>{{ m.text }}</p>
             </details>
             <p v-else class="note" :class="`note--${m.tone}`">{{ m.text }}</p>
           </template>
+          <div v-if="localNow" class="deleg deleg--live">
+            <div class="deleg__h">
+              <span class="deleg__who">🦙 Modelo local · en directo</span>
+              <span class="muted small">{{ localNow.task }}</span>
+            </div>
+            <p v-if="localNow.thinking" class="deleg__think">💭 {{ localNow.thinking.slice(-1200) }}</p>
+            <p v-if="localNow.text" class="deleg__write">{{ localNow.text.slice(-1500) }}▍</p>
+            <p v-if="!localNow.thinking && !localNow.text" class="muted small">leyendo el encargo…</p>
+          </div>
           <div v-if="busy" class="from">
             <AgentAvatar :agent="agent" :busy="true" :size="28" />
             <div class="bubble bubble--agent typing">
@@ -658,6 +702,46 @@ const placeholder = computed(() => {
   border-left: 3px solid var(--ok);
   font-size: 14px;
   overflow-wrap: anywhere;
+}
+.deleg {
+  flex-direction: column;
+  align-items: stretch;
+}
+.deleg__h {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+.deleg__more summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--ink-dim);
+  font-weight: 600;
+}
+.deleg__think {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  font-size: 12.5px;
+  font-style: italic;
+  color: var(--ink-dim);
+  max-height: 260px;
+  overflow: auto;
+}
+.deleg__write {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  max-height: 220px;
+  overflow: auto;
+}
+.deleg--live {
+  background: color-mix(in srgb, #0ea5e9 10%, var(--panel));
+  border-left-color: #0ea5e9;
+}
+.think--local summary {
+  color: #0284c7;
 }
 .deleg--bad {
   background: var(--warn-weak);

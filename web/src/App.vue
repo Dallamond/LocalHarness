@@ -21,8 +21,10 @@ const usage = computed(() => {
 
 const links = [
   { to: "/oficina", text: "Oficina", icon: "fa-building" },
+  { to: "/trabajo", text: "Trabajo", icon: "fa-list-check" },
   { to: "/chat", text: "Chat", icon: "fa-comments" },
   { to: "/modelos", text: "Modelos locales", icon: "fa-microchip" },
+  { to: "/analiticas", text: "Analíticas", icon: "fa-chart-column" },
   { to: "/ajustes", text: "Ajustes", icon: "fa-sliders" },
 ];
 </script>
@@ -39,7 +41,7 @@ const links = [
         <RouterLink v-for="l in links" :key="l.to" :to="l.to">
           <i class="fa-solid" :class="l.icon" aria-hidden="true" />
           <span class="nav__text">{{ l.text }}</span>
-          <span v-if="l.to === '/oficina' && live.inbox.length" class="badge" title="Esperan tu decisión">{{ live.inbox.length }}</span>
+          <span v-if="l.to === '/trabajo' && live.inbox.length" class="badge" title="Esperan tu decisión">{{ live.inbox.length }}</span>
         </RouterLink>
       </nav>
       <span class="spacer" />

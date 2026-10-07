@@ -18,7 +18,7 @@ export interface Agent {
   config: {
     max_turns?: number; max_budget_usd?: number; read_only?: boolean; tools?: string[];
     skills?: string[]; base_url?: string; description?: string; subagents?: boolean; delegate_local?: boolean;
-    coordinator?: boolean;
+    coordinator?: boolean; generated?: boolean; designed_for?: string; design_reason?: string; local_skills?: string[];
     mcps?: string[];
     temperature?: number; max_tokens?: number; repo_context?: number;
     tool_mode?: string; web?: boolean; commands?: string[]; command_timeout_s?: number; timeout_s?: number;
@@ -445,6 +445,14 @@ type Handler = (ev: TaskEvent) => void;
 const eventHandlers = new Set<Handler>();
 
 /** Suscribe a los eventos de ejecución de todas las tareas; devuelve la baja. */
+/** Guarda una tarea recién creada SIN pisar lo que ya trajo el directo: el aviso «running» puede llegar antes que la
+ *  respuesta del POST (que aún dice «pending»), y entonces la tarea se quedaría pendiente en la pantalla. */
+export function putTask(t: Task): void {
+  const cur = live.tasks[t.id];
+  if (cur && t.status === "pending" && cur.status !== "pending") return;
+  live.tasks[t.id] = t;
+}
+
 export function onTaskEvent(fn: Handler): () => void {
   eventHandlers.add(fn);
   return () => eventHandlers.delete(fn);

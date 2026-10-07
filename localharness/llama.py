@@ -126,6 +126,15 @@ class LlamaManager:
     def __init__(self, log_path: Path):
         self.log_path = log_path
         self.times_path = log_path.with_name("llama-load-times.json")  # segundos que tardó cada GGUF en cargar
+        # la --api-key del último llama-server que arrancamos: si reinicias LocalHarness y ese llama-server sigue
+        # encendido, hay que seguir usando SU clave (si no, cada encargo da «401 Invalid API Key»)
+        self.key_path = log_path.with_name("llama-server.key")
+        global API_KEY
+        if API_KEY is None:
+            try:
+                API_KEY = self.key_path.read_text(encoding="utf-8").strip() or None
+            except OSError:
+                pass
         self.proc: subprocess.Popen | None = None
         self.model: str | None = None
         self.port = 8080
@@ -148,6 +157,10 @@ class LlamaManager:
         log.close()
         self.model, self.port, self.started_at, self.ready_at = str(model), port, time.time(), None
         API_KEY = key
+        try:
+            self.key_path.write_text(key, encoding="utf-8")
+        except OSError:
+            pass
 
     def stop(self) -> None:
         if self.proc and self.proc.poll() is None:

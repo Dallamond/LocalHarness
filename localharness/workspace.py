@@ -55,6 +55,18 @@ def git(cwd: str | Path, *args: str) -> str:
     return p.stdout
 
 
+FALLBACK_IDENTITY = ("-c", "user.name=LocalHarness", "-c", "user.email=localharness@local")
+
+
+def identity(repo: str | Path) -> tuple[str, ...]:
+    """Autor para los commits que hace LocalHarness en TU repo (el merge): el tuyo si git lo tiene configurado; si no
+    (PC del instituto sin `git config user.email`), uno de reserva para que integrar no falle con «Committer identity
+    unknown». No se toca tu configuración de git."""
+    p = subprocess.run(["git", "var", "GIT_COMMITTER_IDENT"], cwd=repo, capture_output=True, encoding="utf-8",
+                       errors="replace")
+    return () if p.returncode == 0 and p.stdout.strip() else FALLBACK_IDENTITY
+
+
 @dataclass
 class Workspace:
     repo: Path
@@ -94,7 +106,7 @@ class Workspace:
         git(self.path, "add", "-A")
         if not git(self.path, "status", "--porcelain").strip():
             return None
-        git(self.path, "-c", "user.name=localharness", "-c", "user.email=localharness@local", "commit", "-q", "-m", message)
+        git(self.path, *FALLBACK_IDENTITY, "commit", "-q", "-m", message)
         return git(self.path, "rev-parse", "HEAD").strip()
 
     def merge(self, into: str | None = None) -> str:
@@ -111,7 +123,8 @@ class Workspace:
         if into and into != prev:
             git(self.repo, "checkout", "-q", into)
         try:
-            return git(self.repo, "merge", "--no-ff", "-m", f"localharness: {self.branch}", self.branch)
+            return git(self.repo, *identity(self.repo), "merge", "--no-ff", "-m", f"localharness: {self.branch}",
+                       self.branch)
         except GitError:
             files = [f for f in git(self.repo, "diff", "--name-only", "--diff-filter=U").splitlines() if f]
             try:

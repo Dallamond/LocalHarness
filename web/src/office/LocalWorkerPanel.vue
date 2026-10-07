@@ -6,7 +6,8 @@ import { computed, ref, watch } from "vue";
 import Markdown from "../components/Markdown.vue";
 import { api, live, refreshAll, type Agent, type Task, type TaskEvent } from "../api";
 
-const props = defineProps<{ task: Task; events: TaskEvent[]; agent?: Agent }>();
+interface Live { tool?: string; task?: string; thinking: string; text: string; done: boolean; at: number; skills?: string[] }
+const props = defineProps<{ task: Task; events: TaskEvent[]; agent?: Agent; stream?: Live | null }>();
 
 interface WorkerInfo {
   active: boolean; skills: string[]; tools: string[] | null; by: string; reason: string;
@@ -83,8 +84,21 @@ const waiting = computed(() => {
     const tool = String(e.data?.tool ?? "");
     if (e.kind === "delegate" && tool !== "local_prepare" && !tool.includes("/")) open = Math.max(0, open - 1);
   }
-  return running.value && open > 0;
+  return running.value && (open > 0 || !!props.stream);
 });
+// el directo: siempre la última parte a la vista
+const liveBox = ref<HTMLElement>();
+const chatEl = ref<HTMLElement>();
+// el chat baja solo con cada mensaje nuevo y con el directo (salvo que hayas subido a leer algo)
+let stick = true;
+const onScroll = () => { const el = chatEl.value; if (el) stick = el.scrollHeight - el.scrollTop - el.clientHeight < 60; };
+watch(() => [lines.value.length, props.stream?.text?.length, props.stream?.thinking?.length, tab.value], () =>
+  setTimeout(() => { const el = chatEl.value; if (el && stick) el.scrollTop = el.scrollHeight; }, 0), { immediate: true });
+const liveThink = ref<HTMLElement>();
+watch(() => [props.stream?.thinking, props.stream?.text], () => setTimeout(() => {
+  for (const el of [liveBox.value, liveThink.value]) if (el) el.scrollTop = el.scrollHeight;
+}, 0));
+const loaded = computed(() => info.value?.skills.length ? info.value.skills : props.stream?.skills ?? []);
 
 interface Thought { key: string; title: string; text: string }
 const thoughts = computed<Thought[]>(() => {
@@ -160,6 +174,10 @@ const BY: Record<string, string> = { Claude: "Las eligió Claude", "tú": "Las c
       {{ waiting ? "Trabajando en un encargo…" : running ? "Esperando el siguiente encargo de " + (agent?.name ?? "Claude") : "Tarea terminada" }}
     </div>
 
+    <div v-if="loaded.length" class="loaded" title="Skills que lleva cargadas en este encargo">
+      <i class="fa-solid fa-bolt" /> <span v-for="s in loaded" :key="s" class="pill pill--active">{{ s }}</span>
+    </div>
+
     <div class="tabs">
       <button :class="{ on: tab === 'chat' }" @click="tab = 'chat'"><i class="fa-solid fa-comments" /> Chat</button>
       <button :class="{ on: tab === 'think' }" @click="tab = 'think'"><i class="fa-solid fa-brain" /> Piensa <em v-if="thoughts.length">{{ thoughts.length }}</em></button>
@@ -167,7 +185,7 @@ const BY: Record<string, string> = { Claude: "Las eligió Claude", "tú": "Las c
     </div>
 
     <!-- chat propio: encargos de Claude y respuestas del modelo local -->
-    <div v-if="tab === 'chat'" class="chat">
+    <div v-if="tab === 'chat'" ref="chatEl" class="chat" @scroll="onScroll">
       <p v-if="!lines.length" class="small muted">Todavía no le ha encargado nada.</p>
       <div v-for="l in lines" :key="l.key" class="msg" :class="[`msg--${l.who}`, { bad: l.ok === false }]">
         <b v-if="l.title">{{ l.title }}</b>
@@ -176,12 +194,22 @@ const BY: Record<string, string> = { Claude: "Las eligió Claude", "tú": "Las c
         <details v-if="l.request" class="req"><summary>Lo que recibió</summary><pre>{{ l.request }}</pre></details>
         <small v-if="l.meta" class="muted">{{ l.meta }}</small>
       </div>
-      <div v-if="waiting" class="msg msg--local typing"><i class="fa-solid fa-ellipsis fa-fade" /></div>
+      <div v-if="waiting && stream" class="msg msg--local livemsg">
+        <b><i class="fa-solid fa-circle fa-beat-fade rec" /> En directo · {{ toolText(stream.tool) }}{{ stream.task ? ` · ${stream.task.slice(0, 60)}` : "" }}</b>
+        <div v-if="stream.thinking && !stream.text" class="pre think-live">💭 {{ stream.thinking.slice(-600) }}</div>
+        <div v-if="stream.text" ref="liveBox" class="pre write-live">{{ stream.text.slice(-1500) }}<i class="caret" /></div>
+        <span v-if="!stream.thinking && !stream.text" class="muted"><i class="fa-solid fa-ellipsis fa-fade" /> leyendo el encargo…</span>
+      </div>
+      <div v-else-if="waiting" class="msg msg--local typing"><i class="fa-solid fa-ellipsis fa-fade" /></div>
     </div>
 
     <!-- su cadena de pensamiento -->
     <div v-else-if="tab === 'think'" class="chat">
-      <p v-if="!thoughts.length" class="small muted">
+      <div v-if="stream && stream.thinking" class="thought now">
+        <b><i class="fa-solid fa-circle fa-beat-fade rec" /> Pensando ahora · {{ toolText(stream.tool) }}</b>
+        <pre ref="liveThink">{{ stream.thinking }}</pre>
+      </div>
+      <p v-if="!thoughts.length && !stream?.thinking" class="small muted">
         Sin pensamiento todavía. Solo aparece con modelos que razonan (Qwen3, DeepSeek-R1, gpt-oss…) y con el
         pensamiento encendido al arrancar el modelo.
       </p>
@@ -262,6 +290,15 @@ pre {
   background: var(--panel-raised); padding: 6px 8px; border-radius: 8px;
 }
 .thought { padding: 6px 8px; border-radius: 10px; background: var(--panel-raised); }
+.thought.now { background: rgba(14, 165, 233, 0.12); }
+.thought.now b { font-size: 11px; }
+.loaded { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 8px; font-size: 11px; color: var(--ink-dim); }
+.livemsg { max-width: 100%; justify-self: stretch; }
+.think-live { color: var(--ink-dim); font-style: italic; font-size: 11.5px; }
+.write-live { font-family: var(--font-mono); font-size: 11px; max-height: 180px; overflow: auto; }
+.rec { color: #ef4444; font-size: 8px; vertical-align: 2px; }
+.caret { display: inline-block; width: 6px; height: 12px; background: #0ea5e9; margin-left: 2px; vertical-align: -2px; animation: blink 1s steps(2) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
 .thought pre { background: none; padding: 0; }
 .chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .x { border: 0; background: none; cursor: pointer; font-weight: 800; color: inherit; padding: 0 0 0 4px; }

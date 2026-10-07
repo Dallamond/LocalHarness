@@ -8,6 +8,41 @@ Decisión de Lucas: **se trabaja siempre en `main`**. Se integraron en `main` la
 editable), `claude/cool-dirac-vmw6s0` (análisis de Paperclip) y `claude/youthful-edison-bi67hm` (Modelos locales +
 rediseño de la oficina). Las secciones de abajo son el historial de cada una; donde digan «rama X», ya está en `main`.
 
+### Lista de Lucas (08/10/2026, mediodía) — analíticas, consumo, agentes a medida, Trabajo, directo del modelo local
+- **Integrar sin identidad de git** (fallaba en el PC del instituto: «Committer identity unknown»): el merge usa tu
+  identidad si git la tiene y, si no, `LocalHarness <localharness@local>` (`workspace.identity`). No toca tu config.
+- **401 «Invalid API Key» tras reiniciar LocalHarness**: la `--api-key` del llama-server que arrancamos se guarda en
+  `data/llama-server.key` y se reutiliza al volver a abrir (si sigue encendido). Un 401 se explica y para el plan.
+- **Analíticas** (`/analiticas`, `localharness/analytics.py`, `GET /api/analytics?days=`): peticiones (tareas +
+  respuestas tuyas), tokens de Claude (con caché) y del modelo local (agentes locales + encargos), coste, encargos por
+  tipo y por modelo GGUF, uso por agente, tokens por día (barras apiladas, tabla alternativa). Paleta validada con el
+  validador de dataviz (claro #5b5bf0/#0891b2, oscuro #7a7af4/#0a9fc0).
+- **Consumo** (`localharness/usage.py`, dependencia nueva `psutil` en `[server]`; sin ella, CPU/RAM aproximadas):
+  CPU (total y por núcleo) y RAM en Recursos de la oficina; en Modelos locales, «Consumo en vivo» con el proceso de
+  llama-server (RAM, CPU, VRAM por `nvidia-smi --query-compute-apps`) y **dónde está cargado el modelo** (capas en GPU
+  y MB por dispositivo, leído del log de llama-server: `GET /api/llama/usage`).
+- **Rack de CPD** en la oficina: armario 42U con puerta de cristal, switch (LEDs de red), servidor GPU con ventiladores
+  y LEDs de VRAM, servidores con LEDs de CPU, cabina de RAM, SAI y suelo técnico. Los LEDs siguen el uso real.
+- **Paneles redimensionables** en la oficina: asas entre columnas y sobre el panel de abajo (doble clic = por defecto;
+  se guarda en el navegador).
+- **Agentes a medida** (`localharness/designer.py`): ya no se crean solos los agentes de `roles/*.md` (ajuste
+  `roles_autosync`, por defecto False; los que había se borran si no tienen historial o quedan fuera de servicio).
+  En «Nueva misión», «✨ Agente a medida» → Claude Haiku (JSON validado) propone proveedor/modelo, coordinador,
+  skills (del agente y de su modelo local), MCP, internet, pensamiento y motivo; puedes quitar cosas y «Crear agente
+  y ejecutar» (`POST /api/agents/design` y `/api/agents/generated`, `config.generated`). Sin Claude: reglas. Un plan
+  sin trabajadores diseña uno. En la oficina, un agente a medida está mientras su tarea siga abierta.
+- **Trabajo** (`/trabajo`, sustituye a «Pendiente de ti»): en curso en vivo (con lo que hace el modelo local), lo que
+  espera tu decisión y lo reciente; revisión con riesgo, encargo, respuesta, archivos con +/− y diff coloreado por
+  archivo, y Aprobar e integrar / Solo aprobar / Descartar / Pedir cambios (sigue en la misma rama).
+- **Modelo local en directo**: el servidor MCP pide a llama-server en streaming y escribe `live.json` (LH_LIVE) ~1/s;
+  el orquestador lo emite como `worker_live` (efímero). La oficina enfoca al trabajador local al entrar, muestra
+  «trabajando · N skills», el bocadillo con lo que piensa/escribe y, en su inspector, «En directo» y «Pensando ahora».
+  El Chat enseña en cada encargo «Cómo lo pensó», su respuesta y lo que le pidió Claude, y una caja en directo. La
+  Misión resume el encargo (y por qué el agente es así) y lista los encargos al modelo local con su estado.
+- Probado: 179 pruebas + recorrido completo en Chromium con una CLI de Claude falsa en el PATH y un llama-server falso
+  que razona en streaming. **Pendiente**: probarlo en el PC de Lucas con Qwen real (sobre todo el streaming y
+  «dónde está cargado» con una GPU NVIDIA).
+
 ### Trabajador local en la oficina (08/10/2026) — Claude lo equipa; tú lo ves y lo corriges
 Petición de Lucas: que Claude piense primero qué skills y herramientas necesita el modelo local, y que al encargarle
 algo aparezca un muñeco del trabajador local con su pensamiento, su propio chat y sus skills (añadir/quitar).

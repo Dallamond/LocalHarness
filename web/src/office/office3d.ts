@@ -32,6 +32,8 @@ export interface GitRow {
 /** Posición guardada de un puesto: x, z y giro en cuartos de vuelta. */
 export type Placement = [number, number, number];
 
+type Led = THREE.Mesh<THREE.BoxGeometry, THREE.MeshBasicMaterial>;
+
 interface Station {
   spec: StationSpec;
   group: THREE.Group;
@@ -117,7 +119,12 @@ export class Office {
   private links: { line: THREE.Line; mat: THREE.LineDashedMaterial; flash: number; color: string; a: string; b: string }[] = [];
   private packets: { m: THREE.Mesh; s: THREE.Vector3; e: THREE.Vector3; p: number }[] = [];
   private boards: Record<string, { ctx: CanvasRenderingContext2D; tex: THREE.CanvasTexture }> = {};
-  private rack: { group?: THREE.Group; fans: THREE.Mesh[]; leds: THREE.Mesh<THREE.BoxGeometry, THREE.MeshBasicMaterial>[][]; lamp?: THREE.MeshStandardMaterial } = { fans: [], leds: [] };
+  private rack: {
+    group?: THREE.Group; fans: THREE.Mesh[]; leds: Led[][]; lamp?: THREE.MeshStandardMaterial;
+    net?: Led[]; cpu?: Led[][]; ram?: Led[]; ups?: THREE.MeshStandardMaterial;
+  } = { fans: [], leds: [] };
+  private cpuUse = 0;
+  private ramUse = 0;
   private beacon: THREE.Mesh<THREE.SphereGeometry, THREE.MeshStandardMaterial> | null = null;
   private beaconLight: THREE.PointLight | null = null;
   private clockHands: { h: THREE.Object3D; m: THREE.Object3D } | null = null;
@@ -711,35 +718,103 @@ export class Office {
     }
   }
 
-  // ---------- rack del modelo local (llama-server)
+  // ---------- rack del modelo local (llama-server): un armario de CPD de 42U con la puerta de cristal
+  // De arriba abajo: switch (LEDs de red), servidor GPU 4U (ventiladores + LEDs de VRAM), dos servidores 2U (LEDs de
+  // CPU), cabina de RAM/discos (LEDs de RAM) y el SAI con su pantallita. La parte frontal mira a +x.
   private buildRack(): void {
     const g = new THREE.Group();
     g.position.set(RACK_DEFAULT[0], 0, RACK_DEFAULT[1]);
     g.visible = false;
     this.rack.group = g;
     this.scene.add(g);
-    const body = put(B(1.2, 2.7, 1.5), M(0x1e293b), g, 0, 1.35, 0);
+    const FX = 0.53; // cara frontal de los equipos
+    // suelo técnico perforado bajo el armario
+    const floorTex = canvasTex(64, 64, (c) => {
+      c.fillStyle = "#9aa3ad"; c.fillRect(0, 0, 64, 64);
+      c.fillStyle = "#6b7480";
+      for (let y = 4; y < 64; y += 8) for (let x = 4; x < 64; x += 8) { c.beginPath(); c.arc(x, y, 1.6, 0, 7); c.fill(); }
+      c.strokeStyle = "#5b636e"; c.lineWidth = 2; c.strokeRect(1, 1, 62, 62);
+    }, [2, 2]);
+    put(B(1.9, 0.05, 1.7), new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.6, metalness: 0.3 }), g, 0, 0.025, 0, false);
+    // armario
+    const frame = M(0x111827, { metalness: 0.35, roughness: 0.5 });
+    const body = put(B(1.0, 3.1, 1.15), frame, g, 0, 1.6, 0);
     body.userData.station = "rack";
     this.clickable.push(body);
-    put(B(1.3, 0.1, 1.6), M(0x334155), g, 0, 2.72, 0);
-    [0, 1].forEach((k) => {
-      const y = 0.85 + k * 1.15;
-      put(B(0.08, 0.95, 1.2), M(0x0f172a), g, 0.62, y + 0.15, 0, false);
-      const fan = put(new THREE.CylinderGeometry(0.28, 0.28, 0.05, 6), M(0x475569), g, 0.67, y + 0.15, -0.3, false);
-      fan.rotation.z = Math.PI / 2;
-      this.rack.fans.push(fan);
+    put(B(1.08, 0.08, 1.22), M(0x1f2937, { metalness: 0.4 }), g, 0, 3.19, 0, false); // techo
+    [-0.53, 0.53].forEach((z) => put(B(1.02, 3.1, 0.04), M(0x0b1220), g, 0, 1.6, z, false)); // laterales
+    [[0.4, 0.45], [-0.4, 0.45], [0.4, -0.45], [-0.4, -0.45]].forEach(([x, z]) =>
+      put(new THREE.CylinderGeometry(0.04, 0.05, 0.06, 8), M(0x374151), g, x, 0.08, z, false)); // patas
+    // pasacables del techo hacia la pared
+    const cable = put(new THREE.CylinderGeometry(0.07, 0.07, 1.1, 10), M(0x1e293b), g, -0.2, 3.7, 0.2, false);
+    cable.rotation.z = 0.6;
+    const ledRow = (x: number, y: number, z: number, n: number, dz = 0.06): THREE.Mesh<THREE.BoxGeometry, THREE.MeshBasicMaterial>[] => {
       const row: THREE.Mesh<THREE.BoxGeometry, THREE.MeshBasicMaterial>[] = [];
-      for (let i = 0; i < 8; i++) {
-        const m = new THREE.Mesh(B(0.05, 0.07, 0.07), new THREE.MeshBasicMaterial({ color: 0x334155 }));
-        m.position.set(0.68, y - 0.12 + i * 0.1, 0.28);
+      for (let i = 0; i < n; i++) {
+        const m = new THREE.Mesh(B(0.02, 0.03, 0.035), new THREE.MeshBasicMaterial({ color: 0x1f2937 }));
+        m.position.set(x, y, z + i * dz);
         g.add(m);
         row.push(m);
       }
-      this.rack.leds.push(row);
+      return row;
+    };
+    const unit = (y: number, h: number, color: number) => put(B(0.06, h - 0.02, 0.98), M(color, { metalness: 0.3, roughness: 0.45 }), g, FX - 0.03, y, 0, false);
+    // 1U switch con 12 puertos
+    let y = 2.95;
+    unit(y, 0.12, 0x334155);
+    this.rack.net = ledRow(FX + 0.005, y, -0.36, 12);
+    // servidor GPU 4U: rejilla, 3 ventiladores y una fila de LEDs de VRAM por GPU
+    y = 2.6;
+    unit(y, 0.5, 0x0f172a);
+    for (let k = 0; k < 3; k++) {
+      const z = -0.3 + k * 0.3;
+      put(new THREE.TorusGeometry(0.11, 0.015, 6, 18), M(0x475569), g, FX + 0.005, y + 0.03, z, false).rotation.y = Math.PI / 2;
+      const fan = put(B(0.01, 0.2, 0.035), M(0x64748b), g, FX + 0.008, y + 0.03, z, false);
+      const fan2 = put(B(0.01, 0.035, 0.2), M(0x64748b), g, 0, 0, 0, false);
+      fan.add(fan2);
+      fan2.position.set(0, 0, 0);
+      this.rack.fans.push(fan);
+    }
+    this.rack.leds.push(ledRow(FX + 0.005, y - 0.19, -0.42, 8, 0.07));
+    put(B(0.01, 0.06, 0.3), new THREE.MeshBasicMaterial({ color: 0x0ea5e9 }), g, FX + 0.006, y - 0.19, 0.3, false); // logo
+    // dos servidores 2U: bahías de disco y LEDs de CPU
+    this.rack.cpu = [];
+    [2.05, 1.78].forEach((yy) => {
+      unit(yy, 0.25, 0x1e293b);
+      for (let k = 0; k < 6; k++) put(B(0.012, 0.16, 0.12), M(0x0b1220), g, FX + 0.004, yy, -0.4 + k * 0.14, false);
+      this.rack.cpu!.push(ledRow(FX + 0.012, yy + 0.09, -0.42, 6, 0.14));
     });
+    // cabina de RAM / almacenamiento 3U
+    y = 1.38;
+    unit(y, 0.38, 0x111c2e);
+    for (let k = 0; k < 10; k++) put(B(0.012, 0.28, 0.07), M(k % 2 ? 0x1e293b : 0x273449), g, FX + 0.004, y, -0.42 + k * 0.094, false);
+    this.rack.ram = ledRow(FX + 0.016, y - 0.16, -0.42, 10, 0.094);
+    // paneles ciegos y SAI con pantalla
+    unit(0.98, 0.25, 0x0b1220);
+    y = 0.55;
+    unit(y, 0.45, 0x1f2937);
+    const lcd = new THREE.MeshStandardMaterial({ color: 0x052e16, emissive: 0x22c55e, emissiveIntensity: 0.4 });
+    put(B(0.01, 0.1, 0.22), lcd, g, FX + 0.004, y + 0.08, -0.2, false);
+    this.rack.ups = lcd;
+    put(B(0.012, 0.05, 0.05), M(0x94a3b8), g, FX + 0.004, y + 0.08, 0.15, false); // botón
+    // puerta de cristal ahumado con asa (deja ver los equipos)
+    const glass = new THREE.MeshStandardMaterial({ color: 0x0f172a, transparent: true, opacity: 0.18, roughness: 0.05, metalness: 0.5 });
+    put(B(0.015, 2.95, 1.05), glass, g, FX + 0.07, 1.62, 0, false);
+    put(B(0.03, 0.4, 0.04), M(0x9ca3af, { metalness: 0.8, roughness: 0.25 }), g, FX + 0.09, 1.7, 0.46, false);
+    // baliza de estado en el techo
     const lamp = M(0x38bdf8, { emissive: 0x38bdf8, emissiveIntensity: 0.1 });
-    put(B(0.05, 0.12, 0.5), lamp, g, 0.64, 2.55, 0, false);
+    put(new THREE.CylinderGeometry(0.07, 0.07, 0.12, 12), lamp, g, 0.3, 3.29, -0.35, false);
     this.rack.lamp = lamp;
+    // placa con el nombre
+    const plate = canvasTex(256, 48, (c) => {
+      c.fillStyle = "#0b1220"; c.fillRect(0, 0, 256, 48);
+      c.fillStyle = "#38bdf8"; c.font = "bold 22px system-ui, sans-serif"; c.textAlign = "center"; c.textBaseline = "middle";
+      c.fillText("CPD · MODELO LOCAL", 128, 25);
+    });
+    const pm = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.17), new THREE.MeshBasicMaterial({ map: plate }));
+    pm.position.set(FX + 0.08, 3.08, 0);
+    pm.rotation.y = Math.PI / 2;
+    g.add(pm);
   }
 
   /** Memoria usada (0–1) por GPU y si el modelo local está cargando, listo o apagado. */
@@ -747,6 +822,12 @@ export class Office {
     this.gpu = levels;
     this.gpuBusy = busy;
     this.localState = localState;
+  }
+
+  /** Uso de CPU y RAM del PC (0–1): los LEDs de los servidores del rack lo siguen. */
+  setSystem(cpu: number, ram: number): void {
+    this.cpuUse = cpu;
+    this.ramUse = ram;
   }
 
   // ---------- pizarras
@@ -1006,7 +1087,7 @@ export class Office {
   }
 
   private anchor(id: string): THREE.Vector3 | null {
-    if (id === "rack") return this.rack.group?.visible ? this.rack.group.position.clone().add(new THREE.Vector3(0.4, 2.9, 0)) : null;
+    if (id === "rack") return this.rack.group?.visible ? this.rack.group.position.clone().add(new THREE.Vector3(0.5, 3.0, 0)) : null;
     const st = this.stations.get(id);
     return st ? this.world(st.group, 0, 1.8, -0.5) : null;
   }
@@ -1052,7 +1133,7 @@ export class Office {
     if (k === "iso") return this.goto([21, 18, 23.5], [0, 0.4, 0.4]);
     if (k === "rack") {
       const r = this.rack.group!.position;
-      return this.goto([r.x + 5.5, 4.6, r.z + 5.0], [r.x, 1.3, r.z]);
+      return this.goto([r.x + 7.2, 4.2, r.z + 4.8], [r.x + 0.4, 1.7, r.z]);
     }
     const st = this.stations.get(k);
     if (!st) return;
@@ -1072,7 +1153,7 @@ export class Office {
       const id = el.dataset.lbl!;
       const st = this.stations.get(id);
       if (st) this._v.copy(this.world(st.group, 0, 2.35, -0.92));
-      else if (id === "rack" && this.rack.group?.visible) this._v.copy(this.rack.group.position).setY(3.3);
+      else if (id === "rack" && this.rack.group?.visible) this._v.copy(this.rack.group.position).setY(3.75);
       else if (id === "wb") this._v.set(-5.5, 4.0, BACK + 0.3);
       else if (id === "git") this._v.set(5.3, 4.0, BACK + 0.3);
       else { el.style.display = "none"; continue; }
@@ -1148,9 +1229,17 @@ export class Office {
       const v = this.gpu[k];
       const n = v === undefined ? (this.localState === "ready" && k === 0 ? 3 : 0) : Math.round(Math.min(1, v) * 8);
       const blink = this.localState === "loading" && Math.sin(t * 8 + k) > 0;
-      row.forEach((m, j) => m.material.color.set(blink ? 0x38bdf8 : j < n ? (j < 5 ? 0x22c55e : j < 7 ? 0xf59e0b : 0xef4444) : 0x334155));
+      row.forEach((m, j) => m.material.color.set(blink ? 0x38bdf8 : j < n ? (j < 5 ? 0x22c55e : j < 7 ? 0xf59e0b : 0xef4444) : 0x1f2937));
     });
     this.rack.fans.forEach((f) => (f.rotation.x += 0.03 + this.gpuBusy * 0.5));
+    // switch: parpadeo de red (más cuanto más trabaja la GPU); servidores: CPU; cabina: RAM; SAI: encendido
+    const on = this.localState !== "off";
+    const level = (m: Led, j: number, n: number, v: number) =>
+      m.material.color.set(j < Math.round(Math.min(1, v) * n) ? (j / n < 0.6 ? 0x22c55e : j / n < 0.85 ? 0xf59e0b : 0xef4444) : 0x1f2937);
+    this.rack.net?.forEach((m, j) => m.material.color.set(on && Math.sin(t * (6 + this.gpuBusy * 20) + j * 2.3) > 0.2 ? 0x22c55e : 0x1f2937));
+    this.rack.cpu?.forEach((row, k) => row.forEach((m, j) => level(m, j, row.length, this.cpuUse * (k ? 0.9 : 1.05) + Math.sin(t * 3 + j) * 0.03)));
+    this.rack.ram?.forEach((m, j, row) => level(m, j, row.length, this.ramUse));
+    if (this.rack.ups) this.rack.ups.emissiveIntensity = 0.35 + Math.sin(t * 1.5) * 0.08;
     if (this.rack.lamp) this.rack.lamp.emissiveIntensity = this.localState === "ready" ? 0.9 : this.localState === "loading" ? 0.4 + Math.sin(t * 6) * 0.4 : 0.05;
     this.placeLabels();
     this.controls.update();

@@ -44,7 +44,7 @@ async function loadReview() {
 }
 
 const off = onTaskEvent((ev) => {
-  if (ev.task_id !== props.id) return;
+  if (ev.task_id !== props.id || ev.kind === "worker_live") return;
   // lo que llegó por SSE mientras se cargaba el historial ya puede estar en la lista
   if (ev.id != null && events.value.some((e) => e.id === ev.id)) return;
   events.value.push(ev);

@@ -43,6 +43,28 @@ class MergeConflictTests(unittest.TestCase):
             self.assertTrue((repo / "nuevo.txt").exists())
 
 
+    def test_merge_without_git_identity(self):
+        """PC sin `git config user.email` (instituto): integrar no puede fallar con «Committer identity unknown»."""
+        import os
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = make_repo(tmp)
+            ws = workspace.create(repo, 1, Path(tmp) / "wt")
+            commit(ws.path, "nuevo.txt", "hola\n", "agente")
+            git(repo, "config", "user.useConfigOnly", "true")  # git no se inventa identidad: como en ese PC
+            git(repo, "config", "--unset", "user.email")
+            git(repo, "config", "--unset", "user.name")
+            env = {k: v for k, v in os.environ.items() if not k.startswith(("GIT_AUTHOR", "GIT_COMMITTER", "EMAIL"))}
+            empty = Path(tmp) / "gitconfig-vacio"
+            empty.write_text("")
+            env.update(GIT_CONFIG_GLOBAL=str(empty), GIT_CONFIG_NOSYSTEM="1")
+            with mock.patch.dict(os.environ, env, clear=True):
+                self.assertEqual(workspace.identity(repo), workspace.FALLBACK_IDENTITY)
+                ws.merge()
+            self.assertTrue((repo / "nuevo.txt").exists())
+            self.assertIn("LocalHarness", git(repo, "log", "-1", "--format=%an"))
+
+
 class CleanupTests(unittest.TestCase):
     def test_only_closed_work_is_removed(self):
         with tempfile.TemporaryDirectory() as tmp:

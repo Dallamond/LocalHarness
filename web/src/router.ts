@@ -6,7 +6,8 @@ import ModelsView from "./views/ModelsView.vue";
 import TaskView from "./views/TaskView.vue";
 import PlansView from "./views/PlansView.vue";
 import PlanView from "./views/PlanView.vue";
-import InboxView from "./views/InboxView.vue";
+import AnalyticsView from "./views/AnalyticsView.vue";
+import WorkView from "./views/WorkView.vue";
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -17,6 +18,8 @@ export const router = createRouter({
     { path: "/chat", component: ChatView, meta: { title: "Chat" } },
     { path: "/chat/:id", component: ChatView, props: (r) => ({ id: Number(r.params.id) }), meta: { title: "Chat" } },
     { path: "/modelos", component: ModelsView, meta: { title: "Modelos locales" } },
+    { path: "/analiticas", component: AnalyticsView, meta: { title: "Analíticas" } },
+    { path: "/trabajo", component: WorkView, meta: { title: "Trabajo" } },
     { path: "/tareas", redirect: "/chat" },
     { path: "/tareas/:id", component: TaskView, props: (r) => ({ id: Number(r.params.id) }), meta: { title: "Ejecución" } },
     { path: "/ajustes", component: SettingsView, meta: { title: "Ajustes" } },
@@ -24,7 +27,7 @@ export const router = createRouter({
     { path: "/planes", component: PlansView, meta: { title: "Planes" } },
     { path: "/planes/:id", component: PlanView, props: (r) => ({ id: Number(r.params.id) }), meta: { title: "Plan" } },
     // Planes y «Pendiente de ti» ya no están en el menú (la bandeja vive en la Oficina); las rutas siguen para los enlaces
-    { path: "/bandeja", component: InboxView, meta: { title: "Pendiente de ti" } },
+    { path: "/bandeja", redirect: "/trabajo" }, // la vieja «Pendiente de ti»: ahora es la vista Trabajo
   ],
 });
 

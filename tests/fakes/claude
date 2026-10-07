@@ -63,6 +63,13 @@ if schema and "subtasks" in schema.get("properties", {}):
     plan = {"summary": "plan falso", "risk": "high" if "BORRA" in prompt else "low", "subtasks": subs}
     out({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "StructuredOutput", "input": plan}]}})
     finish(json.dumps(plan, ensure_ascii=False), plan, cost=0.005)
+elif schema and "coordinator" in schema.get("properties", {}):
+    # diseñador de agentes a medida: elige según la petición (y algo inventado para ver que se filtra)
+    spec = {"name": "Arreglar Calc", "description": "arregla la calculadora", "provider": "claude", "model": "sonnet",
+            "coordinator": True, "read_only": False, "web": False, "thinking": "normal",
+            "skills": ["cambios-minimos", "no-existe"], "local_skills": ["tests-primero"], "mcps": ["inventado"],
+            "max_turns": 99, "instructions": "Primero los tests.", "reason": "cambio pequeño con tests"}
+    finish(json.dumps(spec, ensure_ascii=False), spec, cost=0.003)
 elif schema and "subtask" in schema.get("properties", {}):
     # «rehacer este paso»: devuelve la subtarea nueva con lo que pidió el humano
     agent = (re.findall(r"^\d+\. .+ \(([^,]+), riesgo", prompt, re.M) or ["nadie"])[0]

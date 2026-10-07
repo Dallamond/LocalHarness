@@ -169,6 +169,45 @@ class McpServerTests(unittest.TestCase):
             names = LocalAgentAdapter(only_tools=["leer_archivo"]).tool_names(read_only=False)
             self.assertEqual(names, ["leer_archivo", "avisar_progreso", "terminar"])  # las de control, siempre
 
+    def test_streaming_answer_and_live_state(self):
+        """llama-server en streaming: la respuesta se arma de los trozos y el directo (LH_LIVE) queda al día."""
+        class Streamer(BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                assert body["stream"] is True
+                chunks = [{"choices": [{"delta": {"reasoning_content": "Pienso en "}}]},
+                          {"choices": [{"delta": {"reasoning_content": "la suma."}}]},
+                          {"choices": [{"delta": {"content": "Hay que "}}], "model": "Qwen3-8B.gguf"},
+                          {"choices": [{"delta": {"content": "sumar."}, "finish_reason": "stop"}]},
+                          {"choices": [], "usage": {"prompt_tokens": 50, "completion_tokens": 7},
+                           "timings": {"predicted_per_second": 33.3}}]
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                for c in chunks:
+                    self.wfile.write(f"data: {json.dumps(c)}\n\n".encode())
+                self.wfile.write(b"data: [DONE]\n\n")
+
+            def log_message(self, *a):
+                pass
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), Streamer)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                live = Path(tmp) / "live.json"
+                s = Server({"LH_ROOT": tmp, "LH_LOG": str(Path(tmp) / "log.jsonl"), "LH_LIVE": str(live),
+                            "LH_LOCAL_URL": f"http://127.0.0.1:{httpd.server_port}"})
+                r = call(s, "local_ask", {"task": "¿qué falla?"})
+                self.assertEqual(r["result"]["content"][0]["text"], "Hay que sumar.")
+                log = read_log(Path(tmp) / "log.jsonl")[0]
+                self.assertEqual((log["thinking"], log["completion_tokens"], log["tps"], log["model"]),
+                                 ("Pienso en la suma.", 7, 33.3, "Qwen3-8B"))
+                state = json.loads(live.read_text())
+                self.assertEqual((state["tool"], state["task"], state["thinking"], state["text"], state["done"]),
+                                 ("local_ask", "¿qué falla?", "Pienso en la suma.", "Hay que sumar.", True))
+        finally:
+            httpd.shutdown()
+
     def test_strip_fence(self):
         self.assertEqual(strip_fence("```js\nx = 1\n```"), "x = 1")
         self.assertEqual(strip_fence("sin bloque"), "sin bloque")

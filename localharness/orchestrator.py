@@ -20,7 +20,7 @@ from localharness.events import Event
 from localharness.runner import run
 from localharness.store import Store
 
-EPHEMERAL = ("speed", "thinking_live")  # en vivo para la GUI, no se guardan (llegan cada ~1,5 s)
+EPHEMERAL = ("speed", "thinking_live", "worker_live")  # en vivo para la GUI, no se guardan (llegan cada ~1,5 s)
 
 DELEGATE_TOOLS = {"local_ask": "mcp__local__local_ask", "local_write_file": "mcp__local__local_write_file",
                   "local_execute_plan": "mcp__local__local_execute_plan",
@@ -352,7 +352,7 @@ def _mcp_setup(store: Store, root: Path, cfg: dict, write: bool, coordinator: bo
         start = [n for n in cfg.get("local_skills") or [] if n in catalog_skills]
         (d / "worker.json").write_text(json.dumps({"skills": start, "tools": None, "by": "agente" if start else "",
                                                    "reason": ""}, ensure_ascii=False), encoding="utf-8")
-        env.update(LH_WORKER=str(d / "worker.json"), LH_SKILLS=str(d / "skills.json"))
+        env.update(LH_WORKER=str(d / "worker.json"), LH_SKILLS=str(d / "skills.json"), LH_LIVE=str(d / "live.json"))
         tools = ([DELEGATE_TOOLS[PREPARE_TOOL], DELEGATE_TOOLS["local_ask"]]
                  + ([DELEGATE_TOOLS["local_write_file"], DELEGATE_TOOLS[PLAN_TOOL], DELEGATE_TOOLS["local_agent"]]
                     if write else [])
@@ -363,6 +363,7 @@ def _mcp_setup(store: Store, root: Path, cfg: dict, write: bool, coordinator: bo
     # los encargos al modelo local pueden tardar minutos: el tope por defecto de la CLI para una herramienta MCP es corto
     return {"dir": d, "config": str(path), "log": log, "tools": tools, "seen": 0, "delegate": delegate,
             "worker": str(d / "worker.json"), "skills": str(d / "skills.json"), "worker_seen": None,
+            "live": str(d / "live.json"), "live_at": 0.0,
             "missing": [n for n in wanted if n not in catalog],
             # sin --safe-mode (bloquea el MCP): el CLAUDE.md del usuario/vault se apaga con esta variable (verificado)
             "env": {"MCP_TOOL_TIMEOUT": "900000", "MCP_TIMEOUT": "30000", "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1"}}
@@ -419,9 +420,22 @@ def _emit_worker(deleg: dict, sink: Callable[[Event], None]) -> None:
     sink(Event("worker", text=f"{who} al trabajador local · skills: {skills}"[:300], data=state))
 
 
+def _emit_live(deleg: dict, sink: Callable[[Event], None]) -> None:
+    """El trabajador local pensando y escribiendo AHORA (en vivo para la oficina; no se guarda)."""
+    try:
+        data = json.loads(Path(deleg["live"]).read_text(encoding="utf-8"))
+    except (OSError, ValueError, KeyError):
+        return
+    if not isinstance(data, dict) or data.get("at", 0) <= deleg.get("live_at", 0):
+        return
+    deleg["live_at"] = data["at"]
+    sink(Event("worker_live", text=str(data.get("task") or "")[:200], data=data))
+
+
 def _emit_new(deleg: dict, sink: Callable[[Event], None]) -> None:
     from localharness.mcp_local import read_log
     _emit_worker(deleg, sink)
+    _emit_live(deleg, sink)
     entries = read_log(deleg["log"])
     for e in entries[deleg["seen"]:]:
         if e.get("progress"):  # paso a paso del agente local mientras trabaja un encargo de `local_agent`
