@@ -453,6 +453,46 @@ def cmd_start(args) -> int:
     return cmd_serve(args)
 
 
+def cmd_delegation_test(args, store: Store) -> int:
+    """La mitad local de la delegación, sin Claude (no gasta plan): el servidor MCP que usa Claude contra TU
+    llama-server, en un repo de prueba temporal: local_ask, local_agent (escribe y pasa un test) y run_checks."""
+    import tempfile
+    from localharness import llama, mcp_local, settings
+    from localharness.orchestrator import llama_up
+    url = settings.load(store)["local_base_url"]
+    print(f"Modelo local: {url}")
+    if not llama_up(url):
+        return _fail("no contesta llama-server: arráncalo en Modelos locales (o con `llama serve`) y repite")
+    with tempfile.TemporaryDirectory(prefix="lh-delegacion-") as tmp:
+        root = Path(tmp)
+        (root / "calc.py").write_text("def suma(a, b):\n    return a - b  # fallo a propósito\n", encoding="utf-8")
+        (root / "test_calc.py").write_text("import unittest\nfrom calc import suma\n\n\nclass T(unittest.TestCase):\n"
+                                           "    def test_suma(self):\n        self.assertEqual(suma(2, 3), 5)\n",
+                                           encoding="utf-8")
+        for cmd in (["init", "-q"], ["add", "."], ["-c", "user.name=lh", "-c", "user.email=lh@local", "commit", "-qm", "base"]):
+            subprocess.run(["git", *cmd], cwd=root, check=True)
+        server = mcp_local.Server({"LH_LOCAL_URL": url, "LH_LOCAL_KEY": llama.API_KEY or "", "LH_ROOT": tmp,
+                                   "LH_WRITE": "1", "LH_COMMANDS": '["python -m unittest"]'})
+        ok = True
+        steps = [("local_ask", {"task": "¿Qué hace la función suma y qué fallo tiene? Una frase.", "files": ["calc.py"]}),
+                 ("local_agent", {"task": "Arregla la función suma de calc.py para que sume. Ejecuta "
+                                          "`python -m unittest` y termina cuando el test pase.", "files": ["calc.py"]}),
+                 ("run_checks", {"command": "python -m unittest"})]
+        for name, a in steps:
+            print(f"\n== {name} …", flush=True)
+            t0 = time.monotonic()
+            r = server.call(name, a)
+            text = r["content"][0]["text"]
+            print(text[:1500])
+            print(f"({time.monotonic() - t0:.0f} s)")
+            ok = ok and not r.get("isError")
+        passed = "código de salida 0" in text
+        print("\nRESULTADO: " + ("✔ el modelo local recibe encargos, cambia archivos y pasa el test: Claude puede "
+                                   "delegar en él" if ok and passed else "✘ algo falló (mira arriba); con modelos "
+                                   "sin herramientas prueba tool_mode json o Qwen3/Qwen3.5"))
+        return 0 if ok and passed else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):  # la consola de Windows no es UTF-8 por defecto
         if hasattr(stream, "reconfigure"):
@@ -516,6 +556,9 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("cleanup", help="M6: borra worktrees y ramas de tareas/planes ya cerrados")
     p.add_argument("--dry-run", action="store_true", help="solo dice qué borraría")
     p.set_defaults(fn=cmd_cleanup)
+
+    sub.add_parser("probar-delegacion", help="prueba gratis la mitad local de la delegación (sin Claude)") \
+        .set_defaults(fn=cmd_delegation_test)
 
     sub.add_parser("tasks", help="lista tareas").set_defaults(fn=cmd_tasks)
     p = sub.add_parser("show", help="detalle de una tarea"); p.add_argument("id", type=int)

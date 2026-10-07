@@ -187,6 +187,9 @@ MAX_CHECK_CHARS = 4000
 ENV_DROP = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "LH_LOCAL_KEY")
 
 
+JUNK_DIRS = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "node_modules", ".venv"}
+
+
 class ToolError(Exception):
     pass
 
@@ -477,6 +480,8 @@ class Server:
             if len(item) < 4:
                 continue
             rel = item[3:]
+            if any(part in JUNK_DIRS for part in Path(rel).parts) or rel.endswith((".pyc", ".pyo")):
+                continue  # restos de ejecutar los tests, no trabajo del agente
             p = self.root / rel
             out[rel] = hashlib.sha1(p.read_bytes()).hexdigest() if p.is_file() else "borrado"
         return out

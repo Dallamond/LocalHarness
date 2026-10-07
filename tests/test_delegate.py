@@ -396,3 +396,52 @@ class BossModeTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ScriptedLlama(BaseHTTPRequestHandler):
+    """llama-server falso con guion: responde a /health y a /v1/models, y en el chat sigue `script` en orden."""
+    script: list = []
+
+    def _send(self, obj, code=200):
+        body = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        self._send({"status": "ok"} if self.path == "/health" else {"data": [{"id": "Qwen3-8B.gguf"}]})
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers["Content-Length"]))
+        self._send(ScriptedLlama.script.pop(0))
+
+    def log_message(self, *a):
+        pass
+
+
+class DelegationTestCommandTests(unittest.TestCase):
+    def test_probar_delegacion(self):
+        """`localharness probar-delegacion`: el modelo local contesta, arregla calc.py y el test pasa."""
+        import contextlib, io
+        from localharness.cli import main
+        ScriptedLlama.script = [
+            reply("Resta en vez de sumar."),
+            tool_call("escribir_archivo", {"ruta": "calc.py", "contenido": "def suma(a, b):\n    return a + b\n"}, 0),
+            tool_call("ejecutar", {"comando": "python -m unittest"}, 1),
+            tool_call("terminar", {"resumen": "Arreglada suma", "comprobacion": "tests en verde"}, 2),
+        ]
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), ScriptedLlama)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        with tempfile.TemporaryDirectory() as tmp:
+            db = str(Path(tmp) / "lh.db")
+            s = Store(db); settings.save(s, {"local_base_url": f"http://127.0.0.1:{httpd.server_port}"}); s.close()
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = main(["--db", db, "probar-delegacion"])
+        text = out.getvalue()
+        self.assertEqual(code, 0, text)
+        self.assertIn("Archivos que cambió: calc.py", text)
+        self.assertIn("✔ el modelo local recibe encargos", text)
