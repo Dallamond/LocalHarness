@@ -236,6 +236,24 @@ class ModelsApiTests(unittest.TestCase):
                 self.assertTrue(next(x for x in recs["models"] if x["id"] == "qwen3-8b")["downloaded"])
 
 
+class WebOutdatedTests(unittest.TestCase):
+    def test_rebuild_when_sources_are_newer(self):
+        import os
+        from localharness.cli import web_outdated
+        with tempfile.TemporaryDirectory() as tmp:
+            web = Path(tmp)
+            (web / "src").mkdir()
+            (web / "src" / "main.ts").write_text("x")
+            self.assertTrue(web_outdated(web))  # sin compilar
+            (web / "dist").mkdir()
+            (web / "dist" / "index.html").write_text("<html>")
+            os.utime(web / "src" / "main.ts", (1, 1))
+            self.assertFalse(web_outdated(web))
+            os.utime(web / "src" / "main.ts", None)  # git pull trae código nuevo
+            os.utime(web / "dist" / "index.html", (2, 2))
+            self.assertTrue(web_outdated(web))
+
+
 class AutostartTests(unittest.TestCase):
     def test_autostart_last_model(self):
         from localharness.api import autostart_llama

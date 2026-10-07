@@ -1039,7 +1039,8 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
                 return FileResponse(candidate)
             if full_path.startswith("api/"):
                 raise HTTPException(404)
-            return FileResponse(web_dist / "index.html")
+            # sin caché: tras actualizar, el navegador tiene que pedir el index.html nuevo (los assets llevan hash)
+            return FileResponse(web_dist / "index.html", headers={"Cache-Control": "no-cache"})
 
     return app
 

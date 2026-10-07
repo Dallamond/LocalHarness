@@ -384,6 +384,31 @@ def cmd_serve(args) -> int:
     return 0
 
 
+def web_outdated(web: Path) -> bool:
+    """¿Falta la web compilada o el código de la web es más nuevo que lo compilado? (p. ej. tras un git pull)"""
+    dist = web / "dist" / "index.html"
+    if not dist.is_file():
+        return True
+    built = dist.stat().st_mtime
+    sources = [web / "index.html", web / "package.json", web / "vite.config.ts", *(web / "src").rglob("*"),
+               *(web / "public").rglob("*")]
+    return any(p.is_file() and p.stat().st_mtime > built + 1 for p in sources)
+
+
+def rebuild_web(web: Path) -> bool:
+    npm = shutil.which("npm")
+    if not npm:
+        print("Aviso: la web compilada está desactualizada o falta, y no encuentro Node.js (npm) para compilarla.")
+        print("Instálalo desde https://nodejs.org y ejecuta Actualizar.bat. Mientras, verás la versión anterior.")
+        return False
+    print("La web ha cambiado desde la última vez: compilándola (tarda un poco)...")
+    for cmd in ([npm, "install", "--no-audit", "--no-fund", "--loglevel=error"], [npm, "run", "build"]):
+        if subprocess.run(cmd, cwd=web).returncode != 0:
+            print("Aviso: no se pudo compilar la web; verás la versión anterior. Ejecuta Actualizar.bat.")
+            return False
+    return True
+
+
 def cmd_start(args) -> int:
     """Para el usuario básico (doble clic en LocalHarness.bat o el icono): si ya está en marcha, solo abre el
     navegador; si no, arranca el servidor (y el último modelo local si lo pediste en Modelos) y abre la GUI."""
@@ -404,9 +429,9 @@ def cmd_start(args) -> int:
         if not args.no_browser:
             webbrowser.open(url)
         return 0
-    dist = Path(__file__).resolve().parent.parent / "web" / "dist" / "index.html"
-    if not dist.is_file():
-        print("Aviso: falta la web compilada (web/dist). Ejecuta Actualizar.bat o: cd web; npm install; npm run build")
+    web = Path(__file__).resolve().parent.parent / "web"
+    if web_outdated(web):
+        rebuild_web(web)
 
     def open_when_ready() -> None:
         for _ in range(120):
