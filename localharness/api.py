@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from localharness import actions, llama, maintenance, settings, workspace
+from localharness import actions, catalog, hardware, hf, llama, maintenance, modelinfo, settings, workspace
 from localharness.adapters import ADAPTERS
 from localharness.context import load_skills
 from localharness.events import Event
@@ -43,6 +43,35 @@ class LlamaStartIn(BaseModel):
     path: str
     ctx: int | None = Field(default=None, ge=512, le=1_048_576)
     ngl: int | None = Field(default=None, ge=0, le=999)
+    options: dict[str, Any] | None = None  # ajustes del diálogo de arranque (ver llama.OPTION_FLAGS)
+    save: bool = False  # guardarlos como configuración propia de este modelo
+
+
+class EstimateIn(BaseModel):
+    path: str
+    options: dict[str, Any] = {}
+
+
+class DownloadIn(BaseModel):
+    repo: str = Field(min_length=3, pattern=r"^[\w.-]+/[\w.-]+$")
+    files: list[str] = Field(min_length=1)
+
+
+LAUNCH_KEYS = {"ctx", "ngl", "extra", *llama.OPTION_FLAGS, *llama.BOOL_FLAGS}
+
+
+def clean_options(opts: dict[str, Any] | None) -> dict[str, Any]:
+    """Solo claves conocidas y valores simples (nunca listas ni objetos): van a la línea de llama-server."""
+    out = {}
+    for k, v in (opts or {}).items():
+        if k not in LAUNCH_KEYS or v is None or v == "":
+            continue
+        if not isinstance(v, (str, int, float, bool)):
+            raise HTTPException(422, f"Valor no válido para {k}")
+        if k != "extra" and isinstance(v, str) and not v.replace(".", "").replace("_", "").replace("-", "").isalnum():
+            raise HTTPException(422, f"Valor no válido para {k}: {v!r}")
+        out[k] = v
+    return out
 
 
 class PickIn(BaseModel):
@@ -229,6 +258,9 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         log = Path(db_path).parent / "llama-server.log" if str(db_path) != ":memory:" else Path(
             tempfile.gettempdir()) / "localharness-llama-server.log"
         app.state.llama = llama.LlamaManager(log)
+        app.state.modelinfo = modelinfo.ModelInfo(log.with_name("model-info.json") if str(db_path) != ":memory:"
+                                                  else Path(tempfile.mkdtemp()) / "model-info.json")
+        app.state.downloads = hf.Downloads()
         # M6: restos de tareas y planes cerrados (worktrees y ramas) se limpian al arrancar
         try:
             app.state.cleanup = await asyncio.to_thread(maintenance.cleanup, store)
@@ -399,12 +431,16 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         model = Path(body.path)
         if not model.is_file() or model.suffix.lower() != ".gguf":
             raise HTTPException(422, "Eso no es un archivo .gguf")
-        own = settings.llama_launch(store, str(model))
+        opts = clean_options(body.options)
+        if body.save:
+            settings.save(store, {"llama": {"per_model": {**cfg["per_model"], str(model): opts}}})
+        own = settings.llama_launch(store, str(model), None if body.save else opts)
         try:
             await asyncio.to_thread(request.app.state.llama.start, model, cfg["port"], body.ctx or own["ctx"],
                                     body.ngl if body.ngl is not None else own["ngl"], own["extra"])
         except (LookupError, RuntimeError, OSError) as e:
             raise HTTPException(409, str(e)) from None
+        request.app.state.modelinfo.update(str(model), last_launch={"options": own["options"], "at": time.time()})
         # los agentes locales sin URL propia se conectan a este servidor
         settings.save(store, {"local_base_url": f"http://127.0.0.1:{cfg['port']}"})
         return await asyncio.to_thread(request.app.state.llama.status, cfg["port"])
@@ -413,6 +449,169 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
     async def llama_stop(request: Request) -> dict:
         await asyncio.to_thread(request.app.state.llama.stop)
         return request.app.state.llama.status(settings.load(st(request))["llama"]["port"])
+
+    # --- hardware, fichas, recomendaciones y descargas de Hugging Face
+    def hw_budget(store: Store, force: bool = False) -> tuple[dict, dict]:
+        hw = hardware.detect(force)
+        return hw, hardware.budget(hw, settings.load(store)["llama"].get("hardware"))
+
+    @app.get("/api/hardware")
+    async def get_hardware(request: Request, refresh: bool = False) -> dict:
+        hw, budget = await asyncio.to_thread(hw_budget, st(request), refresh)
+        return {**hw, "budget": budget}
+
+    @app.get("/api/llama/ratings")
+    async def llama_ratings(request: Request) -> dict:
+        """Ficha de cada GGUF descargado: metadatos, nota para LocalHarness, ajustes propuestos y prueba real."""
+        store, info = st(request), request.app.state.modelinfo
+        speed = request.app.state.runner.last_speed or {}
+
+        def gather() -> dict:
+            hw, budget = hw_budget(store)
+            cat = catalog.load_catalog()
+            out = {}
+            for m in llama.list_models():
+                d = llama.describe(m)
+                meta = info.summary(m) or {}
+                saved = info.get(str(m))
+                entry = catalog.match_catalog(m.name, cat)
+                if meta.get("error"):
+                    out[str(m)] = {"meta": meta, "catalog": entry and entry["id"]}
+                    continue
+                measured = saved.get("measured_tps")
+                if speed.get("final") and speed.get("tps") and speed.get("model") and \
+                        speed["model"].lower() in m.name.lower():
+                    measured = speed["tps"]
+                    info.update(str(m), measured_tps=measured)
+                rating = catalog.rate_local(meta, d["size_gb"], budget, saved.get("probe"), measured, entry)
+                rating["suggested"]["options"] = {k: v for k, v in rating["suggested"]["options"].items()
+                                                  if k != "jinja"}
+                out[str(m)] = {"meta": meta, "rating": rating, "probe": saved.get("probe"),
+                               "catalog": entry and {k: entry.get(k) for k in ("id", "name", "repo", "notes",
+                                                                               "agentic", "sampling")},
+                               "last_launch": saved.get("last_launch")}
+            return {"models": out, "budget": budget, "cores": hw.get("cores")}
+        return await asyncio.to_thread(gather)
+
+    @app.post("/api/llama/estimate")
+    async def llama_estimate(request: Request, body: EstimateIn) -> dict:
+        """Memoria y velocidad aproximadas con unos ajustes, y la orden exacta que se lanzaría."""
+        store = st(request)
+        model = Path(body.path)
+        if not model.is_file():
+            raise HTTPException(404, "No existe ese GGUF")
+        opts = clean_options(body.options)
+
+        def calc() -> dict:
+            _, budget = hw_budget(store)
+            meta = request.app.state.modelinfo.summary(model) or {}
+            size = llama.describe(model)["size_gb"]
+            launch = settings.llama_launch(store, str(model), opts)
+            est = catalog.estimate(meta, size, {**launch["options"], "ctx": launch["ctx"], "ngl": launch["ngl"]},
+                                   budget)
+            try:
+                cmd = llama.serve_command(model, settings.load(store)["llama"]["port"], launch["ctx"], launch["ngl"],
+                                          [*launch["extra"], "--api-key", "<aleatoria>"])
+            except LookupError:
+                cmd = None
+            return {"estimate": est, "budget": budget, "command": cmd, "ctx_train": meta.get("ctx_train")}
+        return await asyncio.to_thread(calc)
+
+    @app.get("/api/llama/recommend")
+    async def llama_recommend(request: Request, online: bool = True) -> dict:
+        """El catálogo ordenado para tu hardware. Con `online` mira los tamaños reales en Hugging Face."""
+        store = st(request)
+
+        def gather() -> dict:
+            _, budget = hw_budget(store)
+            files, errors = {}, []
+            from concurrent.futures import ThreadPoolExecutor
+
+            def one(repo: str):
+                try:
+                    return repo, hf.tree(repo, cached_only=not online), None
+                except Exception as e:  # noqa: BLE001 — sin red o repo movido: se estima
+                    return repo, None, f"{repo}: {e}"
+            with ThreadPoolExecutor(6) as ex:
+                for repo, fl, err in ex.map(one, [e["repo"] for e in catalog.load_catalog()]):
+                    if fl is not None:
+                        files[repo] = fl
+                    if err:
+                        errors.append(err)
+            names = [m.name for m in llama.list_models()]
+            return {"budget": budget, "models": catalog.recommend(budget, files, names), "errors": errors}
+        return await asyncio.to_thread(gather)
+
+    @app.get("/api/llama/hf/search")
+    async def hf_search(q: str) -> dict:
+        try:
+            return {"results": await asyncio.to_thread(hf.search, q)}
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"No pude consultar Hugging Face: {e}") from None
+
+    @app.get("/api/llama/hf/repo")
+    async def hf_repo(request: Request, repo: str) -> dict:
+        """Cuantizaciones de un repo cualquiera con su tamaño y si te caben (parámetros deducidos del nombre)."""
+        store = st(request)
+
+        def gather() -> dict:
+            files = hf.tree(repo)
+            _, budget = hw_budget(store)
+            entry = catalog.match_catalog(repo, catalog.load_catalog())
+            import re
+            m = re.search(r"(\d+(?:\.\d+)?)B(?:-A(\d+(?:\.\d+)?)B)?", repo, re.I)
+            params = float(m.group(1)) if m else None
+            e = entry or {"params_b": params or 8, "active_b": float(m.group(2)) if m and m.group(2) else params,
+                          "moe": bool(m and m.group(2)), "ctx_train": 32768, "kv_mb_1k": 128}
+            sizes = catalog.quant_sizes(e, files)
+            s = catalog._catalog_summary(e)
+            quants = []
+            for q, d in sizes.items():
+                sug = catalog.suggest_options(s, d["size_gb"], budget)
+                quants.append({"quant": q, "size_gb": d["size_gb"], "files": d["files"], "fit": sug["estimate"]["fit"],
+                               "ctx": sug["estimate"]["ctx"], "tps_est": sug["estimate"].get("tps_est")})
+            quants.sort(key=lambda x: x["size_gb"])
+            best = catalog.pick_quant(e, sizes, budget)
+            return {"repo": repo, "url": f"{hf.BASE}/{repo}", "params_b": e.get("params_b"), "catalog": entry,
+                    "quants": quants, "best": best and best["quant"]}
+        try:
+            return await asyncio.to_thread(gather)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"No pude leer {repo} en Hugging Face: {e}") from None
+
+    @app.post("/api/llama/download")
+    async def llama_download(request: Request, body: DownloadIn) -> dict:
+        cfg = settings.load(st(request))["llama"]
+        dest = cfg.get("download_dir") or (cfg["model_dirs"][0] if cfg["model_dirs"] else None) or \
+            next((str(d) for d in llama.model_dirs()), None)
+        if not dest:
+            raise HTTPException(409, "Elige antes una carpeta de modelos (abajo, «Dónde están las cosas»)")
+        if any(".." in f or f.startswith(("/", "\\")) or not f.lower().endswith(".gguf") for f in body.files):
+            raise HTTPException(422, "Solo se descargan archivos .gguf del repo")
+        files = hf.tree(body.repo, cached_only=True) or []
+        total = sum(f["size"] for f in files if f["path"] in body.files)
+        return request.app.state.downloads.start(body.repo, body.files, Path(dest), total)
+
+    @app.get("/api/llama/downloads")
+    async def llama_downloads(request: Request) -> dict:
+        return {"jobs": request.app.state.downloads.snapshot()}
+
+    @app.post("/api/llama/downloads/cancel")
+    async def llama_download_cancel(request: Request, body: dict) -> dict:
+        request.app.state.downloads.cancel(str(body.get("id")))
+        return {"ok": True}
+
+    @app.post("/api/llama/probe")
+    async def llama_probe(request: Request) -> dict:
+        """Prueba real del modelo arrancado (herramientas, JSON, tok/s). Gratis: es tu GPU."""
+        port = settings.load(st(request))["llama"]["port"]
+        status = await asyncio.to_thread(request.app.state.llama.status, port)
+        if status["state"] not in ("ready", "external"):
+            raise HTTPException(409, "Arranca antes un modelo y espera a que esté listo")
+        result = await asyncio.to_thread(modelinfo.probe, port)
+        if status.get("model"):
+            request.app.state.modelinfo.update(status["model"], probe=result)
+        return {"model": status.get("model"), "probe": result}
 
     @app.post("/api/pick")
     async def pick(body: PickIn) -> dict:

@@ -140,15 +140,132 @@ export interface Settings {
   llama: {
     server: string; model_dirs: string[]; port: number; ctx: number; ngl: number;
     per_model: Record<string, ModelLaunch>;
+    hardware: { vram_gb?: number | null; ram_gb?: number | null; gpu_name?: string; bandwidth_gbs?: number | null };
+    hf_token: string;
+    download_dir: string;
   };
   agent_defaults: { provider: string; model: string; role: string; max_turns: number | null; max_budget_usd: number | null };
 }
 
-/** Arranque propio de un GGUF (vacío = valores generales). */
+/** Arranque propio de un GGUF (vacío = valores generales). Claves = llama.OPTION_FLAGS / BOOL_FLAGS. */
 export interface ModelLaunch {
   ctx?: number | null;
   ngl?: number | null;
   extra?: string;
+  flash_attn?: "auto" | "on" | "off";
+  cache_k?: string;
+  cache_v?: string;
+  threads?: number | null;
+  batch?: number | null;
+  ubatch?: number | null;
+  parallel?: number | null;
+  n_cpu_moe?: number | null;
+  temp?: number | null;
+  top_p?: number | null;
+  top_k?: number | null;
+  min_p?: number | null;
+  repeat_penalty?: number | null;
+  reasoning_budget?: number | null;
+  mlock?: boolean;
+  no_mmap?: boolean;
+}
+
+export interface Budget {
+  gpu: string | null;
+  vram_gb: number;
+  usable_vram_gb: number;
+  ram_gb: number;
+  usable_ram_gb: number;
+  bandwidth_gbs: number;
+  manual: boolean;
+}
+
+export interface Hardware {
+  gpus: { name: string; vendor: string; vram_gb: number | null; vram_used_gb: number | null; vram_free_gb: number | null; driver: string | null; backend: string }[];
+  cpu: string | null;
+  cores: number | null;
+  os: string | null;
+  ram_gb: number | null;
+  ram_free_gb: number | null;
+  budget: Budget;
+}
+
+export type Fit = "gpu" | "mixto" | "cpu" | "no";
+
+export interface Estimate {
+  ctx: number;
+  weights_gb: number;
+  weights_gpu_gb: number;
+  weights_cpu_gb: number;
+  kv_gb: number;
+  kv_gpu_gb?: number;
+  overhead_gb: number;
+  vram_gb: number;
+  ram_gb: number;
+  tps_est?: number | null;
+  fit?: Fit;
+  vram_free_after_gb?: number;
+}
+
+export interface Probe {
+  at: number;
+  tool_calls: boolean | null;
+  tool_detail?: string;
+  json: boolean | null;
+  tps?: number;
+  prompt_tps?: number;
+  error?: string;
+}
+
+export interface ModelRating {
+  meta: Record<string, any> & { error?: string; arch?: string; ctx_train?: number; params_b?: number; moe?: boolean; tools_in_template?: boolean; thinking?: boolean; n_layer?: number };
+  rating?: {
+    score: number;
+    verdict: string;
+    reasons: string[];
+    roles: string[];
+    parts: { tools: number; fit: number; quality: number; speed: number };
+    suggested: { options: ModelLaunch; estimate: Estimate; why?: string };
+  };
+  probe?: Probe | null;
+  catalog?: { id: string; name: string; repo: string; notes: string; agentic: number; sampling?: Record<string, number> } | null;
+  last_launch?: { options: ModelLaunch; at: number } | null;
+}
+
+export interface Recommendation {
+  id: string;
+  name: string;
+  repo: string;
+  url: string;
+  params_b: number;
+  active_b: number;
+  moe: boolean;
+  ctx_train: number;
+  agentic: number;
+  tools: boolean;
+  thinking: boolean;
+  tags: string[];
+  roles: string[];
+  notes: string;
+  fit: Fit;
+  score: number;
+  downloaded: boolean;
+  hf_checked: boolean;
+  best: null | { quant: string; size_gb: number; files: string[]; exact: boolean; options: ModelLaunch; estimate: Estimate; why?: string };
+  quants: { quant: string; size_gb: number; exact: boolean; files: string[] }[];
+}
+
+export interface DownloadJob {
+  id: string;
+  repo: string;
+  files: string[];
+  dest: string;
+  state: "queued" | "downloading" | "done" | "failed" | "cancelled";
+  done: number;
+  total: number;
+  speed: number;
+  error: string | null;
+  path: string | null;
 }
 
 /** Velocidad de un modelo local: en vivo (evento speed) o la última medida. */
@@ -168,6 +285,7 @@ export interface LocalModel {
   dir: string;
   size_gb: number;
   quant: string | null;
+  vision?: boolean;
 }
 
 export interface LlamaStatus {

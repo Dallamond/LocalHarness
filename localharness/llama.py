@@ -87,6 +87,29 @@ def find_model(query: str) -> Path:
     raise LookupError(f"{query!r} es ambiguo: " + ", ".join(m.name for m in hits))
 
 
+# Ajustes de arranque que la GUI deja tocar → argumento de llama-server. Lo que no se indica, lo decide llama.cpp.
+OPTION_FLAGS = {
+    "flash_attn": "-fa", "cache_k": "-ctk", "cache_v": "-ctv", "threads": "-t", "batch": "-b", "ubatch": "-ub",
+    "parallel": "-np", "n_cpu_moe": "--n-cpu-moe", "temp": "--temp", "top_p": "--top-p", "top_k": "--top-k",
+    "min_p": "--min-p", "repeat_penalty": "--repeat-penalty", "reasoning_budget": "--reasoning-budget",
+}
+BOOL_FLAGS = {"mlock": "--mlock", "no_mmap": "--no-mmap", "cont_batching_off": "--no-cont-batching"}
+
+
+def option_args(opts: dict) -> list[str]:
+    """{'flash_attn': 'on', 'cache_k': 'q8_0', 'mlock': True} → ['-fa', 'on', '-ctk', 'q8_0', '--mlock']"""
+    out: list[str] = []
+    for key, flag in OPTION_FLAGS.items():
+        v = opts.get(key)
+        if v in (None, "", "auto") or (key == "n_cpu_moe" and not v):
+            continue
+        out += [flag, str(v)]
+    for key, flag in BOOL_FLAGS.items():
+        if opts.get(key):
+            out.append(flag)
+    return out
+
+
 def serve_command(model: Path, port: int = 8080, ctx: int = 16384, ngl: int = 99,
                   extra: list[str] | None = None) -> list[str]:
     exe = server_binary()
@@ -260,9 +283,21 @@ def served_model(port: int) -> str | None:
         return None
 
 
+def shards(model: Path) -> list[Path]:
+    """Todas las partes de un GGUF partido (x-00001-of-00003.gguf…); si no está partido, solo él."""
+    import re
+    m = re.match(r"(.*)-00001-of-(\d{5})\.gguf$", model.name, re.I)
+    if not m:
+        return [model]
+    return [p for i in range(1, int(m.group(2)) + 1)
+            if (p := model.with_name(f"{m.group(1)}-{i:05d}-of-{m.group(2)}.gguf")).is_file()]
+
+
 def describe(model: Path) -> dict:
     """Ficha de un GGUF para la GUI; la cuantización se deduce del nombre (Q4_K_M, Q8_0, F16…)."""
     import re
-    m = re.search(r"(?i)[-_.](i?q\d[_a-z0-9]*|f16|bf16|f32)(?=[-_.]|$)", model.stem)
+    m = re.search(r"(?i)[-_.](i?q\d[_a-z0-9]*|f16|bf16|f32|mxfp4)(?=[-_.]|$)", model.stem)
+    size = sum(p.stat().st_size for p in shards(model))
+    mmproj = any(model.parent.glob("mmproj*.gguf"))
     return {"name": re.sub(r"-\d{5}-of-\d{5}$", "", model.stem), "file": model.name, "path": str(model), "dir": str(model.parent),
-            "size_gb": round(model.stat().st_size / 2**30, 2), "quant": m.group(1).upper() if m else None}
+            "size_gb": round(size / 2**30, 2), "quant": m.group(1).upper() if m else None, "vision": mmproj}

@@ -1,0 +1,127 @@
+{
+  "_comentario": "Modelos GGUF de Hugging Face que se recomiendan para LocalHarness. agentic (0-10): qué tal llaman a herramientas y siguen instrucciones largas como agente (criterio propio a partir de las fichas, de pruebas públicas y de las nuestras). est_quants (opcional): tamaños en GB cuando no siguen la regla de parámetros × bits. kv_mb_1k: MB de caché KV en f16 por cada 1000 tokens de contexto (para estimar sin descargar). sampling: valores que recomienda la ficha del modelo. Se puede editar a mano: añadir un repo nuevo es copiar una entrada.",
+  "models": [
+    {
+      "id": "qwen3-coder-30b-a3b",
+      "name": "Qwen3-Coder 30B-A3B Instruct",
+      "repo": "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF",
+      "match": "qwen3-coder-30b-a3b",
+      "params_b": 30.5, "active_b": 3.3, "moe": true, "ctx_train": 262144, "kv_mb_1k": 96, "n_layer": 48,
+      "agentic": 9, "tools": true, "thinking": false, "tags": ["código", "agente"],
+      "roles": ["programador", "consultas", "jefe"],
+      "sampling": {"temp": 0.7, "top_p": 0.8, "top_k": 20, "repeat_penalty": 1.05},
+      "notes": "Hecho para agentes de código (llamadas a herramientas nativas). MoE con 3B activos: aunque no quepa entero en 12 GB va rápido con los expertos en la CPU (--n-cpu-moe)."
+    },
+    {
+      "id": "gpt-oss-20b",
+      "name": "gpt-oss 20B",
+      "repo": "unsloth/gpt-oss-20b-GGUF",
+      "match": "gpt-oss-20b",
+      "params_b": 21, "active_b": 3.6, "moe": true, "ctx_train": 131072, "kv_mb_1k": 48, "n_layer": 24,
+      "est_quants": {"MXFP4": 11.3, "Q4_K_M": 10.8, "F16": 12.8},
+      "agentic": 8, "tools": true, "thinking": true, "tags": ["razonamiento", "agente"],
+      "roles": ["director", "jefe", "consultas"],
+      "sampling": {"temp": 1.0, "top_p": 1.0, "top_k": 0},
+      "notes": "Razona (esfuerzo bajo/medio/alto) y llama a herramientas bien. Pesos en MXFP4: ~12 GB; con poco contexto cabe en 12 GB, si no, un par de capas de expertos a la CPU."
+    },
+    {
+      "id": "qwen3-30b-a3b-2507",
+      "name": "Qwen3 30B-A3B Instruct 2507",
+      "repo": "unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF",
+      "match": "qwen3-30b-a3b-instruct-2507",
+      "params_b": 30.5, "active_b": 3.3, "moe": true, "ctx_train": 262144, "kv_mb_1k": 96, "n_layer": 48,
+      "agentic": 8, "tools": true, "thinking": false, "tags": ["general", "agente"],
+      "roles": ["director", "jefe", "consultas"],
+      "sampling": {"temp": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0},
+      "notes": "Generalista fuerte sin modo de pensar (responde directo). Igual que el Coder: MoE rápido con expertos en CPU."
+    },
+    {
+      "id": "devstral-small-2507",
+      "name": "Devstral Small 2507 (24B)",
+      "repo": "unsloth/Devstral-Small-2507-GGUF",
+      "match": "devstral-small",
+      "params_b": 23.6, "active_b": 23.6, "moe": false, "ctx_train": 131072, "kv_mb_1k": 160, "n_layer": 40,
+      "agentic": 8, "tools": true, "thinking": false, "tags": ["código", "agente"],
+      "roles": ["programador", "jefe"],
+      "sampling": {"temp": 0.15, "top_p": 0.95},
+      "notes": "Entrenado para agentes de código (OpenHands). Denso de 24B: en 12 GB necesita Q3 o capas en CPU (lento)."
+    },
+    {
+      "id": "mistral-small-3.2",
+      "name": "Mistral Small 3.2 24B Instruct",
+      "repo": "unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF",
+      "match": "mistral-small-3.2",
+      "params_b": 24, "active_b": 24, "moe": false, "ctx_train": 131072, "kv_mb_1k": 160, "n_layer": 40,
+      "agentic": 7, "tools": true, "thinking": false, "tags": ["general"],
+      "roles": ["director", "jefe"],
+      "sampling": {"temp": 0.15, "top_p": 1.0},
+      "notes": "Buen seguimiento de instrucciones y llamadas a funciones. Mismo problema de tamaño que Devstral en 12 GB."
+    },
+    {
+      "id": "qwen3-14b",
+      "name": "Qwen3 14B",
+      "repo": "unsloth/Qwen3-14B-GGUF",
+      "match": "qwen3-14b",
+      "params_b": 14.8, "active_b": 14.8, "moe": false, "ctx_train": 40960, "kv_mb_1k": 160, "n_layer": 40,
+      "agentic": 7, "tools": true, "thinking": true, "tags": ["general", "razonamiento"],
+      "roles": ["director", "jefe"],
+      "sampling": {"temp": 0.6, "top_p": 0.95, "top_k": 20, "min_p": 0},
+      "notes": "Piensa antes de responder (más lento, más fino). En 12 GB cabe en Q4_K_M con ~16-24k de contexto."
+    },
+    {
+      "id": "qwen3-8b",
+      "name": "Qwen3 8B",
+      "repo": "unsloth/Qwen3-8B-GGUF",
+      "match": "qwen3-8b",
+      "params_b": 8.2, "active_b": 8.2, "moe": false, "ctx_train": 40960, "kv_mb_1k": 144, "n_layer": 36,
+      "agentic": 6, "tools": true, "thinking": true, "tags": ["general", "razonamiento"],
+      "roles": ["jefe", "consultas"],
+      "sampling": {"temp": 0.6, "top_p": 0.95, "top_k": 20, "min_p": 0},
+      "notes": "Equilibrio entre velocidad y calidad; llamadas a herramientas fiables con --jinja."
+    },
+    {
+      "id": "qwen3-4b-2507",
+      "name": "Qwen3 4B Instruct 2507",
+      "repo": "unsloth/Qwen3-4B-Instruct-2507-GGUF",
+      "match": "qwen3-4b-instruct-2507",
+      "params_b": 4.0, "active_b": 4.0, "moe": false, "ctx_train": 262144, "kv_mb_1k": 144, "n_layer": 36,
+      "agentic": 5, "tools": true, "thinking": false, "tags": ["rápido"],
+      "roles": ["consultas"],
+      "sampling": {"temp": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0},
+      "notes": "Muy rápido y con contexto enorme: ideal para delegar lecturas de repo (local_ask) sin gastar plan."
+    },
+    {
+      "id": "qwen2.5-coder-14b",
+      "name": "Qwen2.5-Coder 14B Instruct",
+      "repo": "Qwen/Qwen2.5-Coder-14B-Instruct-GGUF",
+      "match": "qwen2.5-coder-14b",
+      "params_b": 14.8, "active_b": 14.8, "moe": false, "ctx_train": 32768, "kv_mb_1k": 192, "n_layer": 48,
+      "agentic": 3, "tools": false, "thinking": false, "tags": ["código"],
+      "roles": ["consultas"],
+      "sampling": {"temp": 0.7, "top_p": 0.8, "top_k": 20, "repeat_penalty": 1.05},
+      "notes": "Escribe buen código, pero en nuestra prueba devolvía las llamadas a herramientas como texto (no tool_calls)."
+    },
+    {
+      "id": "qwen2.5-coder-7b",
+      "name": "Qwen2.5-Coder 7B Instruct",
+      "repo": "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
+      "match": "qwen2.5-coder-7b",
+      "params_b": 7.6, "active_b": 7.6, "moe": false, "ctx_train": 32768, "kv_mb_1k": 56, "n_layer": 28,
+      "agentic": 3, "tools": false, "thinking": false, "tags": ["código", "rápido"],
+      "roles": ["consultas"],
+      "sampling": {"temp": 0.7, "top_p": 0.8, "top_k": 20, "repeat_penalty": 1.05},
+      "notes": "Rápido para local_ask/local_write_file. Sin tool_calls reales en nuestra prueba."
+    },
+    {
+      "id": "gemma-3-12b",
+      "name": "Gemma 3 12B it",
+      "repo": "unsloth/gemma-3-12b-it-GGUF",
+      "match": "gemma-3-12b",
+      "params_b": 12.2, "active_b": 12.2, "moe": false, "ctx_train": 131072, "kv_mb_1k": 96, "n_layer": 48,
+      "agentic": 4, "tools": false, "thinking": false, "tags": ["general", "visión"],
+      "roles": ["consultas"],
+      "sampling": {"temp": 1.0, "top_p": 0.95, "top_k": 64, "min_p": 0},
+      "notes": "Buen redactor y ve imágenes (con mmproj), pero su plantilla no trae herramientas."
+    }
+  ]
+}

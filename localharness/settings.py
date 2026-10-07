@@ -7,7 +7,7 @@ proceso (un único servidor local): `apply()` los vuelca en context y quien ejec
 import copy
 from typing import Any
 
-from localharness import context, llama
+from localharness import context, hf, llama
 from localharness.policy import DEFAULT_CONFIG, DEFAULT_DEPENDENCY, DEFAULT_SENSITIVE, Policy
 from localharness.store import Store
 
@@ -28,8 +28,11 @@ DEFAULTS: dict[str, Any] = {
     "context": {"max_memory_chars": context.MAX_MEMORY_CHARS, "max_skill_chars": context.MAX_SKILL_CHARS,
                 "skill_dirs": []},
     # Modelos locales (llama.cpp): vacío = variables de entorno o configuración de Arena LLM
-    # per_model: {ruta del GGUF: {ctx, ngl, extra}} — lo que falte usa los valores generales de arriba
-    "llama": {"server": "", "model_dirs": [], "port": 8080, "ctx": 16384, "ngl": 99, "per_model": {}},
+    # per_model: {ruta del GGUF: {ctx, ngl, extra, y cualquier clave de llama.OPTION_FLAGS/BOOL_FLAGS}} — lo que
+    # falte usa los valores generales de arriba. hardware: VRAM/RAM a mano si la detección falla (vacío = detectar).
+    # download_dir: dónde dejar lo que se descarga de Hugging Face (vacío = la primera carpeta de modelos).
+    "llama": {"server": "", "model_dirs": [], "port": 8080, "ctx": 16384, "ngl": 99, "per_model": {},
+              "hardware": {}, "hf_token": "", "download_dir": ""},
     # Valores que propone el formulario de nuevo agente
     "agent_defaults": {"provider": "claude", "model": "sonnet", "role": "trabajador", "max_turns": 10,
                        "max_budget_usd": 1.0},
@@ -75,21 +78,24 @@ def apply(store: Store) -> None:
     lm = load(store)["llama"]
     llama.SERVER_OVERRIDE = lm["server"] or None
     llama.DIRS_OVERRIDE = [d for d in lm["model_dirs"] if d]
+    hf.TOKEN = (lm.get("hf_token") or "").strip() or None
 
 
 def policy(store: Store) -> Policy:
     return Policy.from_dict(load(store)["policy"])
 
 
-def llama_launch(store: Store, model: str) -> dict:
-    """ctx, ngl y argumentos extra con los que arrancar un GGUF (su configuración propia, si la tiene)."""
+def llama_launch(store: Store, model: str, override: dict | None = None) -> dict:
+    """ctx, ngl y argumentos extra con los que arrancar un GGUF: su configuración propia (si la tiene) con
+    `override` encima (los ajustes elegidos en el diálogo de arranque, solo para esta vez)."""
     import shlex
     lm = load(store)["llama"]
-    own = (lm.get("per_model") or {}).get(model) or {}
+    own = {**((lm.get("per_model") or {}).get(model) or {}), **(override or {})}
     extra = own.get("extra") or ""
+    extra = shlex.split(extra, posix=False) if isinstance(extra, str) else list(extra)
     return {"ctx": int(own.get("ctx") or lm["ctx"]),
             "ngl": int(own["ngl"]) if own.get("ngl") not in (None, "") else int(lm["ngl"]),
-            "extra": shlex.split(extra, posix=False) if isinstance(extra, str) else list(extra)}
+            "extra": [*llama.option_args(own), *extra], "options": own}
 
 
 def task_timeout_s(store: Store) -> float:

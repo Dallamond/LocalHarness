@@ -2,6 +2,28 @@
 
 Última actualización: 06/10/2026, mediodía (sesión 3 + delegación en Qwen + rumbo nuevo: oficina 3D y Atlas). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
 
+## ▶ SESIÓN 07/10/2026 — Pestaña de Modelos locales (rama `claude/youthful-edison-bi67hm`, sale de `main`)
+- **Tu equipo**: detecta GPU (nvidia-smi: VRAM total/libre), RAM, CPU e hilos (`localharness/hardware.py`). Si falla,
+  «Corregir» guarda VRAM/RAM/GPU a mano (`llama.hardware`). Ancho de banda por modelo de GPU → tok/s estimados.
+- **Ficha de cada GGUF descargado** (`gguf.py` lee la cabecera sin cargar el modelo; se guarda en `data/model-info.json`):
+  arquitectura, capas, contexto máximo, MoE, si la plantilla admite herramientas o razona. **Nota 0-100 para
+  LocalHarness** (`catalog.rate_local`): herramientas 35 + cabe con contexto de agente 25 + capacidad 25 + velocidad
+  15, con los motivos y los roles para los que sirve. **🧪 Probar capacidades** (modelo arrancado, coste 0):
+  ¿devuelve `tool_calls` de verdad?, ¿JSON con esquema?, tok/s → la prueba real manda sobre la plantilla.
+- **Diálogo de arranque**: contexto, caché KV (f16/q8_0/q4_0), capas en GPU, expertos MoE en CPU (`--n-cpu-moe`),
+  flash attention, conversaciones a la vez, muestreo (temp, top_p, top_k, min_p, repetición), pensamiento
+  (`--reasoning-budget`), hilos, lotes, mlock/mmap y argumentos extra. Preajustes (Recomendado para tu PC, Agente,
+  Rápido, Ahorro de VRAM, Lo guardado), **barra de VRAM en vivo** (pesos / KV / cálculo) y la orden exacta.
+  Arrancar solo esta vez, arrancar y guardar, o solo guardar (`llama.per_model`, claves = `llama.OPTION_FLAGS`).
+- **Recomendados para tu equipo**: catálogo editable `localharness/model_catalog.json` (Qwen3-Coder-30B-A3B,
+  gpt-oss-20b, Qwen3 4B/8B/14B/30B-A3B, Devstral, Mistral Small 3.2, Gemma 3, Qwen2.5-Coder) con nota de agente;
+  «Consultar Hugging Face» trae los tamaños reales, elige la mejor cuantización que cabe y sus ajustes. Buscador de
+  cualquier repo GGUF y **descargas** reanudables con progreso (a «Carpeta de descargas»; token HF opcional).
+- ⚠ No probado contra Hugging Face real (el contenedor no tenía acceso) ni con llama-server real: **pendiente de
+  Lucas en el PC del instituto**. Las estimaciones de memoria/velocidad son aproximadas (±10-20 %); los tok/s se
+  calibraron con lo medido en la 3060 (Qwen2.5-Coder 7B Q8 ~32 tok/s). Qwen3.5 no está en el catálogo (no sé su
+  repo exacto): añadirlo copiando una entrada o buscarlo con el buscador.
+
 ## ▶ SIGUIENTE SESIÓN — EMPEZAR AQUÍ (06/10/2026, mediodía)
 
 ### Decisiones de Lucas de hoy

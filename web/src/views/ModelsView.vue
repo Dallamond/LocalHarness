@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import Card from "../components/Card.vue";
+import LaunchDialog from "../components/LaunchDialog.vue";
 import StatusChip from "../components/StatusChip.vue";
 import {
-  ROLE_TEXT, ago, api, duration, live, pickPath, post, refreshAll, tps, type LlamaInfo, type LocalModel, type ModelLaunch,
+  ROLE_TEXT, ago, api, duration, live, pickPath, post, refreshAll, tps, type DownloadJob, type Hardware, type LlamaInfo,
+  type LocalModel, type ModelLaunch, type ModelRating, type Recommendation,
 } from "../api";
 
 const info = ref<LlamaInfo | null>(null);
@@ -16,6 +18,8 @@ const now = ref(Date.now());
 // configuración editable (se guarda en Ajustes → llama)
 const cfg = reactive({
   server: "", model_dirs: [] as string[], port: 8080, ctx: 16384, ngl: 99, per_model: {} as Record<string, ModelLaunch>,
+  hardware: {} as { vram_gb?: number | null; ram_gb?: number | null; gpu_name?: string; bandwidth_gbs?: number | null },
+  hf_token: "", download_dir: "",
 });
 const newDir = ref("");
 
@@ -40,10 +44,15 @@ async function poll() {
 onMounted(async () => {
   await load(true);
   timer = setTimeout(poll, 2000);
+  loadHardware();
+  loadRatings();
+  loadRecs(true);
+  pollDownloads();
   clock = setInterval(() => (now.value = Date.now()), 1000);
 });
 onUnmounted(() => {
   clearTimeout(timer);
+  clearTimeout(dlTimer);
   clearInterval(clock);
 });
 
@@ -58,42 +67,181 @@ const STATE: Record<string, { text: string; chip: "ok" | "warn" | "crit" | "pend
 const progress = computed(() => status.value?.progress ?? null);
 const speed = computed(() => info.value?.speed ?? live.lastSpeed);
 
-// --- arranque propio de cada modelo (contexto, capas en GPU, argumentos extra)
-const openCfg = ref<string | null>(null);
-const own = reactive<{ ctx: number | null; ngl: number | null; extra: string }>({ ctx: null, ngl: null, extra: "" });
-function toggleCfg(m: LocalModel) {
-  if (openCfg.value === m.path) {
-    openCfg.value = null;
-    return;
-  }
-  const c = cfg.per_model[m.path] ?? {};
-  Object.assign(own, { ctx: c.ctx ?? null, ngl: c.ngl ?? null, extra: c.extra ?? "" });
-  openCfg.value = m.path;
-}
-async function saveOwn(m: LocalModel) {
+// --- arranque con ajustes (diálogo) y configuración propia de cada modelo
+const dialogFor = ref<LocalModel | null>(null);
+async function saveOwn(m: LocalModel, entry: ModelLaunch) {
   const per = { ...cfg.per_model };
-  const entry: ModelLaunch = {};
-  if (own.ctx) entry.ctx = Number(own.ctx);
-  if (own.ngl !== null && String(own.ngl) !== "") entry.ngl = Number(own.ngl);
-  if (own.extra.trim()) entry.extra = own.extra.trim();
   if (Object.keys(entry).length) per[m.path] = entry;
   else delete per[m.path];
   await saveCfg({ per_model: per });
-  openCfg.value = null;
-  if (isCurrent(m)) msg.value = "Guardado. Se aplica la próxima vez que arranques este modelo.";
+  msg.value = isCurrent(m) ? "Guardado. Se aplica la próxima vez que arranques este modelo." : `Ajustes de ${m.name} guardados.`;
+}
+async function launchWith(m: LocalModel, options: ModelLaunch, save: boolean) {
+  await start(m, options, save);
+  if (!error.value) dialogFor.value = null;
 }
 function launchText(m: LocalModel): string {
   const c = cfg.per_model[m.path];
   if (!c) return "";
-  return [c.ctx ? `ctx ${c.ctx}` : null, c.ngl !== undefined && c.ngl !== null ? `ngl ${c.ngl}` : null, c.extra || null]
+  return [c.ctx ? `ctx ${c.ctx}` : null, c.ngl !== undefined && c.ngl !== null ? `ngl ${c.ngl}` : null,
+    c.cache_k && c.cache_k !== "f16" ? `kv ${c.cache_k}` : null, c.n_cpu_moe ? `expertos CPU ${c.n_cpu_moe}` : null,
+    c.temp != null ? `temp ${c.temp}` : null, c.extra || null]
     .filter(Boolean).join(" · ");
 }
+
+// --- hardware
+const hw = ref<Hardware | null>(null);
+const editHw = ref(false);
+async function loadHardware(refresh = false) {
+  try {
+    hw.value = await api<Hardware>(`/api/hardware${refresh ? "?refresh=true" : ""}`);
+  } catch (e) {
+    error.value = (e as Error).message;
+  }
+}
+async function saveHw() {
+  const h = { ...cfg.hardware };
+  for (const k of Object.keys(h) as (keyof typeof h)[]) if (h[k] === "" || h[k] === null) delete h[k];
+  await saveCfg({ hardware: h });
+  editHw.value = false;
+  await Promise.all([loadHardware(), loadRatings(), loadRecs(false)]);
+}
+
+// --- fichas (nota para LocalHarness) de los modelos descargados
+const ratings = ref<Record<string, ModelRating>>({});
+const ratingsLoading = ref(false);
+async function loadRatings() {
+  ratingsLoading.value = true;
+  try {
+    ratings.value = (await api<{ models: Record<string, ModelRating> }>("/api/llama/ratings")).models;
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    ratingsLoading.value = false;
+  }
+}
+const openInfo = ref<string | null>(null);
+const scoreCls = (n: number) => (n >= 80 ? "ok" : n >= 60 ? "good" : n >= 40 ? "warn" : "crit");
+const probing = ref(false);
+async function probe() {
+  probing.value = true;
+  error.value = msg.value = "";
+  try {
+    const r = await post<{ model: string; probe: { tool_calls: boolean | null; json: boolean | null; tps?: number } }>("/api/llama/probe");
+    const p = r.probe;
+    msg.value = `Prueba hecha: herramientas ${p.tool_calls ? "✔" : "✘"} · JSON ${p.json ? "✔" : "✘"}${p.tps ? ` · ${p.tps} tok/s` : ""}`;
+    await loadRatings();
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    probing.value = false;
+  }
+}
+// orden: los mejor valorados primero dentro de cada carpeta
+const sortBy = ref<"score" | "name" | "size">("score");
+
+// --- recomendaciones de Hugging Face
+const recs = ref<Recommendation[]>([]);
+const recErrors = ref<string[]>([]);
+const recLoading = ref(false);
+const showAllRecs = ref(false);
+async function loadRecs(online = true) {
+  recLoading.value = true;
+  try {
+    const r = await api<{ models: Recommendation[]; errors: string[] }>(`/api/llama/recommend?online=${online}`);
+    recs.value = r.models;
+    recErrors.value = r.errors;
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    recLoading.value = false;
+  }
+}
+const shownRecs = computed(() => (showAllRecs.value ? recs.value : recs.value.filter((r) => r.fit !== "no").slice(0, 6)));
+const FIT_TEXT: Record<string, string> = { gpu: "cabe en la GPU", mixto: "GPU + RAM", cpu: "solo CPU", no: "no cabe" };
+const FIT_CLS: Record<string, string> = { gpu: "ok", mixto: "warn", cpu: "warn", no: "crit" };
+const pickedQuant = reactive<Record<string, string>>({});
+function quantFor(r: Recommendation) {
+  const q = pickedQuant[r.id] ?? r.best?.quant;
+  return r.quants.find((x) => x.quant === q);
+}
+
+// buscar cualquier repo GGUF
+const query = ref("");
+const results = ref<{ repo: string; downloads: number; likes: number; url: string }[]>([]);
+const repoInfo = ref<{ repo: string; url: string; quants: { quant: string; size_gb: number; files: string[]; fit: string; ctx: number; tps_est: number | null }[]; best: string | null } | null>(null);
+const searching = ref(false);
+async function search() {
+  if (!query.value.trim()) return;
+  searching.value = true;
+  error.value = "";
+  repoInfo.value = null;
+  try {
+    results.value = (await api<{ results: typeof results.value }>(`/api/llama/hf/search?q=${encodeURIComponent(query.value.trim())}`)).results;
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    searching.value = false;
+  }
+}
+async function openRepo(repo: string) {
+  searching.value = true;
+  try {
+    repoInfo.value = await api(`/api/llama/hf/repo?repo=${encodeURIComponent(repo)}`);
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    searching.value = false;
+  }
+}
+
+// descargas
+const downloads = ref<DownloadJob[]>([]);
+let dlTimer: ReturnType<typeof setTimeout>;
+async function pollDownloads() {
+  try {
+    const before = downloads.value.filter((j) => j.state === "downloading" || j.state === "queued").length;
+    downloads.value = (await api<{ jobs: DownloadJob[] }>("/api/llama/downloads")).jobs;
+    const active = downloads.value.filter((j) => j.state === "downloading" || j.state === "queued").length;
+    if (before && active < before) { // acabó alguna: aparece en «Tus modelos»
+      await load();
+      await loadRatings();
+      await loadRecs(false);
+    }
+    dlTimer = setTimeout(pollDownloads, active ? 1500 : 8000);
+  } catch {
+    dlTimer = setTimeout(pollDownloads, 8000);
+  }
+}
+async function download(repo: string, files: string[]) {
+  if (!files.length) {
+    error.value = "Sin la lista de archivos de Hugging Face no sé qué descargar: pulsa «Consultar Hugging Face».";
+    return;
+  }
+  error.value = msg.value = "";
+  try {
+    await post("/api/llama/download", { repo, files });
+    msg.value = `Descargando ${files[0].split("/").pop()}…`;
+    clearTimeout(dlTimer);
+    pollDownloads();
+  } catch (e) {
+    error.value = (e as Error).message;
+  }
+}
+async function cancelDownload(id: string) {
+  await post("/api/llama/downloads/cancel", { id });
+}
+const gb = (b: number) => (b / 2 ** 30).toFixed(1);
 const loadTime = (m: LocalModel) => info.value?.load_times?.[m.path];
 
 const isCurrent = (m: LocalModel) => status.value?.model === m.path && status.value.state !== "off";
 const groups = computed(() => {
   const g: Record<string, LocalModel[]> = {};
   for (const m of info.value?.models ?? []) (g[m.dir] ??= []).push(m);
+  const score = (m: LocalModel) => ratings.value[m.path]?.rating?.score ?? -1;
+  for (const list of Object.values(g))
+    list.sort((a, b) => sortBy.value === "score" ? score(b) - score(a)
+      : sortBy.value === "size" ? b.size_gb - a.size_gb : a.name.localeCompare(b.name));
   return g;
 });
 
@@ -131,11 +279,12 @@ async function pickServer() {
   }
 }
 
-async function start(m: LocalModel) {
+async function start(m: LocalModel, options?: ModelLaunch, save = false) {
   error.value = msg.value = "";
   starting.value = m.path;
   try {
-    await post("/api/llama/start", { path: m.path });
+    await post("/api/llama/start", { path: m.path, options, save });
+    if (save) await load(true);
     await load();
     msg.value = `Arrancando ${m.name}. Los agentes locales se conectarán a http://127.0.0.1:${cfg.port} cuando esté listo.`;
   } catch (e) {
@@ -240,10 +389,49 @@ const modelFor = (name: string | null) => info.value?.models.find((m) => m.name 
       </p>
     </section>
 
+    <!-- hardware -->
+    <Card title="Tu equipo" :subtitle="hw ? (hw.budget.manual ? 'Valores puestos a mano' : 'Detectado automáticamente') : 'Detectando…'">
+      <template #actions>
+        <button class="btn btn--small btn--ghost" @click="editHw = !editHw">{{ editHw ? "Cancelar" : "Corregir" }}</button>
+        <button class="btn btn--small" @click="loadHardware(true)">Volver a detectar</button>
+      </template>
+      <div v-if="hw" class="hw">
+        <div class="hw__item">
+          <span class="label">GPU</span>
+          <strong>{{ hw.budget.gpu ?? "Ninguna detectada" }}</strong>
+          <span class="muted small">
+            {{ hw.budget.vram_gb ? `${hw.budget.vram_gb} GB VRAM` : "sin VRAM: todo irá en la CPU" }}
+            <template v-if="hw.gpus[0]?.vram_free_gb != null"> · {{ hw.gpus[0].vram_free_gb }} GB libres ahora</template>
+            · ~{{ hw.budget.bandwidth_gbs }} GB/s
+          </span>
+        </div>
+        <div class="hw__item">
+          <span class="label">RAM</span>
+          <strong>{{ hw.budget.ram_gb ? `${hw.budget.ram_gb} GB` : "?" }}</strong>
+          <span class="muted small"><template v-if="hw.ram_free_gb">{{ hw.ram_free_gb }} GB libres</template></span>
+        </div>
+        <div class="hw__item">
+          <span class="label">CPU</span>
+          <strong class="ellipsis" :title="hw.cpu ?? ''">{{ hw.cpu ?? "?" }}</strong>
+          <span class="muted small">{{ hw.cores }} hilos · {{ hw.os }}</span>
+        </div>
+      </div>
+      <form v-if="editHw" class="nums hwedit" @submit.prevent="saveHw">
+        <label class="field"><span class="label">VRAM (GB)</span><input v-model.number="cfg.hardware.vram_gb" type="number" min="0" step="0.5" placeholder="detectar" /></label>
+        <label class="field"><span class="label">RAM (GB)</span><input v-model.number="cfg.hardware.ram_gb" type="number" min="0" step="1" placeholder="detectar" /></label>
+        <label class="field"><span class="label">Nombre de la GPU</span><input v-model="cfg.hardware.gpu_name" placeholder="RTX 3060" /></label>
+        <label class="field"><span class="label">Ancho de banda (GB/s)</span><input v-model.number="cfg.hardware.bandwidth_gbs" type="number" min="10" placeholder="según la GPU" /></label>
+        <div class="row"><button class="btn btn--primary btn--small">Guardar</button><span class="hint">Vacío = lo detectado.</span></div>
+      </form>
+    </Card>
+
     <!-- modelos -->
     <Card title="Tus modelos" :subtitle="info ? `${info.models.length} encontrados en ${info.dirs.length} carpeta(s)` : 'Buscando…'">
       <template #actions>
-        <button class="btn btn--small" @click="load()">Volver a buscar</button>
+        <select v-model="sortBy" class="input mini" aria-label="Ordenar">
+          <option value="score">mejor nota</option><option value="size">tamaño</option><option value="name">nombre</option>
+        </select>
+        <button class="btn btn--small" @click="load(); loadRatings()">Volver a buscar</button>
       </template>
       <p v-if="info && !info.dirs.length" class="empty">
         No hay ninguna carpeta de modelos. <button class="btn btn--primary btn--small" @click="pickDir">Elegir carpeta…</button>
@@ -262,32 +450,151 @@ const modelFor = (name: string | null) => info.value?.models.find((m) => m.name 
                 <span v-if="launchText(m)" class="small launch">{{ launchText(m) }}</span>
               </div>
             </div>
+            <!-- nota para LocalHarness -->
+            <div v-if="ratings[m.path]?.rating" class="score" :class="`score--${scoreCls(ratings[m.path].rating!.score)}`">
+              <span class="score__num">{{ ratings[m.path].rating!.score }}</span>
+              <span class="score__txt">
+                <strong>{{ ratings[m.path].rating!.verdict }}</strong>
+                <span class="small">para LocalHarness<template v-if="ratings[m.path].probe"> · probado</template></span>
+              </span>
+              <button class="btn btn--ghost btn--small" @click="openInfo = openInfo === m.path ? null : m.path">
+                {{ openInfo === m.path ? "Ocultar" : "Por qué" }}
+              </button>
+            </div>
+            <p v-else-if="ratings[m.path]?.meta?.error" class="small warnline">No pude leer la cabecera: {{ ratings[m.path].meta.error }}</p>
+            <p v-else-if="ratingsLoading" class="small muted">Leyendo la ficha…</p>
+            <div v-if="openInfo === m.path && ratings[m.path]?.rating" class="why small">
+              <ul>
+                <li v-for="(r, k) in ratings[m.path].rating!.reasons" :key="k">{{ r }}</li>
+              </ul>
+              <p v-if="ratings[m.path].rating!.roles.length"><strong>Para:</strong> {{ ratings[m.path].rating!.roles.join(", ") }}</p>
+              <p class="muted">
+                Herramientas {{ ratings[m.path].rating!.parts.tools }}/35 · cabe {{ ratings[m.path].rating!.parts.fit }}/25 ·
+                capacidad {{ ratings[m.path].rating!.parts.quality }}/25 · velocidad {{ ratings[m.path].rating!.parts.speed }}/15
+              </p>
+              <p v-if="ratings[m.path].meta.arch" class="muted">
+                {{ ratings[m.path].meta.arch }}<template v-if="ratings[m.path].meta.params_b"> · {{ ratings[m.path].meta.params_b }}B</template>
+                <template v-if="ratings[m.path].meta.moe"> · MoE {{ ratings[m.path].meta.experts_used }}/{{ ratings[m.path].meta.experts }} expertos</template>
+                · {{ ratings[m.path].meta.n_layer }} capas · contexto máx. {{ Math.round((ratings[m.path].meta.ctx_train ?? 0) / 1024) }}k
+                <template v-if="m.vision"> · visión (mmproj)</template>
+              </p>
+              <p v-if="ratings[m.path].probe" class="muted">
+                Prueba real {{ ago(ratings[m.path].probe!.at, now) }}: herramientas {{ ratings[m.path].probe!.tool_calls ? "✔" : "✘" }}
+                ({{ ratings[m.path].probe!.tool_detail }}) · JSON {{ ratings[m.path].probe!.json ? "✔" : "✘" }}
+                <template v-if="ratings[m.path].probe!.tps"> · {{ ratings[m.path].probe!.tps }} tok/s</template>
+              </p>
+              <p v-if="ratings[m.path].catalog" class="muted">{{ ratings[m.path].catalog!.notes }}</p>
+            </div>
             <div class="row">
               <template v-if="isCurrent(m)">
                 <StatusChip :state="STATE[status!.state].chip" :text="STATE[status!.state].text" />
                 <button v-if="status!.pid" class="btn btn--small btn--danger" @click="stop">Parar</button>
+                <button v-if="status!.state === 'ready'" class="btn btn--small" :disabled="probing" title="Herramientas, JSON y velocidad: gratis, es tu GPU" @click="probe">
+                  {{ probing ? "Probando…" : "🧪 Probar capacidades" }}
+                </button>
               </template>
-              <button
-                v-else class="btn btn--primary btn--small" :disabled="!!starting || !info?.server"
-                :title="info?.server ? '' : 'Falta la ruta de llama-server'" @click="start(m)"
-              >{{ starting === m.path ? "Arrancando…" : status?.pid ? "Cambiar a este" : "Arrancar" }}</button>
+              <template v-else>
+                <button
+                  class="btn btn--primary btn--small" :disabled="!!starting || !info?.server"
+                  :title="info?.server ? 'Elegir contexto, caché, muestreo… antes de arrancar' : 'Falta la ruta de llama-server'" @click="dialogFor = m"
+                >{{ starting === m.path ? "Arrancando…" : status?.pid ? "Cambiar a este…" : "Arrancar…" }}</button>
+                <button class="btn btn--small btn--ghost" :disabled="!!starting || !info?.server" title="Con lo guardado, sin preguntar" @click="start(m)">Rápido</button>
+              </template>
             </div>
-            <button class="btn btn--small btn--ghost cfg-toggle" @click="toggleCfg(m)">
-              {{ openCfg === m.path ? "Cerrar" : "⚙ Arranque de este modelo" }}
-            </button>
-            <form v-if="openCfg === m.path" class="own" @submit.prevent="saveOwn(m)">
-              <label class="field"><span class="label">Contexto</span><input v-model.number="own.ctx" type="number" min="512" step="1024" :placeholder="String(cfg.ctx)" /></label>
-              <label class="field"><span class="label">Capas en GPU</span><input v-model.number="own.ngl" type="number" min="0" :placeholder="String(cfg.ngl)" /></label>
-              <label class="field own__wide">
-                <span class="label">Argumentos extra</span>
-                <input v-model="own.extra" class="code" placeholder="-fa on -t 8" />
-              </label>
-              <div class="row own__wide">
-                <button class="btn btn--primary btn--small">Guardar</button>
-                <span class="hint">Vacío = valores generales de abajo.</span>
-              </div>
-            </form>
           </article>
+        </div>
+      </div>
+    </Card>
+
+    <!-- recomendaciones y descargas -->
+    <Card title="Recomendados para tu equipo" subtitle="Modelos GGUF de Hugging Face que mejor funcionan como agentes, con la cuantización y los ajustes que te caben.">
+      <template #actions>
+        <button class="btn btn--small" :disabled="recLoading" @click="loadRecs(true)">{{ recLoading ? "Consultando…" : "Consultar Hugging Face" }}</button>
+      </template>
+      <p v-if="recErrors.length && recs.length && !recs.some((r) => r.hf_checked)" class="small muted">
+        Sin conexión con Hugging Face: tamaños estimados. Para descargar hace falta conexión.
+      </p>
+      <div class="recs">
+        <article v-for="r in shownRecs" :key="r.id" class="rec">
+          <div class="rec__head">
+            <span class="score__num small-num" :class="`score--${scoreCls(r.score)}`">{{ r.score }}</span>
+            <div class="rec__name">
+              <a :href="r.url" target="_blank" rel="noopener"><strong>{{ r.name }}</strong></a>
+              <span class="muted small">
+                {{ r.params_b }}B<template v-if="r.moe"> (MoE, {{ r.active_b }}B activos)</template> · contexto {{ Math.round(r.ctx_train / 1024) }}k
+              </span>
+            </div>
+          </div>
+          <div class="tags">
+            <span class="tag" :class="`tag--${FIT_CLS[r.fit]}`">{{ FIT_TEXT[r.fit] }}</span>
+            <span class="tag">agente {{ r.agentic }}/10</span>
+            <span v-if="r.tools" class="tag">herramientas</span>
+            <span v-if="r.thinking" class="tag">razona</span>
+            <span v-for="t in r.tags" :key="t" class="tag">{{ t }}</span>
+            <span v-if="r.downloaded" class="tag tag--ok">ya lo tienes</span>
+          </div>
+          <p class="small muted">{{ r.notes }}</p>
+          <p v-if="r.best" class="small">
+            <strong>{{ r.best.quant }}</strong> · {{ r.best.size_gb.toFixed(1) }} GB<template v-if="!r.best.exact"> (aprox.)</template>
+            · {{ Math.round(r.best.estimate.ctx / 1024) }}k contexto · ~{{ r.best.estimate.tps_est }} tok/s
+            <br /><span class="muted">{{ r.best.why }}</span>
+          </p>
+          <div class="row">
+            <select v-if="r.quants.length > 1" :value="quantFor(r)?.quant" class="input mini" aria-label="Cuantización"
+                    @change="pickedQuant[r.id] = ($event.target as HTMLSelectElement).value">
+              <option v-for="q in r.quants" :key="q.quant" :value="q.quant">
+                {{ q.quant }} · {{ q.size_gb.toFixed(1) }} GB{{ q.quant === r.best?.quant ? " ★" : "" }}
+              </option>
+            </select>
+            <button class="btn btn--small btn--primary" :disabled="!r.hf_checked" :title="r.hf_checked ? '' : 'Consulta antes Hugging Face'"
+                    @click="download(r.repo, quantFor(r)?.files ?? r.best?.files ?? [])">Descargar</button>
+          </div>
+        </article>
+      </div>
+      <button v-if="recs.length" class="btn btn--ghost btn--small" @click="showAllRecs = !showAllRecs">
+        {{ showAllRecs ? "Ver solo los que te caben" : `Ver los ${recs.length}` }}
+      </button>
+
+      <form class="row search" @submit.prevent="search">
+        <input v-model="query" class="input grow" placeholder="Buscar cualquier GGUF en Hugging Face: qwen3.5, devstral, granite…" />
+        <button class="btn btn--small" :disabled="searching">{{ searching ? "Buscando…" : "Buscar" }}</button>
+      </form>
+      <ul v-if="results.length && !repoInfo" class="results">
+        <li v-for="x in results" :key="x.repo">
+          <button class="linkbtn" @click="openRepo(x.repo)">{{ x.repo }}</button>
+          <span class="muted small">{{ x.downloads?.toLocaleString() }} descargas · {{ x.likes }} ♥</span>
+        </li>
+      </ul>
+      <div v-if="repoInfo" class="repo">
+        <p class="row">
+          <a :href="repoInfo.url" target="_blank" rel="noopener"><strong>{{ repoInfo.repo }}</strong></a>
+          <button class="btn btn--ghost btn--small" @click="repoInfo = null">← resultados</button>
+        </p>
+        <table class="qt">
+          <tr><th>Cuant.</th><th>Tamaño</th><th>En tu equipo</th><th /></tr>
+          <tr v-for="q in repoInfo.quants" :key="q.quant" :class="{ best: q.quant === repoInfo.best }">
+            <td>{{ q.quant }}<template v-if="q.quant === repoInfo.best"> ★</template></td>
+            <td>{{ q.size_gb.toFixed(1) }} GB</td>
+            <td><span class="tag" :class="`tag--${FIT_CLS[q.fit]}`">{{ FIT_TEXT[q.fit] }}</span>
+              <span class="muted small"> {{ Math.round(q.ctx / 1024) }}k<template v-if="q.tps_est"> · ~{{ q.tps_est }} tok/s</template></span></td>
+            <td><button class="btn btn--small" @click="download(repoInfo.repo, q.files)">Descargar</button></td>
+          </tr>
+        </table>
+        <p class="hint">Estimación por el nombre del repo; al descargarlo se lee su cabecera y la nota es exacta.</p>
+      </div>
+
+      <div v-if="downloads.length" class="dls">
+        <div v-for="j in downloads" :key="j.id" class="dl">
+          <span class="small"><strong>{{ j.files[0].split("/").pop() }}</strong>
+            <template v-if="j.files.length > 1"> (+{{ j.files.length - 1 }} partes)</template></span>
+          <div v-if="j.state === 'downloading' || j.state === 'queued'" class="bar"><span :style="{ width: j.total ? `${(j.done / j.total) * 100}%` : '5%' }" /></div>
+          <span class="small muted">
+            <template v-if="j.state === 'downloading'">{{ gb(j.done) }} / {{ j.total ? gb(j.total) : "?" }} GB · {{ j.speed }} MB/s</template>
+            <template v-else-if="j.state === 'done'">✔ Descargado en {{ j.dest }}</template>
+            <template v-else-if="j.state === 'failed'"><span class="error">✘ {{ j.error }}</span></template>
+            <template v-else>{{ j.state === "cancelled" ? "Cancelada (se reanuda si la vuelves a lanzar)" : "En cola" }}</template>
+          </span>
+          <button v-if="j.state === 'downloading' || j.state === 'queued'" class="btn btn--ghost btn--small" @click="cancelDownload(j.id)">Cancelar</button>
         </div>
       </div>
     </Card>
@@ -345,6 +652,16 @@ const modelFor = (name: string | null) => info.value?.models.find((m) => m.name 
           <span class="hint">{{ info?.server ? `Se usará: ${info.server}` : "No lo encuentro: indica dónde está llama-server.exe" }}</span>
         </div>
         <div class="nums">
+          <label class="field">
+            <span class="label">Carpeta de descargas</span>
+            <input v-model.trim="cfg.download_dir" class="code" :placeholder="cfg.model_dirs[0] ?? 'la primera carpeta de modelos'" @change="saveCfg()" />
+          </label>
+          <label class="field">
+            <span class="label">Token de Hugging Face</span>
+            <input v-model.trim="cfg.hf_token" type="password" autocomplete="off" placeholder="solo para repos restringidos" @change="saveCfg()" />
+          </label>
+        </div>
+        <div class="nums">
           <label class="field"><span class="label">Puerto</span><input v-model.number="cfg.port" type="number" min="1024" max="65535" @change="saveCfg()" /></label>
           <label class="field"><span class="label">Contexto (tokens)</span><input v-model.number="cfg.ctx" type="number" min="512" step="1024" @change="saveCfg()" /></label>
           <label class="field">
@@ -354,6 +671,13 @@ const modelFor = (name: string | null) => info.value?.models.find((m) => m.name 
         </div>
       </div>
     </Card>
+
+    <LaunchDialog
+      v-if="dialogFor" :model="dialogFor" :rating="ratings[dialogFor.path]" :saved="cfg.per_model[dialogFor.path]"
+      :defaults="{ ctx: cfg.ctx, ngl: cfg.ngl }" :busy="!!starting"
+      @close="dialogFor = null" @launch="(o, save) => launchWith(dialogFor!, o, save)"
+      @save="async (o) => { await saveOwn(dialogFor!, o); dialogFor = null; }"
+    />
   </div>
 </template>
 
@@ -455,18 +779,197 @@ const modelFor = (name: string | null) => info.value?.models.find((m) => m.name 
   color: var(--accent);
   font-weight: 600;
 }
-.cfg-toggle {
-  justify-self: start;
-}
-.own {
+.hw {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+}
+.hw__item {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.ellipsis {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hwedit {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  align-items: end;
+}
+.score {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.score__txt {
+  display: grid;
+  flex: 1;
+  line-height: 1.2;
+}
+.score__num {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  font-weight: 800;
+  font-size: 16px;
+  flex-shrink: 0;
+  background: var(--panel);
+}
+.small-num {
+  width: 34px;
+  height: 34px;
+  font-size: 14px;
+}
+.score--ok .score__num,
+.score__num.score--ok {
+  background: var(--ok-weak);
+  color: var(--ok);
+}
+.score--good .score__num,
+.score__num.score--good {
+  background: var(--accent-weak);
+  color: var(--accent);
+}
+.score--warn .score__num,
+.score__num.score--warn {
+  background: var(--warn-weak);
+  color: var(--warn);
+}
+.score--crit .score__num,
+.score__num.score--crit {
+  background: var(--crit-weak);
+  color: var(--crit);
+}
+.why ul {
+  margin: 0 0 6px;
+  padding-left: 18px;
+}
+.why p {
+  margin: 4px 0;
+}
+.recs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.rec {
+  display: grid;
   gap: 8px;
-  padding-top: 8px;
+  align-content: start;
+  padding: 14px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-raised);
+}
+.rec p {
+  margin: 0;
+}
+.rec__head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.rec__name {
+  display: grid;
+  min-width: 0;
+}
+.rec__name a {
+  color: inherit;
+  overflow-wrap: anywhere;
+}
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.tag {
+  padding: 1px 8px;
+  border-radius: 99px;
+  font-size: 12px;
+  background: var(--panel);
+  color: var(--ink-faint);
+}
+.tag--ok {
+  background: var(--ok-weak);
+  color: var(--ok);
+}
+.tag--warn {
+  background: var(--warn-weak);
+  color: var(--warn);
+}
+.tag--crit {
+  background: var(--crit-weak);
+  color: var(--crit);
+}
+.search {
+  margin-top: 14px;
+}
+.results {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.results li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: baseline;
+}
+.linkbtn {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.repo {
+  margin-top: 10px;
+  overflow-x: auto;
+}
+.repo a {
+  color: inherit;
+}
+.qt {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.qt th,
+.qt td {
+  padding: 5px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+.qt tr.best td {
+  background: var(--accent-weak);
+}
+.dls {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 12px;
   border-top: 1px solid var(--line);
 }
-.own__wide {
-  grid-column: 1 / -1;
+.dl {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 10px;
+  align-items: center;
+}
+.dl .bar,
+.dl > span:nth-of-type(2) {
+  grid-column: 1;
 }
 .lagents {
   list-style: none;

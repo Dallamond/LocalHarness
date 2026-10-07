@@ -69,9 +69,10 @@ class LoadProgressTests(unittest.TestCase):
 class PerModelSettingsTests(unittest.TestCase):
     def test_launch_uses_own_config(self):
         s = Store(":memory:")
-        self.assertEqual(settings.llama_launch(s, "a.gguf"), {"ctx": 16384, "ngl": 99, "extra": []})
+        launch = lambda m: {k: v for k, v in settings.llama_launch(s, m).items() if k != "options"}  # noqa: E731
+        self.assertEqual(launch("a.gguf"), {"ctx": 16384, "ngl": 99, "extra": []})
         settings.save(s, {"llama": {"per_model": {"a.gguf": {"ctx": 8192, "ngl": 0, "extra": "-fa on -t 8"}}}})
-        self.assertEqual(settings.llama_launch(s, "a.gguf"), {"ctx": 8192, "ngl": 0, "extra": ["-fa", "on", "-t", "8"]})
+        self.assertEqual(launch("a.gguf"), {"ctx": 8192, "ngl": 0, "extra": ["-fa", "on", "-t", "8"]})
         self.assertEqual(settings.llama_launch(s, "b.gguf")["ctx"], 16384)
         self.assertEqual(settings.load(s)["llama"]["port"], 8080)  # el resto de la sección se conserva
 
