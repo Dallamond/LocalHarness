@@ -68,6 +68,7 @@ if __name__ == "__main__":
 AGENTS = {
     "qwen-director": ("local", None, "director", {}),
     "qwen-jefe": ("local", None, "jefe", {"skills": ["revision-de-diff"]}),
+    "qwen-agente": ("local_agent", None, "trabajador", {"max_turns": 20}),  # bucle con herramientas e internet
     "haiku-director": ("claude", "haiku", "director", {"max_turns": 6, "max_budget_usd": 0.3}),
     "haiku-jefe": ("claude", "haiku", "jefe", {"max_turns": 4, "max_budget_usd": 0.2, "skills": ["revision-de-diff"]}),
     "sonnet-trabajador": ("claude", "sonnet", "trabajador", {"max_turns": 12, "max_budget_usd": 0.5,

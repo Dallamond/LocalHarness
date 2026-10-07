@@ -7,7 +7,7 @@ import StatusChip from "../components/StatusChip.vue";
 import {
   ROLE_TEXT, STATUS_TEXT, agentName, ago, api, live, onTaskEvent, parseTs, pickPath, post, projectName,
   refreshAll, speedText, statusChip, taskList, usd,
-  type Plan, type Project, type Review, type Skill, type Task, type TaskEvent,
+  type Plan, type Project, type Review, type Skill, type Task, type TaskEvent, THINKING_TEXT
 } from "../api";
 
 const props = defineProps<{ id?: number }>();
@@ -18,7 +18,7 @@ const conversations = computed(() => taskList.value.filter((t) => t.plan_id == n
 const task = computed<Task | undefined>(() => (props.id ? live.tasks[props.id] : undefined));
 const agent = computed(() => live.agents.find((a) => a.id === task.value?.agent_id));
 // un agente local responde con el modelo ARRANCADO en llama-server, se llame como se llame
-const localModel = computed(() => (agent.value?.provider === "local" ? live.local.model : null));
+const localModel = computed(() => (agent.value?.provider?.startsWith("local") ? live.local.model : null));
 const speed = computed(() => (task.value ? live.speed[task.value.id] : undefined));
 
 const CLOSED = ["merged", "rejected", "discarded"];
@@ -35,7 +35,8 @@ type Msg =
   | { type: "agent"; text: string }
   | { type: "tools"; items: { name: string; target: string }[] }
   | { type: "note"; text: string; tone: "ok" | "warn" | "crit" | "dim" }
-  | { type: "delegate"; ok: boolean; what: string; tool: string; detail: string };
+  | { type: "delegate"; ok: boolean; what: string; tool: string; detail: string }
+  | { type: "thinking"; text: string };
 
 const TERMINAL = new Set(["review", "done", "failed", "timeout", "cancelled", "interrupted", "merged", "rejected"]);
 
@@ -57,11 +58,19 @@ const messages = computed<Msg[]>(() => {
       spoke = true;
     } else if (e.kind === "tool") {
       const input = (e.data?.input ?? {}) as Record<string, unknown>;
-      const item = { name: e.text || "herramienta", target: String(input.file_path ?? input.pattern ?? input.command ?? input.path ?? "") };
+      const item = { name: e.text || "herramienta", target: String(input.file_path ?? input.pattern ?? input.command ?? input.path ?? input.ruta ?? input.url ?? input.consulta ?? input.comando ?? input.pregunta ?? input.texto ?? "") };
       if (last.type === "tools") last.items.push(item);
       else out.push({ type: "tools", items: [item] });
     } else if (e.kind === "error") {
       out.push({ type: "note", text: e.text, tone: "crit" });
+    } else if (e.kind === "thinking") {
+      out.push({ type: "thinking", text: e.text });
+    } else if (e.kind === "ask_director") {
+      out.push({ type: "note", text: `❓ Pregunta al Director: ${e.text}`, tone: "warn" });
+    } else if (e.kind === "director_answer") {
+      out.push({ type: "note", text: `🧭 Director: ${e.text}`, tone: "ok" });
+    } else if (e.kind === "progress") {
+      out.push({ type: "note", text: `📣 ${e.text}`, tone: "ok" });
     } else if (e.kind === "warning") {
       out.push({ type: "note", text: e.text, tone: "warn" });
     } else if (e.kind === "delegate") {
@@ -157,12 +166,13 @@ async function act(path: string, body: unknown = {}, question?: string) {
 const draft = ref("");
 const sending = ref(false);
 const mode = ref<"agent" | "team">("agent");
-const form = reactive({ project_id: 0, agent_id: 0, director_agent_id: 0, reviewer_agent_id: 0, skills: [] as string[] });
+const form = reactive({ project_id: 0, agent_id: 0, director_agent_id: 0, reviewer_agent_id: 0, skills: [] as string[], thinking: "" });
 
 // M5: skills para esta conversación (se suman a las que el agente ya lleva siempre)
 const skills = ref<Skill[]>([]);
 const showSkills = ref(false);
 api<Skill[]>("/api/skills").then((s) => (skills.value = s)).catch(() => {});
+const agentThinking = computed(() => live.agents.find((a) => a.id === form.agent_id)?.config.thinking ?? "");
 const agentSkills = computed(() => live.agents.find((a) => a.id === form.agent_id)?.config.skills ?? []);
 
 watchEffect(() => {
@@ -195,6 +205,7 @@ async function send() {
       const t = await post<Task>("/api/tasks", {
         project_id: form.project_id, agent_id: form.agent_id, prompt: text,
         skills: form.skills.filter((n) => !agentSkills.value.includes(n)),
+        thinking: form.thinking || null,
       });
       form.skills = [];
       live.tasks[t.id] = t;
@@ -278,7 +289,7 @@ const placeholder = computed(() => {
         <AgentAvatar :agent="agent" :busy="busy" :size="34" />
         <div class="room__who">
           <strong>{{ task.title }}</strong>
-          <span class="muted small">{{ agentName(task.agent_id) }}<template v-if="agent?.provider === 'local'"> · usa
+          <span class="muted small">{{ agentName(task.agent_id) }}<template v-if="agent?.provider?.startsWith('local')"> · usa
             <strong>{{ localModel ?? "ningún modelo arrancado" }}</strong></template>
             <template v-if="agent?.provider === 'claude'"> ·
               <span v-if="agent.config.delegate_local" title="Puede encargar trabajo al modelo arrancado">🦙 delega en {{ live.local.model ?? "local (nada arrancado)" }}</span>
@@ -315,9 +326,13 @@ const placeholder = computed(() => {
             </div>
             <div v-else-if="m.type === 'delegate'" class="deleg" :class="{ 'deleg--bad': !m.ok }">
               <span class="deleg__who">🦙 Modelo local</span>
-              <span>{{ m.tool === "local_write_file" ? "escribió" : "respondió a" }} <strong>{{ m.what }}</strong></span>
+              <span>{{ m.tool === "local_write_file" ? "escribió" : m.tool === "local_research" ? "investigó en la web" : "respondió a" }} <strong>{{ m.what }}</strong></span>
               <span class="muted small">{{ m.detail }}</span>
             </div>
+            <details v-else-if="m.type === 'thinking'" class="think">
+              <summary>💭 Pensamiento ({{ m.text.length }} caracteres)</summary>
+              <p>{{ m.text }}</p>
+            </details>
             <p v-else class="note" :class="`note--${m.tone}`">{{ m.text }}</p>
           </template>
           <div v-if="busy" class="from">
@@ -390,6 +405,12 @@ const placeholder = computed(() => {
                 </span>
               </button>
             </div>
+            <label class="field thinkpick">
+              <span class="label">Pensamiento</span>
+              <select v-model="form.thinking">
+                <option v-for="(t, k) in THINKING_TEXT" :key="k" :value="k">{{ t }}{{ k === "" && agentThinking ? ` (${agentThinking})` : "" }}</option>
+              </select>
+            </label>
             <div v-if="skills.length" class="skillpick">
               <button type="button" class="btn btn--small btn--ghost" @click="showSkills = !showSkills">
                 {{ showSkills ? "▾" : "▸" }} Skills para esta conversación<template v-if="form.skills.length"> ({{ form.skills.length }})</template>
@@ -605,6 +626,26 @@ const placeholder = computed(() => {
   text-align: left;
   border-radius: var(--radius-sm);
 }
+.thinkpick {
+  max-width: 260px;
+  margin-top: 8px;
+}
+.think {
+  margin: 2px 0 2px 38px;
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+.think summary {
+  cursor: pointer;
+}
+.think p {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--line-strong);
+  white-space: pre-wrap;
+  max-height: 280px;
+  overflow: auto;
+}
 .deleg {
   display: flex;
   flex-wrap: wrap;
@@ -685,8 +726,16 @@ const placeholder = computed(() => {
 }
 .setup {
   display: grid;
+  grid-template-columns: minmax(0, 1fr); /* una ruta larga en el selector no ensancha la columna */
   gap: 14px;
   max-width: 760px;
+}
+.setup select {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  text-overflow: ellipsis;
 }
 .seg {
   display: inline-flex;

@@ -97,3 +97,38 @@ class LocalCannotWriteTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(httpx is None, "falta httpx (pip install -e .[server])")
+class ThinkingTests(unittest.IsolatedAsyncioTestCase):
+    """Objetivo 4: el pensamiento de los modelos se ve en vivo (efímero) y queda guardado al terminar."""
+
+    async def test_local_reasoning_is_streamed_and_kept(self):
+        from localharness.adapters import local as local_mod
+
+        def handler(request):
+            if request.url.path == "/v1/models":
+                return httpx.Response(200, json={"data": [{"id": "qwen3"}]})
+            lines = [f"data: {json.dumps({'choices': [{'delta': {'reasoning_content': w}}]})}" for w in "pienso en ello ".split(" ") if w]
+            lines += [f"data: {json.dumps({'choices': [{'delta': {'content': 'Respuesta.'}}]})}", "data: [DONE]"]
+            return httpx.Response(200, text="\n\n".join(lines) + "\n\n", headers={"content-type": "text/event-stream"})
+        old = local_mod.SPEED_EVERY_S
+        local_mod.SPEED_EVERY_S = 0  # un tick por trozo
+        try:
+            evs = []
+            with tempfile.TemporaryDirectory() as tmp:
+                a = LocalAdapter(transport=httpx.MockTransport(handler), repo_context=0)
+                res = await run(a, RunSpec(prompt="x", cwd=tmp), evs.append)
+        finally:
+            local_mod.SPEED_EVERY_S = old
+        self.assertEqual(res["status"], "done")
+        live = [e.text for e in evs if e.kind == "thinking_live"]
+        self.assertTrue(live and live[-1].startswith("pienso"))
+        self.assertEqual([e.text for e in evs if e.kind == "thinking"], ["piensoenello"])
+
+    def test_claude_thinking_blocks(self):
+        from localharness.adapters.claude import ClaudeAdapter
+        evs = ClaudeAdapter().parse_line({"type": "assistant", "message": {"content": [
+            {"type": "thinking", "thinking": "Primero miro el test.", "signature": "x"},
+            {"type": "text", "text": "Hecho"}]}})
+        self.assertEqual([(e.kind, e.text) for e in evs], [("thinking", "Primero miro el test."), ("text", "Hecho")])

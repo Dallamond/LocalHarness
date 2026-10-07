@@ -122,6 +122,48 @@ class ApiTests(unittest.TestCase):
             self.assertTrue((self.repo / "paso5.txt").exists())
             self.assertEqual(c.get("/api/inbox").json(), [])
 
+    def test_edit_and_redo_plan_steps_from_api(self):
+        with TestClient(self.app) as c:
+            pid, director = self._setup(c)
+            p = c.post("/api/plans", json={"project_id": pid, "director_agent_id": director, "request": "algo"}).json()
+            end = time.monotonic() + 15
+
+            def wait():
+                while c.get(f"/api/plans/{p['id']}").json()["status"] == "planning" and time.monotonic() < end:
+                    time.sleep(0.05)
+                return c.get(f"/api/plans/{p['id']}").json()
+            plan = wait()
+            self.assertEqual(plan["status"], "awaiting_you")  # pequeño, pero siempre te espera
+            steps = plan["plan"]["subtasks"]
+            steps[0]["title"] = "Mi paso"
+            r = c.put(f"/api/plans/{p['id']}", json={"subtasks": steps})
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertEqual([t["title"] for t in r.json()["tasks"] if t["kind"] == "worker"], ["Mi paso", "Paso 2"])
+            bad = c.put(f"/api/plans/{p['id']}", json={"subtasks": [{**steps[0], "agent": "nadie"}]})
+            self.assertEqual(bad.status_code, 409)
+            self.assertEqual(c.post(f"/api/plans/{p['id']}/redo", json={"seq": 7, "comment": "x"}).status_code, 422)
+            self.assertEqual(c.post(f"/api/plans/{p['id']}/redo", json={"seq": 2, "comment": "con tests"}).status_code, 200)
+            time.sleep(0.1)
+            plan = wait()
+            self.assertEqual(plan["status"], "awaiting_you", plan["error"])
+            self.assertEqual([s["title"] for s in plan["plan"]["subtasks"]], ["Mi paso", "Paso rehecho"])
+
+    def test_local_agent_settings_from_api(self):
+        with TestClient(self.app) as c:
+            r = c.post("/api/agents", json={"name": "qwen-agente", "provider": "local_agent", "tool_mode": "json",
+                                            "web": False, "commands": ["pytest"], "timeout_s": 600})
+            self.assertEqual(r.status_code, 201, r.text)
+            self.assertEqual(r.json()["config"], {"tool_mode": "json", "web": False, "commands": ["pytest"],
+                                                  "timeout_s": 600})
+            aid = r.json()["id"]
+            cfg = c.patch(f"/api/agents/{aid}", json={"web": True, "commands": [], "tool_mode": "native"}).json()["config"]
+            self.assertEqual(cfg, {"tool_mode": "native", "web": True, "commands": [], "timeout_s": 600})  # [] = sin ejecutar
+            self.assertEqual(c.post("/api/agents", json={"name": "x", "provider": "local_agent",
+                                                         "tool_mode": "otro"}).status_code, 422)
+            cfg = c.patch(f"/api/agents/{aid}", json={"thinking": "profundo"}).json()["config"]
+            self.assertEqual(cfg["thinking"], "profundo")
+            self.assertEqual(c.patch(f"/api/agents/{aid}", json={"thinking": "mucho"}).status_code, 422)
+
     def test_validation(self):
         with TestClient(self.app) as c:
             self.assertEqual(c.post("/api/projects", json={"name": "x", "repo_path": self.tmp.name}).status_code, 422)

@@ -5,6 +5,7 @@ Un agente es una *configuración* (proveedor + modelo + límites), no código nu
 
 import json
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from localharness.events import Event
@@ -12,6 +13,9 @@ from localharness.events import Event
 
 class AdapterError(Exception):
     pass
+
+
+THINKING_LEVELS = ("apagado", "normal", "profundo")
 
 
 @dataclass
@@ -31,6 +35,9 @@ class RunSpec:
     session_id: str | None = None    # para reanudar
     json_schema: dict | None = None  # Claude: salida estructurada validada (llega en result.structured_output)
     extra_args: list[str] = field(default_factory=list)
+    thinking: str | None = None      # apagado | normal | profundo (None = normal: lo que haga el modelo por defecto)
+    # agente local: pregunta al Director del plan (reanuda su sesión) → (respuesta, coste en $). None = sin Director
+    ask_director: Callable[[str], Awaitable[tuple[str, float]]] | None = None
 
 
 class Adapter(ABC):

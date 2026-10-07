@@ -40,6 +40,10 @@ MIGRATIONS = [
     """
     CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     """,
+    # Pensamiento por tarea: apagado | normal | profundo (NULL = el del agente)
+    """
+    ALTER TABLE tasks ADD COLUMN thinking TEXT;
+    """,
 ]
 
 
@@ -156,6 +160,10 @@ class Store:
         if project_id is None:
             return [dict(r) for r in self.db.execute("SELECT * FROM plans ORDER BY id")]
         return [dict(r) for r in self.db.execute("SELECT * FROM plans WHERE project_id=? ORDER BY id", (project_id,))]
+
+    def delete_task(self, tid: int) -> None:
+        self.db.execute("DELETE FROM tasks WHERE id=?", (tid,))  # sus eventos se borran en cascada
+        self.db.commit()
 
     def update_plan(self, pid: int, **f: Any) -> None:
         f = {k: json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else v for k, v in f.items()}

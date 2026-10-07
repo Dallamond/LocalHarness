@@ -54,7 +54,7 @@ class McpCatalogTests(unittest.TestCase):
             try:
                 cfg = json.loads(Path(m["config"]).read_text(encoding="utf-8"))["mcpServers"]
                 self.assertEqual(sorted(cfg), ["local", "memory"])
-                self.assertEqual(m["tools"], ["mcp__local__local_ask", "mcp__memory"])  # solo lectura: sin write_file
+                self.assertEqual(m["tools"], ["mcp__local__local_ask", "mcp__local__local_research", "mcp__memory"])  # solo lectura: sin write_file
             finally:
                 shutil.rmtree(m["dir"])
 
@@ -105,7 +105,7 @@ class SkillImportTests(unittest.TestCase):
             a = c.post("/api/agents", json={"name": "web", "provider": "claude", "web": True, "mcps": ["memory"]})
             self.assertEqual(a.json()["config"], {"web": True, "mcps": ["memory"]})
             a = c.patch(f"/api/agents/{a.json()['id']}", json={"web": False, "mcps": []}).json()
-            self.assertEqual(a["config"], {})
+            self.assertEqual(a["config"], {"web": False})  # web=False se guarda: en el agente local apaga internet
             c.post("/api/projects", json={"name": "demo", "repo_path": str(repo)})
             res = c.get("/api/resources").json()
             self.assertIsInstance(res["gpus"], list)

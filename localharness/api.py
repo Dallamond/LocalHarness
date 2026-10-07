@@ -12,14 +12,14 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from localharness import actions, catalog, context, hardware, hf, llama, maintenance, modelinfo, settings, workspace
+from localharness import actions, catalog, context, hardware, hf, llama, maintenance, modelinfo, roles, settings, workspace
 from localharness.adapters import ADAPTERS
 from localharness.context import load_skills
 from localharness.events import Event
@@ -97,11 +97,17 @@ class AgentIn(BaseModel):
     description: str | None = None  # en qué es bueno: el Director lo lee para repartir subtareas
     subagents: bool = False  # solo claude: puede lanzar subagentes (herramienta Agent; gasta más)
     delegate_local: bool = False  # solo claude: puede encargar trabajo al modelo local (MCP local_ask/local_write_file)
-    web: bool = False  # solo claude: WebFetch y WebSearch
     mcps: list[str] | None = None  # solo claude: servidores MCP del Catálogo (Ajustes → mcp_servers)
     temperature: float | None = Field(default=None, ge=0, le=2)  # solo local
     max_tokens: int | None = Field(default=None, ge=64, le=131_072)  # solo local
     repo_context: int | None = Field(default=None, ge=0, le=2_000_000)  # solo local: caracteres del repo
+    # solo local_agent (bucle con herramientas)
+    tool_mode: Literal["native", "json"] | None = None  # json: para modelos que no devuelven tool_calls
+    web: bool | None = None  # internet: claude → WebSearch/WebFetch; local_agent → buscar_web/leer_url (False = sin)
+    commands: list[str] | None = None                   # lista blanca de `ejecutar` ([] = sin ejecutar)
+    command_timeout_s: float | None = Field(default=None, gt=0, le=3600)
+    timeout_s: float | None = Field(default=None, gt=0, le=86_400)  # tope de tiempo de cada tarea del agente
+    thinking: Literal["apagado", "normal", "profundo"] | None = None  # pensamiento por defecto del agente
 
 
 class AgentPatch(BaseModel):
@@ -116,15 +122,22 @@ class AgentPatch(BaseModel):
     description: str | None = None
     subagents: bool | None = None
     delegate_local: bool | None = None
-    web: bool | None = None
     mcps: list[str] | None = None
     temperature: float | None = Field(default=None, ge=0, le=2)
     max_tokens: int | None = Field(default=None, ge=64, le=131_072)
     repo_context: int | None = Field(default=None, ge=0, le=2_000_000)
+    tool_mode: Literal["native", "json"] | None = None
+    web: bool | None = None
+    commands: list[str] | None = None
+    command_timeout_s: float | None = Field(default=None, gt=0, le=3600)
+    timeout_s: float | None = Field(default=None, gt=0, le=86_400)
+    thinking: Literal["apagado", "normal", "profundo"] | None = None
 
 
 AGENT_CFG = ("max_turns", "max_budget_usd", "read_only", "skills", "base_url", "description", "subagents",
-             "delegate_local", "web", "mcps", "temperature", "max_tokens", "repo_context")
+             "delegate_local", "web", "mcps", "temperature", "max_tokens", "repo_context", "tool_mode", "commands",
+             "command_timeout_s", "timeout_s", "thinking")
+KEEP_FALSY = ("web", "commands")  # web=False y commands=[] significan algo (apagar), no «quitar el ajuste»
 
 
 class SkillIn(BaseModel):
@@ -143,10 +156,29 @@ class TaskIn(BaseModel):
     title: str | None = None
     start: bool = True
     skills: list[str] | None = None  # M5: skills inyectadas solo en esta tarea (además de las del agente)
+    thinking: Literal["apagado", "normal", "profundo"] | None = None  # None = el del agente
 
 
 class MergeIn(BaseModel):
     confirm: bool = False  # la GUI lo manda tras tu confirmación explícita
+
+
+class StepIn(BaseModel):
+    title: str = Field(min_length=1)
+    prompt: str = Field(min_length=1)
+    agent: str = Field(min_length=1)
+    risk: str = "low"
+    skills: list[str] = []
+    thinking: Literal["apagado", "normal", "profundo"] | None = None
+
+
+class PlanEditIn(BaseModel):
+    subtasks: list[StepIn] = Field(min_length=1, max_length=12)
+
+
+class RedoIn(BaseModel):
+    seq: int = Field(ge=1)
+    comment: str = Field(min_length=1)
 
 
 class PlanIn(BaseModel):
@@ -229,6 +261,19 @@ class Runner:
 
         self.plans[pid] = asyncio.create_task(go())
 
+    def redo_step(self, pid: int, seq: int, comment: str) -> None:
+        """El Director rehace un paso en segundo plano; el plan vuelve a esperarte (o guarda el error)."""
+        async def go() -> None:
+            try:
+                await self.hier.redo_step(pid, seq, comment)
+            except Exception:  # noqa: BLE001 — redo_step ya deja el error en el plan
+                pass
+            finally:
+                self.plans.pop(pid, None)
+                self.publish_plan(pid)
+
+        self.plans[pid] = asyncio.create_task(go())
+
     def on_event(self, tid: int, ev: Event) -> None:
         self.hub.publish("task_event", {"task_id": tid, **ev.as_dict()})
         if ev.kind in ("status", "session", "usage"):
@@ -288,6 +333,7 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         store = Store(db_path)
         store.mark_interrupted()
         settings.apply(store)
+        app.state.roles_log = roles.sync_roles(store)  # objetivo 5: los roles de roles/*.md son agentes listos
         app.state.store = store
         app.state.hub = EventHub()
         app.state.runner = Runner(store, app.state.hub, binaries, worktree_root)
@@ -372,9 +418,12 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
                                  "skills": body.skills or None, "base_url": body.base_url or None,
                                  "description": (body.description or "").strip() or None,
                                  "subagents": body.subagents or None, "delegate_local": body.delegate_local or None,
-                                 "web": body.web or None, "mcps": body.mcps or None,
+                                 "mcps": body.mcps or None,
                                  "temperature": body.temperature,
-                                 "max_tokens": body.max_tokens, "repo_context": body.repo_context}.items()
+                                 "max_tokens": body.max_tokens, "repo_context": body.repo_context,
+                                 "tool_mode": body.tool_mode, "web": body.web, "commands": body.commands,
+                                 "command_timeout_s": body.command_timeout_s, "timeout_s": body.timeout_s,
+                                 "thinking": body.thinking}.items()
                if v is not None}
         a = st(request).add_agent(body.name, body.provider, model=body.model, role=body.role, config=cfg)
         return {**a, "config": cfg}
@@ -390,7 +439,7 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         cfg = json.loads(a["config"] or "{}")
         for k in sent & set(AGENT_CFG):
             v = getattr(body, k)
-            if v is None or v is False or v == [] or v == "":  # 0 es válido (repo_context = 0: sin contexto)
+            if v is None or (k not in KEEP_FALSY and (v is False or v == [] or v == "")):  # 0 es válido
                 cfg.pop(k, None)
             else:
                 cfg[k] = v
@@ -703,17 +752,26 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         return await asyncio.to_thread(gather)
 
     # --- inicio: qué hace cada agente ahora y qué ha cambiado últimamente
+    @app.get("/api/roles")
+    async def get_roles(request: Request) -> dict:
+        return {"roles": [r.summary() for r in roles.load_roles().values()],
+                "log": getattr(request.app.state, "roles_log", [])}
+
     @app.get("/api/activity")
     async def activity(request: Request, limit: int = 12) -> dict:
         store = st(request)
         current = {}
+        thinking = {}
         for t in store.list_tasks(status="running"):
-            e = store.last_event(t["id"])
+            e = store.last_event(t["id"], ("text", "tool", "status", "context", "progress", "thinking"))
             if e:
                 current[t["id"]] = {**e, "data": json.loads(e["data"] or "{}")}
+            th = store.last_event(t["id"], ("thinking",))
+            if th:
+                thinking[t["id"]] = {"text": th["text"], "ts": th["ts"]}
         done = [t for t in reversed(store.list_tasks()) if t["finished_at"] and t["kind"] != "director"][:limit]
         recent = await asyncio.to_thread(lambda: [{**task_out(t), "files": _files(store, t)} for t in done])
-        return {"current": current, "recent": recent}
+        return {"current": current, "recent": recent, "thinking": thinking}
 
     # --- tareas
     @app.get("/api/tasks")
@@ -731,6 +789,9 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
             raise HTTPException(409, "Ese proyecto ya tiene una tarea en marcha (una por repo a la vez)")
         title = (body.title or body.prompt.strip().splitlines()[0])[:80]
         t = store.add_task(body.project_id, title, body.prompt, body.agent_id, skills=body.skills or [])
+        if body.thinking:
+            store.update_task(t["id"], thinking=body.thinking)
+            t = store.get_task(t["id"])
         request.app.state.hub.publish("task", task_out(t))
         if body.start:
             request.app.state.runner.start(t["id"])
@@ -855,6 +916,23 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         p = _plan_action(runner.hier.approve_plan, pid)
         runner.run_plan(pid, plan_first=False)
         return plan_out(p)
+
+    @app.put("/api/plans/{pid}")
+    async def edit_plan(request: Request, pid: int, body: PlanEditIn) -> dict:
+        plan_or_404(st(request), pid)
+        p = _plan_action(request.app.state.runner.hier.edit_plan, pid, [s.model_dump() for s in body.subtasks])
+        request.app.state.runner.publish_plan(pid)
+        return {**plan_out(p), "tasks": [task_out(t) for t in st(request).plan_tasks(pid)]}
+
+    @app.post("/api/plans/{pid}/redo")
+    async def redo_step(request: Request, pid: int, body: RedoIn) -> dict:
+        p = plan_or_404(st(request), pid)
+        if p["status"] != "awaiting_you":
+            raise HTTPException(409, f"Solo se rehace un paso de un plan que espera tu aprobación (está en '{p['status']}')")
+        if body.seq > len(json.loads(p["plan"] or "{}").get("subtasks") or []):
+            raise HTTPException(422, f"El plan no tiene paso {body.seq}")
+        request.app.state.runner.redo_step(pid, body.seq, body.comment)
+        return plan_out(st(request).get_plan(pid))
 
     @app.post("/api/plans/{pid}/reject")
     async def reject_plan(request: Request, pid: int) -> dict:

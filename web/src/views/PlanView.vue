@@ -4,7 +4,7 @@ import Card from "../components/Card.vue";
 import StatusChip from "../components/StatusChip.vue";
 import {
   PLAN_TEXT, STATUS_TEXT, agentName, api, live, onTaskEvent, planChip, post, projectName, statusChip, usd,
-  type Plan, type PlanTask, type Review,
+  type Plan, type PlanStep, type PlanTask, type Review,
 } from "../api";
 
 const props = defineProps<{ id: number }>();
@@ -59,6 +59,63 @@ async function act(path: string, body: unknown = {}, question?: string) {
   }
 }
 
+// --- revisar el plan antes de empezar (objetivo 3): editar pasos a mano o pedir al Director que rehaga uno
+const draft = ref<PlanStep[]>([]);
+const editingStep = ref<number | null>(null);
+const redoFor = ref<number | null>(null);
+const redoComment = ref("");
+const dirty = ref(false);
+const reviewing = computed(() => plan.value?.status === "awaiting_you");
+const replanning = computed(() => plan.value?.status === "planning" && (detail.value?.tasks ?? []).some((t) => t.kind === "worker"));
+// trabajadores posibles: los que pueden escribir (no `local` ni el Director)
+const workers = computed(() => live.agents.filter((a) => a.provider !== "local" && a.id !== plan.value?.director_agent_id));
+const RISK_TEXT: Record<string, string> = { low: "bajo", medium: "medio", high: "alto" };
+
+watch(() => detail.value?.plan, (p) => {
+  if (!dirty.value) draft.value = (p?.subtasks ?? []).map((s) => ({ ...s, skills: [...(s.skills ?? [])] }));
+}, { immediate: true });
+
+function changed() {
+  dirty.value = true;
+}
+function removeStep(i: number) {
+  draft.value.splice(i, 1);
+  editingStep.value = null;
+  changed();
+}
+function moveStep(i: number, d: number) {
+  const j = i + d;
+  if (j < 0 || j >= draft.value.length) return;
+  [draft.value[i], draft.value[j]] = [draft.value[j], draft.value[i]];
+  changed();
+}
+function discard() {
+  dirty.value = false;
+  editingStep.value = null;
+  draft.value = (detail.value?.plan?.subtasks ?? []).map((s) => ({ ...s, skills: [...(s.skills ?? [])] }));
+}
+async function saveDraft() {
+  acting.value = true;
+  error.value = "";
+  try {
+    await api(`/api/plans/${props.id}`, { method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subtasks: draft.value }) });
+    dirty.value = false;
+    editingStep.value = null;
+    await load();
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    acting.value = false;
+  }
+}
+async function redo(i: number) {
+  if (!redoComment.value.trim()) return;
+  await act(`/api/plans/${props.id}/redo`, { seq: i + 1, comment: redoComment.value.trim() });
+  redoFor.value = null;
+  redoComment.value = "";
+}
+
 const KIND: Record<string, string> = { director: "Director", worker: "Trabajador", reviewer: "Jefe técnico" };
 
 function diffClass(l: string): string {
@@ -92,7 +149,6 @@ function diffClass(l: string): string {
       </ul>
       <p v-if="plan.error" class="warn-text">{{ plan.error }}</p>
       <div class="row actions">
-        <button v-if="plan.status === 'awaiting_you'" class="btn btn--ok" :disabled="acting" @click="act(`/api/plans/${id}/approve`)">Aprobar plan y ejecutar</button>
         <button
           v-if="plan.status === 'ready'" class="btn btn--primary" :disabled="acting"
           @click="act(`/api/plans/${id}/merge`, { confirm: true }, `¿Integrar ${plan.branch} en tu rama actual?\n\nMerge local; nunca se hace push.`)"
@@ -103,6 +159,66 @@ function diffClass(l: string): string {
           class="btn btn--danger" :disabled="acting"
           @click="act(`/api/plans/${id}/reject`, {}, '¿Rechazar el plan? Se borran su rama y su worktree.')"
         >Rechazar plan</button>
+      </div>
+    </Card>
+
+    <Card v-if="reviewing || replanning" title="Revisa el plan antes de empezar" level="warn">
+      <p class="muted small">
+        Apruébalo entero, cambia un paso a mano o pide al Director que rehaga uno con tu comentario.
+        <template v-if="plan.plan?.summary"><br />Resumen del Director: {{ plan.plan.summary }}</template>
+      </p>
+      <p v-if="replanning" class="warn-text">El Director está rehaciendo un paso…</p>
+      <ol class="steps">
+        <li v-for="(s, i) in draft" :key="i" class="step">
+          <div class="row">
+            <strong class="grow">{{ s.title }}</strong>
+            <span class="small muted">{{ s.agent }}</span>
+            <span v-if="s.thinking && s.thinking !== 'normal'" class="risk">💭 {{ s.thinking }}</span>
+            <span class="risk" :class="`risk--${s.risk}`">riesgo {{ RISK_TEXT[s.risk] ?? s.risk }}</span>
+          </div>
+          <p v-if="editingStep !== i" class="small prompt">{{ s.prompt }}</p>
+          <div v-else class="edit">
+            <label class="field">Título <input v-model="s.title" @input="changed" /></label>
+            <label class="field">Instrucciones para el agente (incluye cómo se comprueba)
+              <textarea v-model="s.prompt" rows="5" @input="changed" /></label>
+            <div class="row">
+              <label class="field">Agente
+                <select v-model="s.agent" @change="changed">
+                  <option v-for="a in workers" :key="a.id" :value="a.name">{{ a.name }} ({{ a.provider }})</option>
+                </select></label>
+              <label class="field">Pensamiento
+                <select v-model="s.thinking" @change="changed">
+                  <option :value="undefined">el del agente</option><option value="apagado">apagado</option>
+                  <option value="normal">normal</option><option value="profundo">profundo</option>
+                </select></label>
+              <label class="field">Riesgo
+                <select v-model="s.risk" @change="changed">
+                  <option value="low">bajo</option><option value="medium">medio</option><option value="high">alto</option>
+                </select></label>
+            </div>
+          </div>
+          <p v-if="s.skills?.length" class="small skills">Skills: <span v-for="n in s.skills" :key="n" class="skilltag">{{ n }}</span></p>
+          <div v-if="reviewing" class="row actions">
+            <button class="btn" @click="editingStep = editingStep === i ? null : i">{{ editingStep === i ? "Listo" : "Editar" }}</button>
+            <button class="btn" :disabled="dirty" :title="dirty ? 'Guarda o descarta tus cambios antes' : ''"
+                    @click="redoFor = redoFor === i ? null : i">Pedir al Director que lo rehaga</button>
+            <button class="btn" :disabled="i === 0" @click="moveStep(i, -1)">↑</button>
+            <button class="btn" :disabled="i === draft.length - 1" @click="moveStep(i, 1)">↓</button>
+            <button class="btn btn--danger" :disabled="draft.length === 1" @click="removeStep(i)">Quitar</button>
+          </div>
+          <div v-if="redoFor === i" class="row redo">
+            <input v-model="redoComment" class="grow" placeholder="Qué quieres que cambie (p. ej. «hazlo con tests», «usa el agente local»)"
+                   @keyup.enter="redo(i)" />
+            <button class="btn btn--primary" :disabled="acting || !redoComment.trim()" @click="redo(i)">Rehacer paso {{ i + 1 }}</button>
+          </div>
+        </li>
+      </ol>
+      <div v-if="reviewing" class="row actions">
+        <template v-if="dirty">
+          <button class="btn btn--primary" :disabled="acting" @click="saveDraft">Guardar cambios</button>
+          <button class="btn" :disabled="acting" @click="discard">Descartar</button>
+        </template>
+        <button v-else class="btn btn--ok" :disabled="acting" @click="act(`/api/plans/${id}/approve`)">Aprobar todo y ejecutar</button>
       </div>
     </Card>
 
@@ -206,6 +322,56 @@ function diffClass(l: string): string {
   margin-top: 8px;
   max-height: 480px;
   white-space: pre;
+}
+.steps {
+  margin: 8px 0 0;
+  padding-left: 22px;
+}
+.step {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.prompt {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  color: var(--ink-dim);
+}
+.edit {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+.field {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+.edit input,
+.edit textarea,
+.edit select,
+.redo input {
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+}
+.redo {
+  margin-top: 8px;
+}
+.risk {
+  font-size: 12px;
+  padding: 1px 8px;
+  border-radius: 6px;
+  background: var(--accent-weak);
+}
+.risk--medium {
+  color: var(--warn);
+}
+.risk--high {
+  color: var(--crit);
 }
 .d-hunk {
   color: var(--accent);

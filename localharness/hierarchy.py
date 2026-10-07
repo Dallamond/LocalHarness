@@ -15,9 +15,11 @@ from collections.abc import Callable
 from localharness import settings, workspace
 from localharness.actions import ActionError, now
 from localharness.adapters import ADAPTERS
+from localharness.adapters.base import THINKING_LEVELS
 from localharness.context import load_skills
 from localharness.events import Event
 from localharness.orchestrator import execute_task
+from localharness.roles import sync_roles
 from localharness.policy import N0, N1, N2, LEVEL_NAME, RISK_LEVEL, Policy, assess_changes, combine
 from localharness.store import Store
 
@@ -38,12 +40,19 @@ PLAN_SCHEMA = {
                     "agent": {"type": "string"},
                     "risk": {"type": "string", "enum": RISKS},
                     "skills": {"type": "array", "items": {"type": "string"}},
+                    "thinking": {"type": "string", "enum": list(THINKING_LEVELS)},
                 },
                 "required": ["title", "prompt", "agent", "risk"],
             },
         },
     },
     "required": ["summary", "risk", "subtasks"],
+}
+
+STEP_SCHEMA = {  # «rehacer este paso»: el Director devuelve SOLO la subtarea nueva
+    "type": "object",
+    "properties": {"subtask": PLAN_SCHEMA["properties"]["subtasks"]["items"]},
+    "required": ["subtask"],
 }
 
 REVIEW_SCHEMA = {
@@ -56,6 +65,7 @@ REVIEW_SCHEMA = {
     "required": ["verdict", "risk", "reason"],
 }
 
+STEP_KEYS = ("title", "prompt", "agent", "risk", "skills", "thinking")
 MAX_DIFF_FOR_REVIEW = 60_000  # caracteres: un diff más grande ya es N2 por reglas
 
 
@@ -80,19 +90,48 @@ SKILLS DISPONIBLES (procedimientos que se inyectan al agente; pon en `skills` la
 por su nombre exacto, o ninguna):
 {catalog}
 
-Reglas del plan:
-- Divide la petición en subtareas pequeñas y verificables que se ejecutarán EN ORDEN sobre la misma rama
-  (cada una ve los cambios de las anteriores). Si la petición es pequeña, una sola subtarea.
+{director_manual()}"""
+
+
+MANUAL = Path(__file__).resolve().parent.parent / "manual" / "director.md"
+FALLBACK_MANUAL = """Reglas del plan:
+- Divide la petición en subtareas pequeñas y verificables que se ejecutarán EN ORDEN sobre la misma rama.
 - El `prompt` de cada subtarea debe ser autocontenido: el agente no verá esta conversación.
-- Riesgo de cada subtarea: low (cambio pequeño y local), medium (lógica no trivial o varios archivos),
-  high (borra archivos, dependencias, migraciones, configuración/CI, secretos o cambios grandes).
-- `risk` global: el mayor de las subtareas o mayor si el conjunto lo justifica.
+- Riesgo: low (pequeño y local), medium (lógica no trivial o varios archivos), high (borra, dependencias,
+  migraciones, configuración/CI, secretos o cambios grandes). `risk` global: el mayor de las subtareas.
 - No incluyas pasos de git (commit/push/merge): de eso se encarga el sistema."""
+
+
+def director_manual() -> str:
+    """El «algoritmo» del Director vive en manual/director.md (editable sin tocar código)."""
+    try:
+        text = MANUAL.read_text(encoding="utf-8").strip()
+    except OSError:
+        text = ""
+    return text or FALLBACK_MANUAL
 
 
 def _desc(agent: dict) -> str:
     d = json.loads(agent.get("config") or "{}").get("description")
     return f". {d}" if d else ""
+
+
+def redo_prompt(plan_data: dict, seq: int, comment: str) -> str:
+    steps = "\n".join(f"{i}. {x['title']} ({x['agent']}, riesgo {x['risk']})"
+                      for i, x in enumerate(plan_data["subtasks"], 1))
+    return f"""El humano ha revisado tu plan y quiere que REHAGAS SOLO el paso {seq}. Los demás se quedan igual.
+
+PLAN ACTUAL:
+{steps}
+
+PASO {seq} ACTUAL:
+{json.dumps({k: v for k, v in plan_data["subtasks"][seq - 1].items() if k != "agent_id"}, ensure_ascii=False, indent=2)}
+
+LO QUE PIDE EL HUMANO:
+{comment}
+
+Devuelve la subtarea nueva para el paso {seq} (mismas reglas que el plan: prompt autocontenido con cómo se
+comprueba, agente por su nombre exacto, riesgo y skills). NO modificas archivos."""
 
 
 def reviewer_prompt(request: str, subtask: dict, diff: str, reasons: list[str]) -> str:
@@ -134,6 +173,8 @@ def validate_plan(data: dict | None, agents: list[dict], skills: dict | None = N
         s["agent_id"] = by_name[s["agent"]]["id"]
         asked = s.get("skills") if isinstance(s.get("skills"), list) else []
         s["skills"] = [n for n in asked if isinstance(n, str) and n in (skills or {})]  # nombres inventados fuera
+        if s.get("thinking") not in THINKING_LEVELS:
+            s.pop("thinking", None)
     if data.get("risk") not in RISKS:
         data["risk"] = max((s["risk"] for s in subtasks), key=RISKS.index)
     return data
@@ -196,10 +237,8 @@ class Hierarchy:
     async def plan(self, pid: int) -> dict:
         plan = self.store.get_plan(pid)
         project = self.store.get_project(plan["project_id"])
-        # trabajadores: solo agentes capaces de modificar archivos (un modelo local no lo es)
-        writers = [a for a in self.store.list_agents() if ADAPTERS[a["provider"]].can_write]
-        others = [a for a in writers if a["id"] not in (plan["director_agent_id"], plan["reviewer_agent_id"])]
-        workers = others or writers
+        sync_roles(self.store)  # los roles de roles/*.md, al día (también desde la CLI, sin servidor)
+        workers = self._workers(plan)
         if not workers:
             return self._fail(pid, "No hay agentes capaces de modificar archivos (claude/codex) para las subtareas")
         ws = workspace.create(project["repo_path"], f"plan-{pid}", self.worktree_root)
@@ -218,14 +257,87 @@ class Hierarchy:
             data = validate_plan(res.get("structured") or _json_or_none(res.get("final")), workers, catalog)
         except PlanError as e:
             return self._fail(pid, str(e))
+        self._store_plan(pid, data)
+        return self.store.get_plan(pid)
+
+    def _workers(self, plan: dict) -> list[dict]:
+        """Trabajadores: solo agentes capaces de modificar archivos (`local` no lo es; `local_agent` sí)."""
+        writers = [a for a in self.store.list_agents() if ADAPTERS[a["provider"]].can_write]
+        others = [a for a in writers if a["id"] not in (plan["director_agent_id"], plan["reviewer_agent_id"])]
+        return others or writers
+
+    def _store_plan(self, pid: int, data: dict, extra_reasons: list[str] | None = None) -> None:
+        """Guarda el plan validado: sus pasos como tareas pendientes, el nivel y si te espera a ti."""
+        for t in self.store.plan_tasks(pid):  # al editar: los pasos anteriores (aún sin ejecutar) se sustituyen
+            if t["kind"] == "worker" and t["status"] == "pending":
+                self.store.delete_task(t["id"])
         level, reasons = plan_level(data, self.policy)
+        reasons += extra_reasons or []
         for i, s in enumerate(data["subtasks"], 1):
             t = self._new_task(self.store.get_plan(pid), s["title"], s["prompt"], s["agent_id"], i, "worker")
             if s["skills"]:
                 self.store.update_task(t["id"], skills=s["skills"])
-        status = "awaiting_you" if level == N2 else "approved"
+            if s.get("thinking"):
+                self.store.update_task(t["id"], thinking=s["thinking"])
+            # SQLite reutiliza los ids de los pasos borrados al editar: se anuncia cada paso para que la GUI no
+            # mezcle el nuevo con lo que tenía guardado del anterior
+            self._emit(t["id"], Event("status", text="pending"))
+        review = settings.load(self.store)["plans"]["always_review"]
+        if review and level != N2:
+            reasons.append("revisas siempre el plan antes de empezar (Ajustes → Aprobaciones → Planes)")
+        status = "awaiting_you" if level == N2 or review else "approved"
         self._set(pid, plan=data, level=LEVEL_NAME[level], level_reasons=reasons, status=status,
                   cost_usd=self._total_cost(pid))
+
+    # --- 1b. tú revisas el plan antes de empezar: editar pasos o pedir al Director que rehaga uno
+    def edit_plan(self, pid: int, subtasks: list[dict]) -> dict:
+        plan = self._get(pid)
+        if plan["status"] != "awaiting_you":
+            raise ActionError(f"Solo se edita un plan que espera tu aprobación (está en '{plan['status']}')")
+        old = json.loads(plan["plan"] or "{}")
+        data = {"summary": old.get("summary", ""), "risk": None,
+                "subtasks": [{k: s.get(k) for k in STEP_KEYS} for s in subtasks]}
+        try:
+            data = validate_plan(data, self._workers(plan), load_skills())
+        except PlanError as e:
+            raise ActionError(str(e)) from None
+        self._store_plan(pid, data, ["plan editado por ti"])
+        return self.store.get_plan(pid)
+
+    async def redo_step(self, pid: int, seq: int, comment: str) -> dict:
+        plan = self._get(pid)
+        if plan["status"] != "awaiting_you":
+            raise ActionError(f"Solo se rehace un paso de un plan que espera tu aprobación (está en '{plan['status']}')")
+        data = json.loads(plan["plan"] or "{}")
+        if not 1 <= seq <= len(data.get("subtasks") or []):
+            raise ActionError(f"El plan no tiene paso {seq}")
+        if not comment.strip():
+            raise ActionError("Di qué quieres cambiar en el paso")
+        d = next((t for t in self.store.plan_tasks(pid) if t["kind"] == "director"), None)
+        if not d:
+            raise ActionError("El plan no tiene Director al que pedírselo")
+        self._set(pid, status="planning", error=None)
+        try:
+            res = await execute_task(self.store, d["id"], binaries=self.binaries, on_event=self._emit,
+                                     json_schema=STEP_SCHEMA, read_only=True,
+                                     followup=redo_prompt(data, seq, comment))
+            self.store.update_task(d["id"], status="done")
+            got = res.get("structured") or _json_or_none(res.get("final")) or {}
+            new = got.get("subtask") if isinstance(got, dict) else None
+            if res["status"] not in ("review", "done") or not isinstance(new, dict):
+                raise ActionError("El Director no devolvió el paso rehecho")
+            steps = [{k: x.get(k) for k in STEP_KEYS} for x in data["subtasks"]]
+            steps[seq - 1] = new
+            candidate = {"summary": data.get("summary", ""), "risk": None, "subtasks": steps}
+            try:
+                candidate = validate_plan(candidate, self._workers(plan), load_skills())
+            except PlanError as e:
+                raise ActionError(f"El paso rehecho no es válido: {e}") from None
+        except BaseException as e:
+            self._set(pid, status="awaiting_you", error=str(e) if isinstance(e, ActionError) else None,
+                      cost_usd=self._total_cost(pid))
+            raise
+        self._store_plan(pid, candidate, [f"paso {seq} rehecho por el Director: {comment[:120]}"])
         return self.store.get_plan(pid)
 
     def _fail(self, pid: int, msg: str) -> dict:

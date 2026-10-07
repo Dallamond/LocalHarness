@@ -18,8 +18,10 @@ export interface Agent {
   config: {
     max_turns?: number; max_budget_usd?: number; read_only?: boolean; tools?: string[];
     skills?: string[]; base_url?: string; description?: string; subagents?: boolean; delegate_local?: boolean;
-    web?: boolean; mcps?: string[];
+    mcps?: string[];
     temperature?: number; max_tokens?: number; repo_context?: number;
+    tool_mode?: string; web?: boolean; commands?: string[]; command_timeout_s?: number; timeout_s?: number;
+    from_role?: string; instructions?: string; thinking?: Thinking;
   };
 }
 
@@ -61,6 +63,20 @@ export type PlanStatus =
   | "planning" | "awaiting_you" | "approved" | "running" | "paused" | "ready" | "merged" | "rejected"
   | "failed" | "cancelled" | "interrupted" | "done";
 
+export type Thinking = "apagado" | "normal" | "profundo";
+export const THINKING_TEXT: Record<string, string> = {
+  "": "el del agente", apagado: "apagado (rápido)", normal: "normal", profundo: "profundo (más lento y caro)",
+};
+
+export interface PlanStep {
+  title: string;
+  agent: string;
+  risk: string;
+  prompt: string;
+  skills?: string[];
+  thinking?: Thinking;
+}
+
 export interface Plan {
   id: number;
   project_id: number;
@@ -68,7 +84,7 @@ export interface Plan {
   director_agent_id: number | null;
   reviewer_agent_id: number | null;
   status: PlanStatus;
-  plan: { summary: string; risk: string; subtasks: { title: string; agent: string; risk: string; prompt: string }[] } | null;
+  plan: { summary: string; risk: string; subtasks: PlanStep[] } | null;
   level: string | null;
   level_reasons: string[];
   branch: string | null;
@@ -164,6 +180,7 @@ export interface Settings {
     max_files: number; max_lines: number; max_auto_subtasks: number;
     sensitive: string[]; dependency: string[]; config: string[];
   };
+  plans: { always_review: boolean };
   task_timeout_min: number;
   local_base_url: string;
   context: { max_memory_chars: number; max_skill_chars: number; skill_dirs: string[] };
@@ -357,6 +374,7 @@ export const live = reactive({
   activity: {} as Record<number, Activity>,
   recent: [] as RecentTask[],
   speed: {} as Record<number, Speed>,          // tokens/s en vivo por tarea (modelos locales)
+  thinking: {} as Record<number, { text: string; at: number; live: boolean }>, // último pensamiento por tarea
   local: { state: "off", model: null } as { state: string; model: string | null }, // el modelo ARRANCADO
   lastSpeed: null as Speed | null,
 });
@@ -413,9 +431,15 @@ export async function refreshAll(): Promise<void> {
 
 /** Qué está haciendo cada tarea en marcha y las últimas terminadas (con sus archivos). */
 export async function refreshActivity(): Promise<void> {
-  const a = await api<{ current: Record<string, TaskEvent & { ts: string }>; recent: RecentTask[] }>("/api/activity");
+  const a = await api<{
+    current: Record<string, TaskEvent & { ts: string }>; recent: RecentTask[];
+    thinking?: Record<string, { text: string; ts: string }>;
+  }>("/api/activity");
   for (const [tid, ev] of Object.entries(a.current)) {
     live.activity[Number(tid)] = { kind: ev.kind, text: ev.text, data: ev.data, at: parseTs(ev.ts) };
+  }
+  for (const [tid, th] of Object.entries(a.thinking ?? {})) {
+    live.thinking[Number(tid)] = { text: th.text, at: parseTs(th.ts), live: false };
   }
   live.recent = a.recent;
 }
@@ -466,7 +490,10 @@ export function connect(url = "/api/events"): void {
   });
   source.addEventListener("task_event", (e) => {
     const ev = JSON.parse((e as MessageEvent).data) as TaskEvent;
-    if (["text", "tool", "status", "context"].includes(ev.kind)) {
+    if (ev.kind === "thinking" || ev.kind === "thinking_live") {
+      live.thinking[ev.task_id] = { text: ev.text, at: Date.now(), live: ev.kind === "thinking_live" };
+    }
+    if (["text", "tool", "status", "context", "progress", "thinking"].includes(ev.kind)) {
       live.activity[ev.task_id] = { kind: ev.kind, text: ev.text, data: ev.data ?? {}, at: Date.now() };
     }
     if (ev.kind === "speed" || (ev.kind === "usage" && ev.data?.local && ev.data?.tps)) {
@@ -477,7 +504,10 @@ export function connect(url = "/api/events"): void {
     if (ev.kind === "session" && ev.data?.base_url && ev.data?.model) {
       live.local = { state: "ready", model: String(ev.data.model) };
     }
-    if (ev.kind === "status" && ev.text !== "running") delete live.speed[ev.task_id];
+    if (ev.kind === "status" && ev.text !== "running") {
+      delete live.speed[ev.task_id];
+      delete live.thinking[ev.task_id];
+    }
     eventHandlers.forEach((fn) => fn(ev));
   });
   source.addEventListener("limit", (e) => {
@@ -584,7 +614,7 @@ export const PROVIDER_TEXT: Record<string, string> = {
 
 /** Qué modelo usa de verdad: los locales, el que esté arrancado en llama-server. */
 export function modelText(a: Agent): string {
-  if (a.provider === "local") return live.local.model ? `${live.local.model} (arrancado)` : "ningún modelo arrancado";
+  if (a.provider.startsWith("local")) return live.local.model ? `${live.local.model} (arrancado)` : "ningún modelo arrancado";
   return [a.provider === "claude" ? "Claude" : a.provider, a.model].filter(Boolean).join(" ");
 }
 
@@ -601,15 +631,21 @@ export function openCatalog(tab: "agents" | "skills" | "mcp" = "agents", open: n
 /** Frase corta de lo que está haciendo un agente a partir de su último evento. */
 export function describeActivity(a: Activity | undefined): string {
   if (!a) return "arrancando…";
+  if (a.kind === "progress") return a.text;
+  if (a.kind === "thinking") return "Pensando…";
   if (a.kind === "tool") {
     const input = (a.data.input ?? {}) as Record<string, unknown>;
-    const target = String(input.file_path ?? input.pattern ?? input.command ?? input.path ?? "");
+    const target = String(input.file_path ?? input.pattern ?? input.command ?? input.path ?? input.ruta ?? input.url ?? input.consulta ?? input.comando ?? input.pregunta ?? input.texto ?? "");
     const short = target.split(/[\\/]/).slice(-2).join("/");
     if (a.text === "mcp__local__local_ask") return `Encargando al modelo local: ${String(input.task ?? "").slice(0, 110)}`;
     if (a.text === "mcp__local__local_write_file") return `El modelo local escribe ${String(input.path ?? "")}`;
+    if (a.text === "mcp__local__local_research") return `El modelo local investiga en la web: ${String(input.question ?? "").slice(0, 100)}`;
     const verb: Record<string, string> = {
       Read: "Leyendo", Edit: "Editando", Write: "Escribiendo", MultiEdit: "Editando",
       Grep: "Buscando", Glob: "Buscando archivos", Bash: "Ejecutando",
+      leer_archivo: "Leyendo", listar: "Mirando", buscar_texto: "Buscando", escribir_archivo: "Escribiendo",
+      buscar_web: "Buscando en la web:", leer_url: "Leyendo la página", ejecutar: "Ejecutando",
+      preguntar_director: "Preguntando al Director:",
     };
     return `${verb[a.text] ?? a.text} ${short}`.trim();
   }

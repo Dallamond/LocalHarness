@@ -14,6 +14,7 @@ Agentes que crea:
 | Agente | Qué es | Gasta plan |
 |---|---|---|
 | `qwen-director`, `qwen-jefe` | tu Qwen local por llama-server | no |
+| `qwen-agente` | Qwen local como agente con herramientas e internet (`local_agent`; mejor Qwen3.5-9B) | no |
 | `haiku-director`, `haiku-jefe` | Claude Haiku, topes 0,3 $ / 0,2 $ | poco |
 | `sonnet-trabajador` | Claude Sonnet, el único que edita archivos (tope 0,5 $) | sí |
 

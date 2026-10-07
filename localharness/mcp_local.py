@@ -6,6 +6,8 @@ Claude lo recibe con `--mcp-config` cuando su agente tiene «Puede delegar en el
   los pasa a Qwen: Claude no gasta tokens leyéndolos, solo recibe la conclusión.
 - `local_write_file`: Qwen escribe un archivo entero (crear o reescribir) en el worktree. Claude recibe un resumen
   y revisa lo que quiera. Solo si la tarea puede escribir (LH_WRITE=1).
+- `local_research`: Qwen busca en la web (DuckDuckGo HTML, sin clave: lo más sencillo para empezar), lee las
+  primeras páginas y devuelve una respuesta con fuentes. Claude no gasta tokens buscando ni leyendo. LH_WEB=0 la quita.
 
 Todo confinado a LH_ROOT (el worktree de la tarea): nada fuera, nada dentro de .git. Cada encargo se apunta en
 LH_LOG (JSONL) para que LocalHarness lo muestre y cuente los tokens ahorrados.
@@ -14,15 +16,20 @@ Protocolo: JSON-RPC 2.0, un mensaje por línea en stdin/stdout (sin dependencias
 protocolo; los avisos van a stderr.
 
 Variables: LH_LOCAL_URL (llama-server), LH_LOCAL_KEY (su --api-key), LH_ROOT, LH_LOG, LH_WRITE (1/0),
-LH_MAX_TOKENS (por defecto 8192), LH_MAX_INPUT_CHARS (texto de archivos por encargo, por defecto 40000).
+LH_MAX_TOKENS (por defecto 8192), LH_MAX_INPUT_CHARS (texto de archivos por encargo, por defecto 40000),
+LH_WEB (1/0, búsqueda web).
 """
 
+import html
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+from html.parser import HTMLParser
 from pathlib import Path
 
 PROTOCOL = "2025-06-18"
@@ -62,10 +69,32 @@ WRITE = {
     },
 }
 
+RESEARCH = {
+    "name": "local_research",
+    "description": (
+        "Encarga a un modelo local GRATIS investigar en internet: busca, lee las primeras páginas y te devuelve una "
+        "respuesta corta con las fuentes (URL). Úsalo para documentación de librerías, errores, versiones, APIs o "
+        "cualquier dato que no esté en el repo. Es un modelo pequeño: comprueba en la fuente lo que sea crítico."),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "question": {"type": "string", "description": "Qué quieres averiguar, con el contexto necesario"},
+            "query": {"type": "string", "description": "Búsqueda concreta para el buscador (si no, usa la pregunta)"},
+            "pages": {"type": "integer", "description": "Cuántas páginas leer (1-5, por defecto 3)"},
+        },
+        "required": ["question"],
+    },
+}
+
 SYSTEM_ASK = ("Eres un asistente de programación que ayuda a otro agente más caro a ahorrar trabajo. Responde en "
               "español, concreto y sin relleno. Si te faltan datos, dilo en vez de inventar.")
 SYSTEM_WRITE = ("Eres un programador. Devuelve ÚNICAMENTE el contenido completo del archivo pedido, dentro de un solo "
                 "bloque de código, sin explicaciones antes ni después. No dejes partes sin hacer ni «...».")
+SYSTEM_RESEARCH = ("Eres un investigador. Responde a la pregunta SOLO con lo que digan las fuentes que te paso, en "
+                   "español, concreto y sin relleno. Cita las fuentes como [1], [2]… Si no lo dicen, dilo claramente.")
+SEARCH_URL = "https://html.duckduckgo.com/html/"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) LocalHarness/0.1"
+MAX_PAGE_CHARS = 8000
 
 
 class ToolError(Exception):
@@ -73,7 +102,7 @@ class ToolError(Exception):
 
 
 class Server:
-    def __init__(self, env: dict[str, str] | None = None, transport=None):
+    def __init__(self, env: dict[str, str] | None = None, transport=None, http_get=None):
         env = env if env is not None else dict(os.environ)
         self.url = (env.get("LH_LOCAL_URL") or "http://127.0.0.1:8080").rstrip("/").removesuffix("/v1")
         self.key = env.get("LH_LOCAL_KEY") or ""
@@ -82,11 +111,13 @@ class Server:
         self.write = env.get("LH_WRITE", "1") == "1"
         self.max_tokens = int(env.get("LH_MAX_TOKENS") or 8192)
         self.max_input = int(env.get("LH_MAX_INPUT_CHARS") or 40_000)
+        self.web = env.get("LH_WEB", "1") == "1"
         self.transport = transport  # pruebas: función (body) -> respuesta JSON de /v1/chat/completions
+        self.http_get = http_get or _http_get  # pruebas: función (url, data) -> HTML; sin red de verdad
 
     # --- protocolo
     def tools(self) -> list[dict]:
-        return [ASK, WRITE] if self.write else [ASK]
+        return [ASK] + ([WRITE] if self.write else []) + ([RESEARCH] if self.web else [])
 
     def handle(self, msg: dict) -> dict | None:
         mid, method = msg.get("id"), msg.get("method")
@@ -121,6 +152,10 @@ class Server:
                 entry["path"] = str(args.get("path", ""))
                 text, stats = self.write_file(str(args.get("path") or ""), str(args.get("instructions") or ""),
                                               args.get("context_files") or [])
+            elif name == "local_research" and self.web:
+                entry["task"] = str(args.get("question", ""))[:300]
+                text, stats = self.research(str(args.get("question") or ""), str(args.get("query") or ""),
+                                            args.get("pages"))
             else:
                 raise ToolError(f"Herramienta no disponible: {name}")
             entry.update(stats, ok=True)
@@ -164,6 +199,39 @@ class Server:
         verb = "Reescrito" if old is not None else "Creado"
         return (f"{verb} {path} ({lines} líneas). Lo escribió el modelo local: revisa lo importante.\n"
                 f"Primeras líneas:\n```\n{preview}\n```"), {**stats, "files": read, "lines": lines}
+
+    def research(self, question: str, query: str, pages) -> tuple[str, dict]:
+        if not question.strip():
+            raise ToolError("falta `question`")
+        try:
+            n = max(1, min(5, int(pages or 3)))
+        except (TypeError, ValueError):
+            n = 3
+        results = self.search(query.strip() or question)
+        if not results:
+            raise ToolError("el buscador no devolvió resultados (¿sin red?); hazlo tú")
+        sources, used = [], []
+        for r in results:
+            if len(used) >= n:
+                break
+            try:
+                text = page_text(self.http_get(r["url"], None))[:MAX_PAGE_CHARS]
+            except Exception:  # noqa: BLE001 — una página caída no para la investigación
+                text = ""
+            used.append({**r, "read": bool(text)})
+            sources.append(f"[{len(used)}] {r['title']} — {r['url']}\n" + (text or f"(no se pudo leer; resumen del "
+                                                                                  f"buscador: {r['snippet']})"))
+        user = f"PREGUNTA:\n{question}\n\nFUENTES:\n\n" + "\n\n".join(sources)
+        answer, stats = self.complete(SYSTEM_RESEARCH, user)
+        refs = "\n".join(f"[{i}] {u['title']} — {u['url']}" for i, u in enumerate(used, 1))
+        return f"{answer}\n\nFuentes:\n{refs}", {**stats, "sources": [u["url"] for u in used]}
+
+    def search(self, query: str) -> list[dict]:
+        try:
+            raw = self.http_get(SEARCH_URL, {"q": query})
+        except Exception as e:  # noqa: BLE001
+            raise ToolError(f"no se pudo buscar en la web ({e}); hazlo tú") from None
+        return parse_ddg(raw)
 
     # --- utilidades
     def safe(self, path: str) -> Path:
@@ -240,6 +308,73 @@ class Server:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         except OSError:
             pass
+
+
+def _http_get(url: str, data: dict | None) -> str:
+    body = urllib.parse.urlencode(data).encode() if data else None
+    req = urllib.request.Request(url, data=body, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        ctype = r.headers.get("Content-Type", "")
+        if "html" not in ctype and "text" not in ctype:
+            raise ValueError(f"no es una página de texto ({ctype})")
+        return r.read(2_000_000).decode(r.headers.get_content_charset() or "utf-8", "replace")
+
+
+_DDG_LINK = re.compile(r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>', re.S)
+_DDG_SNIPPET = re.compile(r'class="result__snippet"[^>]*>(.*?)</a>', re.S)
+_TAGS = re.compile(r"<[^>]+>")
+
+
+def parse_ddg(raw: str) -> list[dict]:
+    """Resultados de la versión HTML de DuckDuckGo: [{title, url, snippet}]. Sin anuncios ni repetidos."""
+    out, seen = [], set()
+    snippets = [_clean(m) for m in _DDG_SNIPPET.findall(raw)]
+    for i, (href, title) in enumerate(_DDG_LINK.findall(raw)):
+        href = html.unescape(href)
+        if "uddg=" in href:  # enlace de redirección: //duckduckgo.com/l/?uddg=<url>
+            href = urllib.parse.parse_qs(urllib.parse.urlparse(href).query).get("uddg", [href])[0]
+        if href.startswith("//"):
+            href = "https:" + href
+        if not href.startswith("http") or "duckduckgo.com/y.js" in href or href in seen:
+            continue
+        seen.add(href)
+        out.append({"title": _clean(title), "url": href, "snippet": snippets[i] if i < len(snippets) else ""})
+    return out
+
+
+def _clean(fragment: str) -> str:
+    return " ".join(html.unescape(_TAGS.sub("", fragment)).split())
+
+
+class _Text(HTMLParser):
+    SKIP = {"script", "style", "noscript", "svg", "nav", "footer", "header", "form"}
+    BLOCK = {"p", "div", "li", "br", "h1", "h2", "h3", "h4", "pre", "tr", "section", "article"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts, self.skip = [], 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self.SKIP:
+            self.skip += 1
+        elif tag in self.BLOCK:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in self.SKIP and self.skip:
+            self.skip -= 1
+
+    def handle_data(self, data):
+        if not self.skip:
+            self.parts.append(data)
+
+
+def page_text(raw: str) -> str:
+    """Texto legible de una página HTML (sin scripts, estilos ni menús), con saltos de línea por bloque."""
+    p = _Text()
+    p.feed(raw)
+    lines = (" ".join(ln.split()) for ln in "".join(p.parts).splitlines())
+    return "\n".join(ln for ln in lines if ln)
 
 
 def strip_fence(text: str) -> str:

@@ -10,26 +10,28 @@ from pathlib import Path
 
 from localharness import llama, mcp_local, settings, workspace
 from localharness.adapters import get_adapter
-from localharness.adapters.base import RunSpec
-from localharness.adapters.claude import SUBAGENT_TOOL, WEB_TOOLS
+from localharness.adapters.base import THINKING_LEVELS, RunSpec
+from localharness.adapters.claude import SUBAGENT_TOOL, WEB_TOOLS, thinking_env
 from localharness.adapters.local import config_kwargs
 from localharness.context import build_prompt, load_memory, load_skills
 from localharness.events import Event
 from localharness.runner import run
 from localharness.store import Store
 
-EPHEMERAL = ("speed",)  # en vivo para la GUI, no se guardan (llegan cada ~1,5 s)
+EPHEMERAL = ("speed", "thinking_live")  # en vivo para la GUI, no se guardan (llegan cada ~1,5 s)
 
-DELEGATE_TOOLS = {"local_ask": "mcp__local__local_ask", "local_write_file": "mcp__local__local_write_file"}
+DELEGATE_TOOLS = {"local_ask": "mcp__local__local_ask", "local_write_file": "mcp__local__local_write_file",
+                  "local_research": "mcp__local__local_research"}
 DELEGATE_GUIDE = """
 DELEGACIÓN EN EL MODELO LOCAL — OBLIGATORIA cuando encaje (tu cuota es cara; el modelo local es gratis):
-Tienes un modelo local con las herramientas `local_ask` y `local_write_file`. Reglas:
+Tienes un modelo local con las herramientas `local_ask`, `local_write_file` y `local_research`. Reglas:
 1. NO leas archivos tú para entenderlos, resumirlos o buscar fallos: llama a `local_ask` con sus rutas en `files`.
    Solo haces Read tú de las líneas concretas que vayas a editar o verificar.
 2. Preguntas, explicaciones, comparar opciones, redactar texto o documentación: `local_ask` y usa su respuesta.
 3. Código nuevo o un archivo reescrito entero: `local_write_file` con instrucciones precisas
    (qué debe contener, funciones y firmas, estilo, casos límite). Cambios de pocas líneas: Edit tú.
 4. Empieza SIEMPRE por un encargo al modelo local antes de trabajar tú, salvo que la tarea sea de 1–2 líneas.
+5. Buscar en internet (documentación, errores, versiones, APIs): `local_research`; te devuelve respuesta y fuentes.
 Tú decides, planificas y verificas: es un modelo pequeño. Revisa lo que escriba (Read de las partes clave) y
 corrige con Edit si hace falta. Si responde que no hay modelo local, hazlo tú y dilo al final."""
 
@@ -66,7 +68,10 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
     cfg = json.loads(agent["config"] or "{}")
     # la URL del llama-server del agente manda; si no tiene, la de Ajustes
     extra = ({**config_kwargs({"base_url": settings.load(store)["local_base_url"], **cfg}), "api_key": llama.API_KEY}
-             if agent["provider"] == "local" else {})
+             if agent["provider"] in ("local", "local_agent") else {})
+    if agent["provider"] == "local_agent":  # el bucle de agente local tiene sus propios ajustes
+        extra.update({k: cfg[k] for k in ("tool_mode", "max_tool_chars", "max_context_chars", "web", "commands",
+                                          "command_timeout_s") if k in cfg})
     adapter = get_adapter(agent["provider"], binary=(binaries or {}).get(agent["provider"]) or cfg.get("binary"),
                           **extra)
 
@@ -103,6 +108,8 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
         prompt, injected = build_prompt(request, load_memory(project.get("memory_dir")),
                                         [catalog[n] for n in wanted if n in catalog])
     missing = [n for n in wanted if n not in catalog]
+    if cfg.get("instructions") and not resume:  # objetivo 5: instrucciones del rol (roles/*.md)
+        prompt += f"\n\n## Tu rol en el equipo\n{cfg['instructions']}"
 
     ro = bool(cfg.get("read_only")) if read_only is None else read_only
     is_claude = agent["provider"] == "claude"
@@ -112,14 +119,22 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
     if deleg and deleg["delegate"] and (not resume or not _had_delegation(store, task_id)):
         # también al continuar una conversación que empezó sin la casilla: la sesión no sabe que ahora puede delegar
         prompt += "\n" + delegate_guide(write=not ro)
-    spec = RunSpec(prompt=prompt, cwd=str(ws.path), model=agent["model"],
+    thinking = task.get("thinking") or cfg.get("thinking")
+    thinking = thinking if thinking in THINKING_LEVELS else None
+    if thinking and agent["provider"] == "claude":
+        deleg_env = {**(deleg["env"] if deleg else {}), **thinking_env(thinking)}
+    else:
+        deleg_env = deleg["env"] if deleg else {}
+    spec = RunSpec(prompt=prompt, cwd=str(ws.path), model=agent["model"], thinking=thinking,
                    max_turns=cfg.get("max_turns"), max_budget_usd=cfg.get("max_budget_usd"),
                    read_only=ro, allowed_tools=cfg.get("tools"), json_schema=json_schema,
                    extra_tools=([SUBAGENT_TOOL] if cfg.get("subagents") and is_claude else []) +
                                (list(WEB_TOOLS) if cfg.get("web") and is_claude else []),
                    session_id=task["session_id"] if resume else None,
                    mcp_config=deleg["config"] if deleg else None, mcp_tools=deleg["tools"] if deleg else [],
-                   env=deleg["env"] if deleg else {})
+                   env=deleg_env,
+                   ask_director=(_director_line(store, task, ws, binaries)
+                                 if agent["provider"] == "local_agent" else None))
     if followup is not None:
         sink(Event("user", text=followup))
     sink(Event("status", text="running"))
@@ -154,6 +169,36 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
             "stat": git_stat(ws, base, head)}
 
 
+def _director_line(store: Store, task: dict, ws: workspace.Workspace, binaries: dict[str, str] | None):
+    """Para un agente local dentro de un plan: `preguntar_director` reanuda la sesión de Claude del Director
+    (ya conoce la petición y el plan) con la pregunta. Solo lectura, pocos turnos y tope de gasto."""
+    if not task.get("plan_id"):
+        return None
+    d = next((t for t in store.plan_tasks(task["plan_id"]) if t["kind"] == "director"), None)
+    director = store.get_agent(d["agent_id"]) if d and d["agent_id"] else None
+    if not d or not d.get("session_id") or not director or director["provider"] != "claude":
+        return None
+    dcfg = json.loads(director["config"] or "{}")
+
+    async def ask(question: str) -> tuple[str, float]:
+        adapter = get_adapter("claude", binary=(binaries or {}).get("claude") or dcfg.get("binary"))
+        prompt = (f"Un trabajador del equipo (agente local) está con la subtarea «{task['title']}» de tu plan y te "
+                  f"pregunta:\n\n{question}\n\nResponde corto y concreto, con una decisión clara. No modifiques "
+                  "archivos ni rehagas el plan.")
+        spec = RunSpec(prompt=prompt, cwd=str(ws.path), model=director["model"], read_only=True, max_turns=3,
+                       max_budget_usd=0.2, session_id=d["session_id"])
+        got: dict = {"cost": 0.0}
+
+        def collect(ev: Event) -> None:
+            if ev.kind == "usage" and ev.data.get("cost_usd") is not None:
+                got["cost"] = ev.data["cost_usd"]
+        res = await run(adapter, spec, collect, timeout_s=300)
+        if res["status"] != "done" or not (res.get("final") or "").strip():
+            return "El Director no ha podido responder. Decide tú y explícalo en `terminar`.", got["cost"]
+        return res["final"].strip(), got["cost"]
+    return ask
+
+
 def _had_delegation(store: Store, task_id: int) -> bool:
     """¿La sesión ya arrancó alguna vez con las herramientas del modelo local?"""
     for e in reversed(store.list_events(task_id)):
@@ -183,7 +228,8 @@ def _mcp_setup(store: Store, root: Path, cfg: dict, write: bool) -> dict | None:
         servers["local"] = {"type": "stdio", "command": sys.executable,
                             # por ruta: la CLI lo lanza desde el worktree, donde el paquete no está en el path
                             "args": [str(Path(mcp_local.__file__).resolve())], "env": env}
-        tools = [DELEGATE_TOOLS["local_ask"]] + ([DELEGATE_TOOLS["local_write_file"]] if write else []) + tools
+        tools = ([DELEGATE_TOOLS["local_ask"]] + ([DELEGATE_TOOLS["local_write_file"]] if write else [])
+                 + [DELEGATE_TOOLS["local_research"]] + tools)
     path = d / "mcp.json"
     path.write_text(json.dumps({"mcpServers": servers}, ensure_ascii=False), encoding="utf-8")
     # los encargos al modelo local pueden tardar minutos: el tope por defecto de la CLI para una herramienta MCP es corto

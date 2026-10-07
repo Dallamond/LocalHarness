@@ -170,26 +170,35 @@ interface AgentForm {
   description: string;
   subagents: boolean;
   delegate_local: boolean;
-  web: boolean;
   temperature: number | null;
   max_tokens: number | null;
   repo_context: number | null;
+  tool_mode: string;
+  web: boolean;
+  commands: string; // «;» entre órdenes; vacío = lista blanca por defecto
+  thinking: string;
 }
 const blank = (): AgentForm => ({
   name: "", provider: "claude", model: "", role: "trabajador", max_turns: null, max_budget_usd: null,
-  read_only: false, skills: [], base_url: "", description: "", subagents: false, delegate_local: false, web: false, temperature: null,
-  max_tokens: null, repo_context: null,
+  read_only: false, skills: [], base_url: "", description: "", subagents: false, delegate_local: false, temperature: null,
+  max_tokens: null, repo_context: null, tool_mode: "native", web: false, commands: "", thinking: "",
 });
 
 // lo propio de cada proveedor: subagentes solo en Claude; temperatura, tokens y contexto solo en local
 const num = (v: number | null | string) => (v === null || v === "" ? null : Number(v));
+const splitCommands = (t: string) => t.split(/[;\n]/).map((c) => c.trim()).filter(Boolean);
 function providerFields(f: AgentForm, provider: string) {
+  if (provider === "local_agent")
+    return { base_url: f.base_url || null, temperature: num(f.temperature), max_tokens: num(f.max_tokens),
+             tool_mode: f.tool_mode, web: f.web, commands: f.commands.trim() ? splitCommands(f.commands) : null };
   return provider === "local"
     ? { base_url: f.base_url || null, temperature: num(f.temperature), max_tokens: num(f.max_tokens),
         repo_context: num(f.repo_context) }
     : provider === "claude" ? { subagents: f.subagents, delegate_local: f.delegate_local, web: f.web } : {};
 }
 const newAgent = reactive<AgentForm>(blank());
+// internet: apagado por defecto en Claude (gasta plan), encendido en el agente local (es gratis)
+watch(() => newAgent.provider, (p) => (newAgent.web = p === "local_agent"));
 const showNew = ref(false);
 const agError = ref("");
 const editing = ref<number | null>(null);
@@ -203,9 +212,9 @@ function resetNewAgent() {
 async function addAgent() {
   agError.value = "";
   try {
-    const { subagents, delegate_local, web, temperature, max_tokens, repo_context, base_url, ...common } = newAgent;
+    const { subagents, delegate_local, temperature, max_tokens, repo_context, base_url, tool_mode, web, commands, ...common } = newAgent;
     await post<Agent>("/api/agents", {
-      ...common, model: newAgent.model || null, role: newAgent.role || null,
+      ...common, model: newAgent.model || null, role: newAgent.role || null, thinking: newAgent.thinking || null,
       ...providerFields(newAgent, newAgent.provider),
     });
     resetNewAgent();
@@ -222,9 +231,11 @@ function startEdit(a: Agent) {
     name: a.name, provider: a.provider, model: a.model ?? "", role: a.role ?? "",
     max_turns: a.config.max_turns ?? null, max_budget_usd: a.config.max_budget_usd ?? null,
     read_only: !!a.config.read_only, skills: [...(a.config.skills ?? [])], base_url: a.config.base_url ?? "",
-    description: a.config.description ?? "", subagents: !!a.config.subagents, delegate_local: !!a.config.delegate_local, web: !!a.config.web,
+    description: a.config.description ?? "", subagents: !!a.config.subagents, delegate_local: !!a.config.delegate_local,
     temperature: a.config.temperature ?? null, max_tokens: a.config.max_tokens ?? null,
     repo_context: a.config.repo_context ?? null,
+    thinking: a.config.thinking ?? "",
+    tool_mode: a.config.tool_mode ?? "native", web: a.provider === "claude" ? !!a.config.web : a.config.web !== false, commands: (a.config.commands ?? []).join("; "),
   });
 }
 
@@ -236,7 +247,7 @@ async function saveAgent(a: Agent) {
       body: JSON.stringify({
         model: edit.model, role: edit.role, max_turns: edit.max_turns || null,
         max_budget_usd: edit.max_budget_usd || null, read_only: edit.read_only, skills: edit.skills,
-        description: edit.description,
+        description: edit.description, thinking: edit.thinking || null,
         ...providerFields(edit, a.provider),
       }),
     });
@@ -270,6 +281,7 @@ function limits(a: Agent): string {
     c.mcps?.length ? `MCP: ${c.mcps.join(", ")}` : null,
     c.temperature !== undefined ? `temp. ${c.temperature}` : null,
     c.max_tokens ? `${c.max_tokens} tokens máx.` : null,
+    c.thinking && c.thinking !== "normal" ? `pensamiento ${c.thinking}` : null,
     c.repo_context !== undefined ? (c.repo_context ? `${Math.round(c.repo_context / 1000)}k car. de repo` : "sin contexto del repo") : null,
     c.base_url ? c.base_url : null,
   ].filter(Boolean).join(" · ") || "sin límites";
@@ -321,7 +333,7 @@ watch(look, applyLook, { deep: true });
             <span class="label">Descripción</span>
             <input v-model.trim="newAgent.description" placeholder="En qué es bueno (el Director lo lee para repartir trabajo)" />
           </label>
-          <label v-if="newAgent.provider === 'local'" class="field wide">
+          <label v-if="newAgent.provider.startsWith('local')" class="field wide">
             <span class="label">URL del llama-server</span>
             <input v-model.trim="newAgent.base_url" :placeholder="saved?.local_base_url" class="code" />
           </label>
@@ -331,11 +343,22 @@ watch(look, applyLook, { deep: true });
               <input v-model="newAgent.skills" type="checkbox" :value="s.name" /> {{ s.name }}
             </label>
           </fieldset>
-          <template v-if="newAgent.provider === 'local'">
+          <template v-if="newAgent.provider.startsWith('local')">
             <label class="field"><span class="label">Temperatura</span><input v-model.number="newAgent.temperature" type="number" min="0" max="2" step="0.05" placeholder="0.2" /></label>
             <label class="field"><span class="label">Tokens de respuesta</span><input v-model.number="newAgent.max_tokens" type="number" min="64" step="256" placeholder="4096" /></label>
-            <label class="field" title="Cuántos caracteres del repo se meten en el prompt (0 = nada)">
+            <label v-if="newAgent.provider === 'local'" class="field" title="Cuántos caracteres del repo se meten en el prompt (0 = nada)">
               <span class="label">Contexto del repo (car.)</span><input v-model.number="newAgent.repo_context" type="number" min="0" step="1000" placeholder="24000" />
+            </label>
+          </template>
+          <template v-if="newAgent.provider === 'local_agent'">
+            <label class="field" title="native: herramientas de la API (Qwen3.5-9B). json: para modelos que no devuelven tool_calls">
+              <span class="label">Modo de herramientas</span>
+              <select v-model="newAgent.tool_mode"><option value="native">nativo</option><option value="json">json</option></select>
+            </label>
+            <label class="check"><input v-model="newAgent.web" type="checkbox" /> Puede buscar en internet</label>
+            <label class="field wide" title="Prefijos de orden que puede usar `ejecutar`, separados por «;». Vacío = tests y linters por defecto">
+              <span class="label">Órdenes permitidas</span>
+              <input v-model.trim="newAgent.commands" class="code" placeholder="python -m unittest; pytest; npm test (por defecto)" />
             </label>
           </template>
           <label v-if="newAgent.provider === 'claude'" class="check wide" title="Añade la herramienta Agent: puede repartir trabajo en subagentes. Gasta bastante más plan.">
@@ -346,6 +369,10 @@ watch(look, applyLook, { deep: true });
           </label>
           <label v-if="newAgent.provider === 'claude'" class="check wide" title="Añade WebSearch y WebFetch: puede buscar en internet y leer páginas.">
             <input v-model="newAgent.web" type="checkbox" /> Puede navegar por internet <span class="muted small">(WebSearch y WebFetch)</span>
+          </label>
+          <label class="field" title="Por defecto para sus tareas; cada conversación o paso del plan puede cambiarlo">
+            <span class="label">Pensamiento</span>
+            <select v-model="newAgent.thinking"><option value="">normal (por defecto)</option><option value="apagado">apagado</option><option value="profundo">profundo</option></select>
           </label>
           <label class="check"><input v-model="newAgent.read_only" type="checkbox" /> Solo lectura</label>
           <div class="row wide"><button class="btn btn--primary">Crear agente</button></div>
@@ -366,8 +393,10 @@ watch(look, applyLook, { deep: true });
               <span class="agent__limits small muted">{{ limits(a) }}</span>
               <span v-if="a.config.description" class="small desc">{{ a.config.description }}</span>
               <span v-if="a.config.skills?.length" class="small tagline">{{ a.config.skills.join(", ") }}</span>
+              <span v-if="a.config.from_role" class="small rolefile" title="Agente de rol: se cambia editando su archivo; al arrancar LocalHarness lo vuelve a leer">
+                rol · <code>roles/{{ a.config.from_role }}.md</code></span>
               <div class="row agent__actions">
-                <button class="btn btn--small" @click="editing === a.id ? (editing = null) : startEdit(a)">
+                <button v-if="!a.config.from_role" class="btn btn--small" @click="editing === a.id ? (editing = null) : startEdit(a)">
                   {{ editing === a.id ? "Cerrar" : "Editar" }}
                 </button>
                 <button class="btn btn--small btn--ghost" title="Solo si no tiene historial" @click="removeAgent(a)">Borrar</button>
@@ -388,7 +417,7 @@ watch(look, applyLook, { deep: true });
                 <span class="label">Descripción</span>
                 <input v-model.trim="edit.description" placeholder="En qué es bueno (el Director lo lee para repartir trabajo)" />
               </label>
-              <label v-if="a.provider === 'local'" class="field wide">
+              <label v-if="a.provider.startsWith('local')" class="field wide">
                 <span class="label">URL del llama-server</span>
                 <input v-model.trim="edit.base_url" :placeholder="saved?.local_base_url" class="code" />
               </label>
@@ -398,11 +427,22 @@ watch(look, applyLook, { deep: true });
                   <input v-model="edit.skills" type="checkbox" :value="s.name" /> {{ s.name }}
                 </label>
               </fieldset>
-              <template v-if="a.provider === 'local'">
+              <template v-if="a.provider.startsWith('local')">
                 <label class="field"><span class="label">Temperatura</span><input v-model.number="edit.temperature" type="number" min="0" max="2" step="0.05" placeholder="0.2" /></label>
                 <label class="field"><span class="label">Tokens de respuesta</span><input v-model.number="edit.max_tokens" type="number" min="64" step="256" placeholder="4096" /></label>
-                <label class="field" title="Cuántos caracteres del repo se meten en el prompt (0 = nada)">
+                <label v-if="a.provider === 'local'" class="field" title="Cuántos caracteres del repo se meten en el prompt (0 = nada)">
                   <span class="label">Contexto del repo (car.)</span><input v-model.number="edit.repo_context" type="number" min="0" step="1000" placeholder="24000" />
+                </label>
+              </template>
+              <template v-if="a.provider === 'local_agent'">
+                <label class="field" title="native: herramientas de la API (Qwen3.5-9B). json: para modelos que no devuelven tool_calls">
+                  <span class="label">Modo de herramientas</span>
+                  <select v-model="edit.tool_mode"><option value="native">nativo</option><option value="json">json</option></select>
+                </label>
+                <label class="check"><input v-model="edit.web" type="checkbox" /> Puede buscar en internet</label>
+                <label class="field wide" title="Prefijos de orden que puede usar `ejecutar`, separados por «;». Vacío = tests y linters por defecto">
+                  <span class="label">Órdenes permitidas</span>
+                  <input v-model.trim="edit.commands" class="code" placeholder="python -m unittest; pytest; npm test (por defecto)" />
                 </label>
               </template>
               <label v-if="a.provider === 'claude'" class="check wide" title="Añade la herramienta Agent: puede repartir trabajo en subagentes. Gasta bastante más plan.">
@@ -414,7 +454,11 @@ watch(look, applyLook, { deep: true });
               <label v-if="a.provider === 'claude'" class="check wide" title="Añade WebSearch y WebFetch: puede buscar en internet y leer páginas.">
                 <input v-model="edit.web" type="checkbox" /> Puede navegar por internet <span class="muted small">(WebSearch y WebFetch)</span>
               </label>
-              <label class="check"><input v-model="edit.read_only" type="checkbox" /> Solo lectura</label>
+              <label class="field" title="Por defecto para sus tareas; cada conversación o paso del plan puede cambiarlo">
+            <span class="label">Pensamiento</span>
+            <select v-model="edit.thinking"><option value="">normal (por defecto)</option><option value="apagado">apagado</option><option value="profundo">profundo</option></select>
+          </label>
+          <label class="check"><input v-model="edit.read_only" type="checkbox" /> Solo lectura</label>
               <div class="row wide"><button class="btn btn--primary">Guardar agente</button></div>
             </form>
           </li>
@@ -471,6 +515,13 @@ watch(look, applyLook, { deep: true });
 
     <!-- APROBACIONES -->
     <template v-else-if="section === 'aprobaciones' && draft">
+      <Card title="Planes" subtitle="Qué pasa cuando el Director termina de pensar un plan.">
+        <label class="check">
+          <input v-model="draft.plans.always_review" type="checkbox" />
+          Revisar siempre el plan antes de empezar
+          <span class="muted small">(si lo quitas, los planes pequeños y de riesgo bajo arrancan solos)</span>
+        </label>
+      </Card>
       <Card title="Cuándo te lo pasan a ti" subtitle="Un cambio que supere cualquiera de estos límites sube a N2: lo decides tú.">
         <div class="grid">
           <label class="field">
@@ -611,6 +662,12 @@ watch(look, applyLook, { deep: true });
 </template>
 
 <style scoped>
+.rolefile {
+  padding: 1px 8px;
+  border-radius: 6px;
+  background: var(--info-weak);
+  color: var(--info);
+}
 .chipcode {
   display: inline-block;
   margin: 2px 4px 2px 0;

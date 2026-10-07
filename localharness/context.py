@@ -5,7 +5,8 @@
 - **Memoria**: los `.md` de la carpeta de memoria del proyecto (`projects.memory_dir`). Vive FUERA del worktree, así
   que el agente la lee en su prompt pero no puede reescribirla (la memoria no se escribe sola: decisión de alcance).
 
-La CLI hija de Claude va con `--safe-mode` (sin CLAUDE.md ni skills del usuario): este módulo es la única vía
+La CLI hija de Claude va aislada (`--safe-mode`, o con delegación `--setting-sources ""` + CLAUDE_CODE_DISABLE_CLAUDE_MDS):
+sin CLAUDE.md ni skills del usuario. Este módulo es la única vía
 por la que un agente recibe contexto, y el evento `context` deja registrado exactamente qué se inyectó.
 """
 

@@ -2,7 +2,8 @@ import json, tempfile, unittest
 from pathlib import Path
 
 from localharness.actions import ActionError
-from localharness.hierarchy import Hierarchy, PlanError, inbox, validate_plan
+from localharness import hierarchy, settings
+from localharness.hierarchy import Hierarchy, PlanError, director_prompt, inbox, validate_plan
 from localharness.policy import N0, N1, N2, FileChange, Policy, assess_changes, parse_numstat
 from localharness.store import Store
 from localharness.workspace import git
@@ -40,11 +41,27 @@ class PolicyTests(unittest.TestCase):
             validate_plan(None, agents)
 
 
+class ManualTests(unittest.TestCase):
+    def test_director_follows_the_editable_manual(self):
+        agents = [{"name": "sonnet-w", "provider": "claude", "model": "sonnet", "role": None}]
+        self.assertIn("Ciclo que sigues siempre", director_prompt("haz X", agents))  # manual/director.md
+        with tempfile.TemporaryDirectory() as tmp:
+            old = hierarchy.MANUAL
+            try:
+                hierarchy.MANUAL = Path(tmp) / "director.md"
+                self.assertIn("Reglas del plan", director_prompt("haz X", agents))  # sin manual: reglas de serie
+                hierarchy.MANUAL.write_text("Regla única: una subtarea.", encoding="utf-8")
+                self.assertIn("Regla única: una subtarea.", director_prompt("haz X", agents))
+            finally:
+                hierarchy.MANUAL = old
+
+
 class HierarchyTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.repo = make_repo(self.tmp.name)
         self.store = Store()
+        settings.save(self.store, {"plans": {"always_review": False}})  # estas pruebas miden los niveles solos
         self.pid = self.store.add_project("demo", str(self.repo))["id"]
         cfg = {"binary": FAKE}
         self.director = self.store.add_agent("director", "claude", role="director", config=cfg)["id"]
@@ -142,3 +159,61 @@ class HierarchyTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PlanReviewTests(unittest.IsolatedAsyncioTestCase):
+    """Objetivo 3: el plan te espera y puedes aprobarlo, editar un paso o pedir al Director que rehaga uno."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = make_repo(self.tmp.name)
+        self.store = Store()  # always_review por defecto: True
+        self.pid = self.store.add_project("demo", str(self.repo))["id"]
+        cfg = {"binary": FAKE}
+        self.director = self.store.add_agent("director", "claude", role="director", config=cfg)["id"]
+        self.store.add_agent("trabajador", "claude", role="trabajador", config=cfg)
+        self.h = Hierarchy(self.store, worktree_root=str(Path(self.tmp.name) / "wt"))
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def steps(self, pid):
+        return [(t["seq"], t["title"], t["status"]) for t in self.store.plan_tasks(pid) if t["kind"] == "worker"]
+
+    async def test_small_plan_waits_for_you_by_default(self):
+        p = await self.h.plan(self.store.add_plan(self.pid, "algo pequeño", self.director)["id"])
+        self.assertEqual((p["status"], p["level"]), ("awaiting_you", "N0"))
+        self.assertIn("revisas siempre el plan", " ".join(json.loads(p["level_reasons"])))
+        self.assertEqual(inbox(self.store)[0]["type"], "plan_approval")
+
+    async def test_edit_steps_before_approving(self):
+        pid = (await self.h.plan(self.store.add_plan(self.pid, "algo", self.director)["id"]))["id"]
+        sub = json.loads(self.store.get_plan(pid)["plan"])["subtasks"]
+        sub[0]["prompt"] = "crea el archivo editado.txt"; sub[0]["title"] = "Editado por mí"
+        p = self.h.edit_plan(pid, [sub[0]])  # además quito el paso 2
+        self.assertEqual(self.steps(pid), [(1, "Editado por mí", "pending")])
+        self.assertIn("plan editado por ti", json.loads(p["level_reasons"]))
+        with self.assertRaises(ActionError):
+            self.h.edit_plan(pid, [{**sub[0], "agent": "inventado"}])  # se valida como el del Director
+        self.h.approve_plan(pid)
+        with self.assertRaises(ActionError):
+            self.h.edit_plan(pid, [sub[0]])  # aprobado: ya no se edita
+        p = await self.h.run(pid)
+        self.assertEqual(p["status"], "paused")  # N1 sin jefe técnico → te llega a ti
+        task = next(t for t in self.store.plan_tasks(pid) if t["kind"] == "worker")
+        self.assertEqual(task["prompt"], "crea el archivo editado.txt")
+
+    async def test_redo_one_step_with_a_comment(self):
+        pid = (await self.h.plan(self.store.add_plan(self.pid, "algo", self.director)["id"]))["id"]
+        p = await self.h.redo_step(pid, 2, "hazlo con tests")
+        self.assertEqual(p["status"], "awaiting_you")
+        self.assertEqual(self.steps(pid), [(1, "Paso 1", "pending"), (2, "Paso rehecho", "pending")])
+        step2 = json.loads(p["plan"])["subtasks"][1]
+        self.assertIn("hazlo con tests", step2["prompt"]); self.assertEqual(step2["skills"], ["tests-primero"])
+        d = next(t for t in self.store.plan_tasks(pid) if t["kind"] == "director")
+        users = [e["text"] for e in self.store.list_events(d["id"]) if e["kind"] == "user"]
+        self.assertIn("REHAGAS SOLO el paso 2", users[0])  # sigue la conversación del Director (su sesión)
+        self.assertAlmostEqual(p["cost_usd"], 0.009)  # plan + paso rehecho
+        with self.assertRaises(ActionError):
+            await self.h.redo_step(pid, 9, "x")

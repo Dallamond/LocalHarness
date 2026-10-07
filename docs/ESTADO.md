@@ -126,6 +126,89 @@ tiende a hacerlo todo él. Ideas a llevar a la conversación (de la tarea 8 de a
 
 ## Sesión anterior (06/10/2026, mediodía)
 
+## ▶ Rama `claude/hopeful-euler-p8m838` (06/10/2026, noche) — integrada el 07/10 en `claude/youthful-edison-bi67hm`
+
+Última actualización: 06/10/2026, noche (sesión 4: rumbo nuevo — manual del Director, roles, agente local con herramientas, plan editable, pensamiento). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
+
+### Lo que quedaba pendiente en esa rama
+
+Rama de trabajo: `claude/hopeful-euler-p8m838` (sin fusionar en `main`; Lucas la prueba en local y decide el PR).
+Rumbo y lista de objetivos: **`docs/OBJETIVOS.md`**. Diseño acordado (cómo funciona todo y cómo se verá):
+**`docs/DISENO-OFICINA.md`**. Guía completa de funciones, API, eventos y config: **`docs/GUIA.md`**.
+
+### 1. Lo primero: recoger el resultado de las pruebas de Lucas en su PC
+Instalar: `git checkout claude/hopeful-euler-p8m838 && git pull`, `pip install -e .[server]`,
+`cd web && npm install && npm run build`, `python -m localharness serve`. Lista de comprobación:
+- [ ] **Plan editable**: Planes → nuevo plan (Director de Claude, p. ej. Haiku) → editar un paso, «Pedir al
+      Director que lo rehaga», «Aprobar todo y ejecutar».
+- [ ] **Agente local con herramientas** (`qwen-agente` del sandbox, o el rol `programador-local`/`explorador`) con
+      **Qwen3.5-9B**: que use herramientas (leer, buscar_web, escribir, ejecutar tests). Si no: Ajustes → agente →
+      Modo de herramientas = json.
+- [ ] **Búsqueda web delegada**: agente de Claude con «Puede delegar en el modelo local» + pregunta que necesite
+      internet → en el chat «🦙 Modelo local investigó en la web…». (DuckDuckGo HTML: si bloquea, plan B SearXNG.)
+- [ ] **Pensamiento**: conversación con «profundo» (¿la CLI acepta `--effort`?) y Qwen3 con «apagado» (¿deja de razonar?).
+- [ ] **Ver pensar**: Inicio → tarjeta del agente con «💭 pensando ahora» mientras Qwen razona.
+- [ ] **Roles**: Ajustes → Agentes muestra explorador, programador-local, programador y revisor («rol · roles/x.md»).
+
+### 2. Qué se hizo en esta sesión (todo con pruebas: 111, CLIs y llama-server falsos)
+| Objetivo | Qué hay | Dónde |
+|---|---|---|
+| 1 Manual del Director | el «algoritmo» del Director en un archivo editable, inyectado en su prompt | `manual/director.md`, `hierarchy.director_manual` |
+| 2 Búsqueda web | `local_research` en el MCP local: Qwen busca (DuckDuckGo), lee páginas y responde con fuentes | `mcp_local.py` |
+| 3 Plan editable | `plans.always_review` (por defecto sí); editar/quitar/reordenar pasos, rehacer uno con el Director (reanuda su sesión), aprobar todo | `hierarchy.edit_plan/redo_step`, `PUT /api/plans/{id}`, `POST /api/plans/{id}/redo`, `PlanView.vue` |
+| 4 Ver a los subagentes | eventos `thinking` (Claude y locales) y `thinking_live` (efímero); 💭 en la tarjeta del Inicio, plegado en el chat | `adapters/claude.py`, `adapters/local.py`, `HomeView.vue` |
+| 5 Roles | `roles/*.md` → agentes sincronizados al arrancar y al planificar (`config.from_role`; el archivo manda) | `roles.py`, `roles/`, `GET /api/roles` |
+| 8 Agente local | proveedor `local_agent`: bucle propio con leer, listar, buscar, escribir, ejecutar (lista blanca, sin shell), buscar_web, leer_url, preguntar_director (dentro de un plan, máx. 3), avisar_progreso, terminar; modo `json` de reserva; config desde Ajustes | `adapters/local_agent.py` |
+| §5 Pensamiento | apagado/normal/profundo por agente, rol, paso y conversación. Claude `--effort low/high` (+`MAX_THINKING_TOKENS=0`), locales `enable_thinking` | `adapters/*`, `tasks.thinking` |
+| Docs | README reescrito, `docs/GUIA.md` nueva (subagente), incoherencias corregidas | |
+
+Avisos: `ejecutar` NO aísla la red; `--effort` y `enable_thinking` están verificados en documentación, no en el PC.
+Las pruebas apagan los roles con `LOCALHARNESS_ROLES_DIR=""` (`tests/__init__.py`).
+
+### 3. Qué toca después (en orden propuesto)
+1. Arreglar lo que salga de la lista de comprobación de arriba.
+2. **Bucle continuo** (objetivo 7): cola por rol; al terminar, el agente coge la siguiente tarea; topes de tiempo,
+   gasto y ventana de 5 h; botón Parar. Diseño en DISENO-OFICINA §6.
+3. **Límite de tiempo por paso en la GUI** (la API ya acepta `timeout_s` por agente; falta por paso/conversación).
+4. Pendientes del diseño: diario de la misión, `ask_human`, interrumpida → Reanudar, varias misiones por proyecto
+   (hoy: una tarea/plan por repo a la vez), métricas del resumen mensual.
+5. **Atlas «Analizar proyecto»** (objetivo 9) y después la **oficina 3D** (objetivo 10), ya con todo lo anterior.
+
+### Detalle de lo hecho (notas técnicas)
+Lucas cambia el enfoque: Claude con un **manual** (`manual/director.md`, editable) y un **catálogo** decide el equipo,
+en vez de crear agentes a mano. Hecho hoy: manual v1 inyectado en el Director y `local_research` (búsqueda web
+DuckDuckGo para el modelo local, MCP). Objetivos nuevos de Lucas: plan editable/aprobable en el Inicio, subagentes
+en bucle siempre trabajando y ver su tarea, pensamiento y tok/s. Empezar con pocas skills y roles.
+**Probar en el PC de Lucas:** un agente con «Puede delegar en el modelo local» y una petición que necesite
+internet (p. ej. «¿qué versión de X…?»): debe salir «🦙 Modelo local investigó en la web…» en el chat.
+**Agente local con herramientas (objetivo 8, v1):** proveedor `local_agent` (`localharness/adapters/local_agent.py`).
+Probar: `sandbox` crea `qwen-agente`; arrancar Qwen3.5-9B y pedirle en el chat algo que necesite leer el repo e
+internet. Si no usa herramientas, en el agente poner `tool_mode: json`. Diseño completo en `docs/DISENO-OFICINA.md`.
+Ya tiene `ejecutar` (lista blanca `DEFAULT_COMMANDS`, ampliable con `commands` en la config; sin shell; 120 s) y
+`preguntar_director` (dentro de un plan con Director de Claude: reanuda su sesión, máx. 3 preguntas, tope 0,2 $;
+el coste se suma a la tarea). Ojo: `ejecutar` NO aísla la red (los tests podrían usarla).
+**Plan editable (objetivo 3, v1):** Ajustes `plans.always_review` (por defecto sí): todo plan te espera. En
+Planes → plan: editar paso (título, instrucciones, agente, riesgo), quitar, reordenar, «Pedir al Director que lo
+rehaga» (reanuda su sesión con tu comentario) y «Aprobar todo y ejecutar». API: `PUT /api/plans/{id}`,
+`POST /api/plans/{id}/redo`. Probado en navegador con la CLI falsa.
+**Ver a los subagentes (objetivo 4, v1):** eventos `thinking` (bloques de pensamiento de Claude; razonamiento de
+los modelos locales al terminar) y `thinking_live` (efímero, cada 1,5 s mientras un modelo local razona). En el
+Inicio, «💭 pensando ahora» en la tarjeta del agente (clic = completo); en el chat, plegado.
+**Roles (objetivo 5, v1):** `roles/*.md` → agentes `explorador` (local_agent, solo lectura), `programador-local`
+(local_agent), `programador` (Claude Sonnet, delega en local), `revisor` (Claude Haiku, jefe). Se crean/actualizan al
+arrancar el servidor y al planificar (`config.from_role`; el archivo manda; un agente tuyo con el mismo nombre no se
+toca). `GET /api/roles`. Las pruebas los apagan con `LOCALHARNESS_ROLES_DIR=""` (tests/__init__.py).
+**Pensamiento activable (DISENO-OFICINA §5, v1):** niveles apagado / normal / profundo. Claude: `--effort low|high`
+(+ `MAX_THINKING_TOKENS=0` al apagar; según la doc, algunos modelos nuevos no lo apagan del todo). Locales
+(llama-server con `--jinja`): `chat_template_kwargs.enable_thinking`. «normal» no añade nada. Se fija por agente
+(Ajustes), por rol (`thinking:` en roles/*.md; explorador = apagado), por paso del plan (el Director puede marcarlo;
+lo cambias al editar) y por conversación (selector en el chat). **Por verificar en tu PC:** que tu CLI acepta
+`--effort` y que Qwen3 obedece `enable_thinking`.
+Siguiente: bucle continuo (objetivo 7) y límite de tiempo por paso en la GUI.
+
+
+## SESIÓN ANTERIOR (06/10/2026, mediodía)
+
 ### Decisiones de Lucas de hoy
 - **GUI final = su prototipo** `docs/prototipos/localharness-gui-prototipo-v2_1.html` (ábrelo en el navegador): oficina
   low-poly en three.js con un puesto por agente, cabecera con misión y Ejecutar, izquierda **Misión** + **Bandeja de
@@ -175,7 +258,7 @@ La lectura gruesa del repo, delegada en Qwen para no gastar plan.
 ```
 git clone https://github.com/Dallamond/LocalHarness.git && cd LocalHarness
 python -m venv .venv && .venv/Scripts/python -m pip install -e .[server]     # Linux: .venv/bin/python
-.venv/Scripts/python -m unittest discover -s tests -t .                       # 79 pruebas, NUNCA llaman a Claude real
+.venv/Scripts/python -m unittest discover -s tests -t .                       # 111 pruebas, NUNCA llaman a Claude real
 cd web && npm install && npm run build && cd .. && .venv/Scripts/python -m localharness serve   # :8095
 ```
 Sin GPU ni llama-server, los agentes locales no responden (todo lo demás sí). Sin `claude` logueado, no lanzar
@@ -281,7 +364,7 @@ pruebas (71 en verde) y GUI compilada; nada probado aún por Lucas en el navegad
 3. **1–2 líneas del log** siempre visibles en la tarjeta de estado (`log_lines`, sin las de solo puntos).
 4. **Tokens por segundo** — evento `speed` cada 1,5 s (`SPEED_EVERY_S`) con tps, tokens y fase pensando/escribiendo;
    NO se guarda en la BD (`orchestrator.EPHEMERAL`). Se ve en la burbuja «escribiendo…» del chat, en la tarjeta del
-   agente del Inicio y la última velocidad en Modelos locales (`runner.last_speed`, también en `/api/health`).
+   agente del Inicio y la última velocidad en Modelos locales (`api.Runner.last_speed`, también en `/api/health`).
    Real: Qwen3.5-4B ~73 tok/s en la 3060.
    Hallazgo: un modelo que razona puede gastar TODOS los tokens pensando y devolver respuesta vacía (pasó con
    Qwen3.5-4B y 400 tokens; es lo de DeepSeek). Ahora eso es `failed` con un mensaje claro (subir «Tokens de respuesta»).
