@@ -1,6 +1,7 @@
 ---
 name: revision-de-diff
 description: Lista de comprobación para el jefe técnico al revisar el diff de otro agente
+category: Equipo
 ---
 
 Comprueba, en este orden:

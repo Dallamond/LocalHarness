@@ -1,6 +1,7 @@
 ---
 name: cambios-minimos
 description: Diff pequeño y revisable: sin reformatear, sin dependencias nuevas, sin tocar lo que no se pidió
+category: Programación
 ---
 
 - Cambia solo lo necesario para la tarea. Nada de reformatear archivos enteros ni renombrar por gusto.
