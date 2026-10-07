@@ -599,7 +599,8 @@ const modelFor = (name: string | null) => info.value?.models.find((m) => m.name 
           <button class="btn btn--ghost btn--small" @click="repoInfo = null">← resultados</button>
         </p>
         <table class="qt">
-          <tr><th>Cuant.</th><th>Tamaño</th><th>En tu equipo</th><th /></tr>
+          <thead><tr><th>Cuant.</th><th>Tamaño</th><th>En tu equipo</th><th /></tr></thead>
+          <tbody>
           <tr v-for="q in repoInfo.quants" :key="q.quant" :class="{ best: q.quant === repoInfo.best }">
             <td>{{ q.quant }}<template v-if="q.quant === repoInfo.best"> ★</template></td>
             <td>{{ q.size_gb.toFixed(1) }} GB</td>
@@ -607,6 +608,7 @@ const modelFor = (name: string | null) => info.value?.models.find((m) => m.name 
               <span class="muted small"> {{ Math.round(q.ctx / 1024) }}k<template v-if="q.tps_est"> · ~{{ q.tps_est }} tok/s</template></span></td>
             <td><button class="btn btn--small" @click="download(repoInfo.repo, q.files, q.size_gb)">Descargar</button></td>
           </tr>
+          </tbody>
         </table>
         <p class="hint">Estimación por el nombre del repo; al descargarlo se lee su cabecera y la nota es exacta.</p>
       </div>
