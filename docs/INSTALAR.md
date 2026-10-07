@@ -18,20 +18,26 @@ Pensado para Windows y PowerShell. Sin GPU, los modelos locales no funcionan, pe
   Claude reales (las pruebas usan una CLI falsa y no la necesitan).
 
 ## 2. Bajar el código (una vez)
-El trabajo nuevo está en la rama `claude/gifted-carson-20grn9` (aún no está en `main`).
+Todo está en `main` (desde el 07/10/2026 las ramas se unificaron; se trabaja siempre en `main`).
 ```powershell
 cd $HOME\Documents
 git clone https://github.com/Dallamond/LocalHarness.git
 cd LocalHarness
-git checkout claude/gifted-carson-20grn9
 ```
+Si ya lo tenías clonado y estabas en otra rama:
+```powershell
+git checkout -- web/package-lock.json   # si npm lo modificó
+git checkout main
+git pull origin main
+```
+PowerShell 5 no acepta `&&`: una orden por línea (o separadas con `;`).
 
 ## 3. Preparar (una vez, y tras cada `git pull`)
 ```powershell
 py -3 -m venv .venv                                  # si `py` no existe: python -m venv .venv
 .venv\Scripts\python -m pip install -e .[server]
 cd web; npm install; npm run build; cd ..
-.venv\Scripts\python -m unittest discover -s tests -t .   # 85 pruebas; NUNCA llaman a Claude de verdad
+.venv\Scripts\python -m unittest discover -s tests -t .   # 136 pruebas; NUNCA llaman a Claude de verdad
 ```
 
 ## 4. Arrancar

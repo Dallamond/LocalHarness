@@ -1,8 +1,36 @@
 # Estado y traspaso — leer primero al retomar (también desde Claude Code en la web)
 
-Última actualización: 07/10/2026 (resumen de estado para el chat nuevo; sesión 4: GUI de oficina + Catálogo). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
+Última actualización: 07/10/2026, tarde (ramas unificadas en `main`). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
 
-## ▶ SESIÓN 07/10/2026 — Pestaña de Modelos locales (rama `claude/youthful-edison-bi67hm`, sale de `main`)
+## ▶ EMPEZAR AQUÍ — TODO ESTÁ EN `main` (07/10/2026)
+Decisión de Lucas: **se trabaja siempre en `main`**. Se integraron en `main` las ramas `claude/gifted-carson-20grn9`
+(oficina 3D + Catálogo), `claude/hopeful-euler-p8m838` (agente local con herramientas, roles, pensamiento, plan
+editable), `claude/cool-dirac-vmw6s0` (análisis de Paperclip) y `claude/youthful-edison-bi67hm` (Modelos locales +
+rediseño de la oficina). Las secciones de abajo son el historial de cada una; donde digan «rama X», ya está en `main`.
+
+### Lo último (07/10/2026, tarde)
+- **Oficina rediseñada** (`web/src/office/office3d.ts`): muñecos androide (color del agente, accesorio por rol: corona
+  director, casco trabajador, cascos con micro jefe técnico, gafas consultas, corbata tú), puestos de madera con
+  cajonera, monitor con código animado, flexo y silla con ruedas, sala tipo Habbo (tarima, papel pintado, estanterías,
+  reloj de verdad, corcho, ventanas con cortinas, sofá, fuente). Vista casi isométrica; los muñecos de espaldas.
+- **Mover puestos**: arrastrar con el ratón (botón «Mover»/«Bloqueado» arriba), «Girar» en el inspector, «⟲» vuelve a
+  lo de por defecto. Se guarda en el ajuste `office_layout` ({"you"|"a<id>"|"rack": [x, z, giro]}).
+- **Quitar de la oficina** (inspector): `config.off = true` → fuera de servicio, no sale en la oficina y el Director no
+  le encarga nada (`hierarchy._workers`); si estaba trabajando, ofrece cancelar su tarea. Se vuelve a llamar desde
+  «Fuera de la oficina» (abajo).
+- Pensamiento en vivo del agente en el inspector. Descargas de Hugging Face preguntan la carpeta.
+- Conflictos de la integración resueltos: `web` de un agente = internet (Claude: WebSearch/WebFetch, apagado por
+  defecto; agente local: buscar_web/leer_url, encendido); la delegación MCP suma `local_research` a los servidores
+  del Catálogo; el Inicio lo sustituyó la Oficina.
+
+### Siguiente (lista de Lucas)
+1. **Catálogo con muchas más skills y funcionalidades** (importar desde repos de skills, plantillas, buscar).
+2. **Creador de agentes mejor** (en Ajustes es pobre y lento): asistente rápido con plantillas por rol, elegir skills
+   y servidores MCP al crear, proveedor/modelo local recomendado (usar `catalog.rate_local`), vista previa.
+3. Probar la oficina nueva y los modelos locales en el PC del instituto (Lucas lo está haciendo) y ajustar.
+4. Pendiente de antes: Atlas «Analizar proyecto», Claude como jefe del agente local autónomo (ver secciones de abajo).
+
+## Sesión 07/10/2026 (mañana) — Pestaña de Modelos locales
 - **Tu equipo**: detecta GPU (nvidia-smi: VRAM total/libre), RAM, CPU e hilos (`localharness/hardware.py`). Si falla,
   «Corregir» guarda VRAM/RAM/GPU a mano (`llama.hardware`). Ancho de banda por modelo de GPU → tok/s estimados.
 - **Ficha de cada GGUF descargado** (`gguf.py` lee la cabecera sin cargar el modelo; se guarda en `data/model-info.json`):
@@ -24,9 +52,9 @@
   calibraron con lo medido en la 3060 (Qwen2.5-Coder 7B Q8 ~32 tok/s). Qwen3.5 no está en el catálogo (no sé su
   repo exacto): añadirlo copiando una entrada o buscarlo con el buscador.
 
-## ▶ PUNTO DE PARTIDA PARA EL CHAT NUEVO (07/10/2026)
+## Punto de partida de la rama de la oficina (07/10/2026, mañana) — ya integrada en `main`
 
-Rama con todo lo último: `claude/gifted-carson-20grn9` (NO está aún en `main`). Instalar en otro PC: `docs/INSTALAR.md`.
+Instalar en otro PC: `docs/INSTALAR.md`.
 Objetivo del chat nuevo (Lucas): que Claude y el modelo local trabajen JUNTOS y repartirse bien las tareas.
 
 ### Funciona (probado)
