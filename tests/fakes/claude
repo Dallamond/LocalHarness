@@ -70,7 +70,7 @@ elif schema and "verdict" in schema.get("properties", {}):
     v = ({"verdict": "escalate", "risk": "medium", "reason": "contenido dudoso"} if "ESCALA" in prompt.split("DIFF:")[-1]
          else {"verdict": "approve", "risk": "low", "reason": "correcto"})
     finish(json.dumps(v), v, cost=0.002)
-elif "--mcp-config" in sys.argv and "DELEGA" in prompt:
+elif "--mcp-config" in sys.argv and ("DELEGA" in prompt or "COORDINA" in prompt):
     # delegar: lanza el servidor MCP del archivo como haría el real y le encarga escribir un archivo
     import subprocess
     cfg = json.load(open(sys.argv[sys.argv.index("--mcp-config") + 1], encoding="utf-8"))["mcpServers"]["local"]
@@ -84,12 +84,21 @@ elif "--mcp-config" in sys.argv and "DELEGA" in prompt:
 
     rpc(1, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "falso"}})
     names = [t["name"] for t in rpc(2, "tools/list", {})["result"]["tools"]]
-    args = {"path": "delegado.txt", "instructions": "un saludo"}
-    out({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "mcp__local__local_write_file",
+    if "COORDINA" in prompt:  # modo coordinador: el plan entero de una vez
+        tool, args = "local_execute_plan", {"blocks": [
+            {"id": "1", "title": "saludo", "kind": "write", "path": "a.txt", "instructions": "un saludo"},
+            {"id": "2", "title": "despedida", "kind": "write", "path": "b.txt", "instructions": "una despedida"},
+            {"id": "3", "title": "resumen", "kind": "ask", "instructions": "resume", "files": ["a.txt"]}]}
+    else:
+        tool, args = "local_write_file", {"path": "delegado.txt", "instructions": "un saludo"}
+    out({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": f"mcp__local__{tool}",
                                                        "input": args}]}})
-    res = rpc(3, "tools/call", {"name": "local_write_file", "arguments": args})["result"]
+    res = rpc(3, "tools/call", {"name": tool, "arguments": args})["result"]
     srv.stdin.close(); srv.wait(timeout=10)
-    finish(f"Herramientas MCP: {','.join(names)}. {res['content'][0]['text'][:80]}")
+    builtin = sys.argv[sys.argv.index("--tools") + 1]
+    coord = "MODO COORDINADOR" in prompt
+    finish(f"Herramientas MCP: {','.join(names)}. Integradas: {builtin}. Coordinador: {coord}. "
+           f"{res['content'][0]['text'][:80]}")
 elif "--resume" in sys.argv and "te pregunta:" in prompt:
     # Director reanudado por `preguntar_director` de un agente local: responde sin tocar archivos
     sid = sys.argv[sys.argv.index("--resume") + 1]

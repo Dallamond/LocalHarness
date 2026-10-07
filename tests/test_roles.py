@@ -27,10 +27,11 @@ Comprueba siempre con tests.
 class RolesTests(unittest.TestCase):
     def test_builtin_roles_parse(self):
         got = roles.load_roles([roles.BUILTIN_ROLES])
-        self.assertEqual(sorted(got), ["explorador", "programador", "programador-local", "revisor"])
+        self.assertEqual(sorted(got), ["coordinador", "explorador", "programador", "programador-local", "revisor"])
         self.assertEqual((got["explorador"].provider, got["explorador"].config["read_only"]), ("local_agent", True))
         self.assertEqual(got["programador"].config["skills"], ["cambios-minimos"])
         self.assertTrue(got["programador"].config["delegate_local"])
+        self.assertTrue(got["coordinador"].config["coordinator"])
 
     def test_sync_creates_updates_and_respects_own_agents(self):
         with tempfile.TemporaryDirectory() as tmp:

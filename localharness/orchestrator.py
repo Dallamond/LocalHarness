@@ -12,7 +12,7 @@ from pathlib import Path
 from localharness import llama, mcp_local, settings, workspace
 from localharness.adapters import get_adapter
 from localharness.adapters.base import THINKING_LEVELS, RunSpec
-from localharness.adapters.claude import SUBAGENT_TOOL, WEB_TOOLS, thinking_env
+from localharness.adapters.claude import READ_TOOLS, SUBAGENT_TOOL, WEB_TOOLS, thinking_env
 from localharness.adapters.local import config_kwargs
 from localharness.context import build_prompt, load_memory, load_skills
 from localharness.events import Event
@@ -22,7 +22,9 @@ from localharness.store import Store
 EPHEMERAL = ("speed", "thinking_live")  # en vivo para la GUI, no se guardan (llegan cada ~1,5 s)
 
 DELEGATE_TOOLS = {"local_ask": "mcp__local__local_ask", "local_write_file": "mcp__local__local_write_file",
+                  "local_execute_plan": "mcp__local__local_execute_plan",
                   "local_research": "mcp__local__local_research"}
+PLAN_TOOL = "local_execute_plan"
 DELEGATE_GUIDE = """
 DELEGACIÓN EN EL MODELO LOCAL — OBLIGATORIA cuando encaje (tu cuota es cara; el modelo local es gratis):
 Tienes un modelo local con las herramientas `local_ask`, `local_write_file` y `local_research`. Reglas:
@@ -36,9 +38,35 @@ Tienes un modelo local con las herramientas `local_ask`, `local_write_file` y `l
 Tú decides, planificas y verificas: es un modelo pequeño. Revisa lo que escriba (Read de las partes clave) y
 corrige con Edit si hace falta. Si responde que no hay modelo local, hazlo tú y dilo al final."""
 
+COORDINATOR_GUIDE = """
+MODO COORDINADOR — TÚ NO HACES EL TRABAJO: lo hace el modelo local; tú planificas y presentas.
+No tienes Edit, Write ni Bash: no puedes escribir archivos ni ejecutar nada. Todo lo que haya que generar
+(código, tests, documentación, correcciones) lo genera el modelo local con sus herramientas. Sigue SIEMPRE
+este ciclo, sin saltarte pasos:
+1. ENTIENDE LA PETICIÓN ENTERA y sepárala en BLOQUES independientes: cada archivo a crear o reescribir es un
+   bloque `write` (con su `path`); cada pregunta o análisis, un bloque `ask`. No resuelvas los bloques tú.
+2. EXPLORA LO JUSTO: Glob para ver la estructura. Para entender código o encontrar fallos NO leas tú los
+   archivos: `local_ask` con sus rutas en `files` (puedes pedirle de una vez «lista todos los fallos de estos
+   archivos con archivo, línea y corrección»).
+3. PLANIFICA: escribe el plan en tu respuesta (bloques numerados: archivo, qué cambia y por qué) ANTES de
+   encargarlo. Las instrucciones de cada bloque son autocontenidas: el modelo local no ve esta conversación;
+   di qué arreglar exactamente, firmas, casos límite y estilo, y pon en `files` lo que debe leer (incluido lo
+   que escriban bloques anteriores si depende de ello, p. ej. el módulo en un bloque de tests). Un bloque
+   `write` reescribe el archivo ENTERO: pídele que conserve lo que no cambia.
+4. ENCARGA EL PLAN ENTERO en UNA llamada a `local_execute_plan` (todos los bloques, en orden) con `check` =
+   la orden de los tests si los hay (p. ej. «python -m unittest»).
+5. LEE EL INFORME. Si un bloque falló o la comprobación no pasa, vuelve a llamar a `local_execute_plan` solo
+   con esos bloques y con instrucciones corregidas (como mucho 2 rondas). Puedes hacer Read de las partes
+   clave para verificar, no para reescribirlas.
+6. PRESENTA: el plan (bloques), qué hizo el modelo local en cada uno, el resultado de la comprobación y lo que
+   quede pendiente o dudoso. Sé honesto: si algo no quedó bien, dilo.
+Si el modelo local no responde (no hay modelo arrancado), para y díselo al usuario: no hay otro camino."""
+
+
 def delegate_guide(write: bool) -> str:
     if write:
-        return DELEGATE_GUIDE
+        return DELEGATE_GUIDE + ("\nVarios archivos a la vez (un plan con varios bloques): `local_execute_plan` con "
+                                 "todos los bloques en una llamada y `check` = la orden de los tests.")
     # solo lectura (Director, jefe técnico): únicamente `local_ask`
     lines = [ln for ln in DELEGATE_GUIDE.split("\n") if "local_write_file` con" not in ln and "(qué debe contener" not in ln]
     return ("\n".join(lines).replace("las herramientas `local_ask` y `local_write_file`", "la herramienta `local_ask`")
@@ -114,10 +142,15 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
 
     ro = bool(cfg.get("read_only")) if read_only is None else read_only
     is_claude = agent["provider"] == "claude"
-    deleg = _mcp_setup(store, ws.path, cfg, write=not ro) if is_claude else None
+    # modo coordinador: Claude planifica y presenta; todo lo que se escribe lo genera el modelo local
+    coord = is_claude and bool(cfg.get("coordinator")) and not ro
+    deleg = _mcp_setup(store, ws.path, {**cfg, "delegate_local": True} if coord else cfg, write=not ro,
+                       coordinator=coord) if is_claude else None
     if deleg and deleg["missing"]:
         sink(Event("warning", text=f"Servidores MCP no encontrados en el Catálogo: {', '.join(deleg['missing'])}"))
-    if deleg and deleg["delegate"] and (not resume or not _had_delegation(store, task_id)):
+    if coord and not resume:
+        prompt += "\n" + COORDINATOR_GUIDE
+    elif deleg and deleg["delegate"] and (not resume or not _had_delegation(store, task_id)):
         # también al continuar una conversación que empezó sin la casilla: la sesión no sabe que ahora puede delegar
         prompt += "\n" + delegate_guide(write=not ro)
     thinking = task.get("thinking") or cfg.get("thinking")
@@ -128,7 +161,8 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
         deleg_env = deleg["env"] if deleg else {}
     spec = RunSpec(prompt=prompt, cwd=str(ws.path), model=agent["model"], thinking=thinking,
                    max_turns=cfg.get("max_turns"), max_budget_usd=cfg.get("max_budget_usd"),
-                   read_only=ro, allowed_tools=cfg.get("tools"), json_schema=json_schema,
+                   read_only=ro, allowed_tools=list(READ_TOOLS) if coord else cfg.get("tools"),
+                   json_schema=json_schema,
                    extra_tools=([SUBAGENT_TOOL] if cfg.get("subagents") and is_claude else []) +
                                (list(WEB_TOOLS) if cfg.get("web") and is_claude else []),
                    session_id=task["session_id"] if resume else None,
@@ -144,6 +178,9 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
         sink(Event("context", text=", ".join(names), data=injected))
     if missing:
         sink(Event("warning", text=f"Skills no encontradas: {', '.join(missing)}"))
+    if coord and not llama_up(settings.load(store)["local_base_url"]):
+        sink(Event("warning", text="Modo coordinador sin modelo local arrancado: Claude no podrá encargar nada "
+                                   "(Modelos locales → Arrancar)"))
     watcher = asyncio.create_task(_watch_delegations(deleg, sink)) if deleg and deleg["delegate"] else None
     try:
         res = await run(adapter, spec, sink, timeout_s=cfg.get("timeout_s") or timeout_s or settings.task_timeout_s(store))
@@ -221,7 +258,18 @@ def win_shim(srv: dict, nt: bool | None = None) -> dict:
     return srv
 
 
-def _mcp_setup(store: Store, root: Path, cfg: dict, write: bool) -> dict | None:
+def llama_up(base_url: str, timeout: float = 2.0) -> bool:
+    """¿Contesta el llama-server? (GET /health). Solo para avisar: no impide lanzar la tarea."""
+    import urllib.request
+    url = base_url.rstrip("/").removesuffix("/v1") + "/health"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            return r.status < 500
+    except Exception:  # noqa: BLE001 — 503 (cargando), sin conexión…
+        return False
+
+
+def _mcp_setup(store: Store, root: Path, cfg: dict, write: bool, coordinator: bool = False) -> dict | None:
     """Archivo `--mcp-config` de un agente Claude: los servidores del Catálogo que tiene asignados (`config.mcps`)
     y, con «Puede delegar en el modelo local», el servidor `local` (localharness.mcp_local). Va en una carpeta
     temporal (puede llevar la clave del llama-server) que se borra al terminar la tarea. None si no lleva ninguno."""
@@ -237,11 +285,12 @@ def _mcp_setup(store: Store, root: Path, cfg: dict, write: bool) -> dict | None:
     if delegate:
         env = {"LH_LOCAL_URL": settings.load(store)["local_base_url"], "LH_LOCAL_KEY": llama.API_KEY or "",
                "LH_ROOT": str(root), "LH_LOG": str(log), "LH_WRITE": "1" if write else "0",
-               "PYTHONIOENCODING": "utf-8"}
+               "LH_COORDINATOR": "1" if coordinator else "0", "PYTHONIOENCODING": "utf-8"}
         servers["local"] = {"type": "stdio", "command": sys.executable,
                             # por ruta: la CLI lo lanza desde el worktree, donde el paquete no está en el path
                             "args": [str(Path(mcp_local.__file__).resolve())], "env": env}
-        tools = ([DELEGATE_TOOLS["local_ask"]] + ([DELEGATE_TOOLS["local_write_file"]] if write else [])
+        tools = ([DELEGATE_TOOLS["local_ask"]]
+                 + ([DELEGATE_TOOLS["local_write_file"], DELEGATE_TOOLS[PLAN_TOOL]] if write else [])
                  + [DELEGATE_TOOLS["local_research"]] + tools)
     path = d / "mcp.json"
     path.write_text(json.dumps({"mcpServers": servers}, ensure_ascii=False), encoding="utf-8")
@@ -267,7 +316,7 @@ async def _watch_delegations(deleg: dict, sink: Callable[[Event], None], every: 
 def _flush_delegations(deleg: dict, sink: Callable[[Event], None]) -> None:
     from localharness.mcp_local import read_log
     _emit_new(deleg, sink)  # los que terminaron después del último vistazo
-    entries = read_log(deleg["log"])
+    entries = [e for e in read_log(deleg["log"]) if e.get("tool") != PLAN_TOOL]  # el resumen del plan no es un encargo
     if entries:
         tokens = sum((e.get("completion_tokens") or 0) + (e.get("prompt_tokens") or 0) for e in entries)
         ok = sum(1 for e in entries if e.get("ok"))

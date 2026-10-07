@@ -170,6 +170,7 @@ interface AgentForm {
   description: string;
   subagents: boolean;
   delegate_local: boolean;
+  coordinator: boolean;
   temperature: number | null;
   max_tokens: number | null;
   repo_context: number | null;
@@ -180,7 +181,8 @@ interface AgentForm {
 }
 const blank = (): AgentForm => ({
   name: "", provider: "claude", model: "", role: "trabajador", max_turns: null, max_budget_usd: null,
-  read_only: false, skills: [], base_url: "", description: "", subagents: false, delegate_local: false, temperature: null,
+  read_only: false, skills: [], base_url: "", description: "", subagents: false, delegate_local: false, coordinator: false,
+  temperature: null,
   max_tokens: null, repo_context: null, tool_mode: "native", web: false, commands: "", thinking: "",
 });
 
@@ -194,7 +196,8 @@ function providerFields(f: AgentForm, provider: string) {
   return provider === "local"
     ? { base_url: f.base_url || null, temperature: num(f.temperature), max_tokens: num(f.max_tokens),
         repo_context: num(f.repo_context) }
-    : provider === "claude" ? { subagents: f.subagents, delegate_local: f.delegate_local, web: f.web } : {};
+    : provider === "claude" ? { subagents: f.subagents, delegate_local: f.delegate_local || f.coordinator,
+                                coordinator: f.coordinator, web: f.web } : {};
 }
 const newAgent = reactive<AgentForm>(blank());
 // internet: apagado por defecto en Claude (gasta plan), encendido en el agente local (es gratis)
@@ -212,7 +215,7 @@ function resetNewAgent() {
 async function addAgent() {
   agError.value = "";
   try {
-    const { subagents, delegate_local, temperature, max_tokens, repo_context, base_url, tool_mode, web, commands, ...common } = newAgent;
+    const { subagents, delegate_local, coordinator, temperature, max_tokens, repo_context, base_url, tool_mode, web, commands, ...common } = newAgent;
     await post<Agent>("/api/agents", {
       ...common, model: newAgent.model || null, role: newAgent.role || null, thinking: newAgent.thinking || null,
       ...providerFields(newAgent, newAgent.provider),
@@ -232,6 +235,7 @@ function startEdit(a: Agent) {
     max_turns: a.config.max_turns ?? null, max_budget_usd: a.config.max_budget_usd ?? null,
     read_only: !!a.config.read_only, skills: [...(a.config.skills ?? [])], base_url: a.config.base_url ?? "",
     description: a.config.description ?? "", subagents: !!a.config.subagents, delegate_local: !!a.config.delegate_local,
+    coordinator: !!a.config.coordinator,
     temperature: a.config.temperature ?? null, max_tokens: a.config.max_tokens ?? null,
     repo_context: a.config.repo_context ?? null,
     thinking: a.config.thinking ?? "",
@@ -276,7 +280,7 @@ function limits(a: Agent): string {
     c.max_budget_usd ? `máx. ${c.max_budget_usd} $` : null,
     c.read_only ? "solo lectura" : null,
     c.subagents ? "puede crear subagentes" : null,
-    c.delegate_local ? "delega en el modelo local" : null,
+    c.coordinator ? "solo coordina: el modelo local genera todo" : c.delegate_local ? "delega en el modelo local" : null,
     c.web ? "puede navegar por internet" : null,
     c.mcps?.length ? `MCP: ${c.mcps.join(", ")}` : null,
     c.temperature !== undefined ? `temp. ${c.temperature}` : null,
@@ -367,6 +371,9 @@ watch(look, applyLook, { deep: true });
           <label v-if="newAgent.provider === 'claude'" class="check wide" title="Le da herramientas para encargar al modelo arrancado en llama-server resumir, pensar, comparar y escribir archivos. Lo que haga el modelo local no gasta plan.">
             <input v-model="newAgent.delegate_local" type="checkbox" /> Puede delegar en el modelo local <span class="muted small">(ahorra plan: resumir, comparar, generar código)</span>
           </label>
+          <label v-if="newAgent.provider === 'claude'" class="check wide" title="Claude lee la petición, la separa en bloques, planifica y encarga el plan entero al modelo local; luego revisa el informe y te lo presenta. Sin Edit ni Write: no escribe código él.">
+            <input v-model="newAgent.coordinator" type="checkbox" /> Solo coordina <span class="muted small">(planifica y presenta; el modelo local genera todos los archivos)</span>
+          </label>
           <label v-if="newAgent.provider === 'claude'" class="check wide" title="Añade WebSearch y WebFetch: puede buscar en internet y leer páginas.">
             <input v-model="newAgent.web" type="checkbox" /> Puede navegar por internet <span class="muted small">(WebSearch y WebFetch)</span>
           </label>
@@ -450,6 +457,9 @@ watch(look, applyLook, { deep: true });
               </label>
               <label v-if="a.provider === 'claude'" class="check wide" title="Le da herramientas para encargar al modelo arrancado en llama-server resumir, pensar, comparar y escribir archivos. Lo que haga el modelo local no gasta plan.">
                 <input v-model="edit.delegate_local" type="checkbox" /> Puede delegar en el modelo local <span class="muted small">(ahorra plan: resumir, comparar, generar código)</span>
+              </label>
+              <label v-if="a.provider === 'claude'" class="check wide" title="Claude lee la petición, la separa en bloques, planifica y encarga el plan entero al modelo local; luego revisa el informe y te lo presenta. Sin Edit ni Write: no escribe código él.">
+                <input v-model="edit.coordinator" type="checkbox" /> Solo coordina <span class="muted small">(planifica y presenta; el modelo local genera todos los archivos)</span>
               </label>
               <label v-if="a.provider === 'claude'" class="check wide" title="Añade WebSearch y WebFetch: puede buscar en internet y leer páginas.">
                 <input v-model="edit.web" type="checkbox" /> Puede navegar por internet <span class="muted small">(WebSearch y WebFetch)</span>

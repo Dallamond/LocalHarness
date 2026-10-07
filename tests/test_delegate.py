@@ -43,7 +43,7 @@ class McpServerTests(unittest.TestCase):
             self.assertEqual(init["result"]["protocolVersion"], "2025-03-26")  # se adapta al cliente
             self.assertIsNone(s.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}))
             names = [t["name"] for t in s.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]]
-            self.assertEqual(names, ["local_ask", "local_write_file", "local_research"])
+            self.assertEqual(names, ["local_ask", "local_write_file", "local_execute_plan", "local_research"])
             ro = server(tmp, write=False).handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
             # Director / jefe: pensar e investigar, nunca escribir
             self.assertEqual([t["name"] for t in ro["result"]["tools"]], ["local_ask", "local_research"])
@@ -82,6 +82,55 @@ class McpServerTests(unittest.TestCase):
             think = Server({"LH_ROOT": tmp}, transport=lambda b: reply("", reasoning="mmm"))
             r = call(think, "local_ask", {"task": "hola"})
             self.assertIn("se quedó pensando", r["result"]["content"][0]["text"])
+
+    def test_execute_plan_does_every_block_and_checks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "calc.py").write_text("def suma(a, b):\n    return a - b\n")
+            seen = []
+            answers = iter(["```python\ndef suma(a, b):\n    return a + b\n```",
+                            "```python\nimport unittest\nfrom calc import suma\n\n\nclass T(unittest.TestCase):\n"
+                            "    def test_suma(self):\n        self.assertEqual(suma(2, 3), 5)\n```",
+                            "Todo bien"])
+
+            def fake(body):
+                seen.append(body)
+                return reply(next(answers))
+            s = Server({"LH_ROOT": tmp, "LH_LOG": str(Path(tmp) / "log.jsonl")}, transport=fake)
+            r = call(s, "local_execute_plan", {"blocks": [
+                {"id": "1", "title": "arreglar suma", "kind": "write", "path": "calc.py", "instructions": "suma"},
+                {"id": "2", "title": "tests", "kind": "write", "path": "test_calc.py", "instructions": "tests",
+                 "files": ["calc.py"]},
+                {"id": "3", "title": "revisión", "kind": "ask", "instructions": "¿algo más?", "files": ["calc.py"]}],
+                "check": "python -m unittest test_calc"})
+            text = r["result"]["content"][0]["text"]
+            self.assertNotIn("isError", r["result"])
+            self.assertIn("3 de 3 bloques bien", text)
+            self.assertIn("Todo bien", text)                       # la respuesta del bloque ask llega entera
+            self.assertIn("código de salida 0", text)              # la comprobación la ejecutó el servidor
+            self.assertIn("return a + b", (Path(tmp) / "calc.py").read_text())
+            self.assertIn("return a + b", seen[1]["messages"][1]["content"])  # el bloque 2 ve lo que escribió el 1
+            log = read_log(Path(tmp) / "log.jsonl")
+            self.assertEqual([e["tool"] for e in log], ["local_execute_plan/write", "local_execute_plan/write",
+                                                        "local_execute_plan/ask", "local_execute_plan"])
+            self.assertEqual(log[-1]["task"], "plan: 3 de 3 bloques")
+
+    def test_execute_plan_failures(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            s = server(tmp, "```\nx\n```")
+            r = call(s, "local_execute_plan", {"blocks": [
+                {"kind": "write", "path": "../fuera.py", "instructions": "x"},
+                {"kind": "write", "path": "ok.txt", "instructions": "x"}], "check": "rm -rf ."})
+            text = r["result"]["content"][0]["text"]
+            self.assertIn("1 de 2 bloques bien", text)   # un bloque malo no para el resto
+            self.assertIn("orden no permitida", text)    # la comprobación solo de la lista blanca
+            self.assertTrue((Path(tmp) / "ok.txt").exists())
+            self.assertTrue(call(s, "local_execute_plan", {"blocks": []})["result"]["isError"])
+            self.assertNotIn("local_execute_plan", [t["name"] for t in server(tmp, write=False).tools()])
+            off = Server({"LH_ROOT": tmp, "LH_LOCAL_URL": "http://127.0.0.1:9", "LH_COORDINATOR": "1"})
+            r = call(off, "local_execute_plan", {"blocks": [{"path": "a.txt", "instructions": "x"}]})
+            msg = r["result"]["content"][0]["text"]
+            self.assertTrue(r["result"]["isError"])
+            self.assertIn("díselo al usuario", msg); self.assertNotIn("hazlo tú", msg)  # coordinador: no puede hacerlo él
 
     def test_strip_fence(self):
         self.assertEqual(strip_fence("```js\nx = 1\n```"), "x = 1")
@@ -204,6 +253,29 @@ class EndToEndTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(FakeLlama.auth[-1], "Bearer clave-de-prueba")
         finally:
             llama.API_KEY = old_key
+            httpd.shutdown()
+
+    async def test_coordinator_plans_and_the_local_model_writes_everything(self):
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), FakeLlama)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                repo = make_repo(tmp)
+                store = Store()
+                settings.save(store, {"local_base_url": f"http://127.0.0.1:{httpd.server_port}"})
+                p = store.add_project("demo", str(repo))
+                ag = store.add_agent("coord", "claude", config={"coordinator": True})  # sin marcar delegate_local
+                t = store.add_task(p["id"], "coordinar", "COORDINA los cambios", ag["id"])
+                res = await execute_task(store, t["id"], binaries={"claude": FAKE},
+                                         worktree_root=str(Path(tmp) / "wt"))
+                self.assertEqual(res["status"], "review")
+                self.assertIn("a.txt", res["diff"]); self.assertIn("b.txt", res["diff"])
+                self.assertIn("local_execute_plan", res["final"])
+                self.assertIn("Integradas: Read,Glob,Grep.", res["final"])  # sin Edit/Write: no lo hace él
+                self.assertIn("Coordinador: True", res["final"])
+                summary = next(e for e in store.list_events(t["id"]) if e["kind"] == "delegate_summary")
+                self.assertEqual(json.loads(summary["data"])["calls"], 3)  # los bloques, no el resumen del plan
+        finally:
             httpd.shutdown()
 
     async def test_without_option_no_mcp(self):

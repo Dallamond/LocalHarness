@@ -6,6 +6,10 @@ Claude lo recibe con `--mcp-config` cuando su agente tiene «Puede delegar en el
   los pasa a Qwen: Claude no gasta tokens leyéndolos, solo recibe la conclusión.
 - `local_write_file`: Qwen escribe un archivo entero (crear o reescribir) en el worktree. Claude recibe un resumen
   y revisa lo que quiera. Solo si la tarea puede escribir (LH_WRITE=1).
+- `local_execute_plan`: Claude manda el PLAN entero (bloques: archivos a escribir y preguntas) y el modelo local
+  los hace todos, uno tras otro; si se pide, este servidor ejecuta después una orden de comprobación (tests) y
+  devuelve un informe por bloque. Es la herramienta del modo «coordinador» (config `coordinator`): Claude
+  planifica y presenta, el modelo local genera. Solo si la tarea puede escribir.
 - `local_research`: Qwen busca en la web (DuckDuckGo HTML, sin clave: lo más sencillo para empezar), lee las
   primeras páginas y devuelve una respuesta con fuentes. Claude no gasta tokens buscando ni leyendo. LH_WEB=0 la quita.
 
@@ -17,13 +21,16 @@ protocolo; los avisos van a stderr.
 
 Variables: LH_LOCAL_URL (llama-server), LH_LOCAL_KEY (su --api-key), LH_ROOT, LH_LOG, LH_WRITE (1/0),
 LH_MAX_TOKENS (por defecto 8192), LH_MAX_INPUT_CHARS (texto de archivos por encargo, por defecto 40000),
-LH_WEB (1/0, búsqueda web).
+LH_WEB (1/0, búsqueda web), LH_COORDINATOR (1: Claude no puede hacerlo él; los errores no le dicen «hazlo tú»).
 """
 
 import html
 import json
 import os
 import re
+import shlex
+import shutil
+import subprocess
 import sys
 import time
 import urllib.error
@@ -69,6 +76,40 @@ WRITE = {
     },
 }
 
+BLOCK = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string", "description": "Identificador corto del bloque (p. ej. «1», «calc»)"},
+        "title": {"type": "string", "description": "Qué es el bloque, en pocas palabras"},
+        "kind": {"type": "string", "enum": ["write", "ask"],
+                 "description": "write = escribir/reescribir el archivo `path`; ask = pregunta o análisis en texto"},
+        "path": {"type": "string", "description": "Solo write: archivo a escribir (relativo al repo)"},
+        "instructions": {"type": "string",
+                         "description": "Instrucciones autocontenidas: qué hacer, firmas, casos límite, estilo"},
+        "files": {"type": "array", "items": {"type": "string"},
+                  "description": "Archivos que debe leer (incluye los que escriban bloques anteriores si dependen)"},
+    },
+    "required": ["instructions"],
+}
+PLAN = {
+    "name": "local_execute_plan",
+    "description": (
+        "Encarga a un modelo local GRATIS un PLAN ENTERO de una vez: una lista de bloques (archivos a escribir o "
+        "reescribir y preguntas/análisis) que hace en orden, cada uno leyendo él los archivos que le indiques. "
+        "Opcionalmente ejecuta al final una orden de comprobación (tests) y te devuelve su salida. Recibes un "
+        "informe por bloque: léelo, comprueba lo crítico y vuelve a llamarla solo con los bloques que fallaron."),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "blocks": {"type": "array", "items": BLOCK, "description": "Los bloques del plan, en orden"},
+            "check": {"type": "string",
+                      "description": "Orden de comprobación al terminar (p. ej. «python -m unittest»). Lista blanca: "
+                                     "tests y linters"},
+        },
+        "required": ["blocks"],
+    },
+}
+
 RESEARCH = {
     "name": "local_research",
     "description": (
@@ -95,10 +136,21 @@ SYSTEM_RESEARCH = ("Eres un investigador. Responde a la pregunta SOLO con lo que
 SEARCH_URL = "https://html.duckduckgo.com/html/"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) LocalHarness/0.1"
 MAX_PAGE_CHARS = 8000
+MAX_BLOCKS = 20
+# órdenes que `local_execute_plan` puede ejecutar como comprobación (sin shell; prefijos, como en local_agent)
+CHECK_COMMANDS = ["python -m unittest", "python -m pytest", "pytest", "npm test", "npm run test", "npm run lint",
+                  "ruff check", "node --test"]
+CHECK_TIMEOUT_S = 300
+MAX_CHECK_CHARS = 4000
+ENV_DROP = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "LH_LOCAL_KEY")
 
 
 class ToolError(Exception):
     pass
+
+
+class NoModel(ToolError):
+    """No hay llama-server que conteste: no tiene sentido seguir con más bloques."""
 
 
 class Server:
@@ -112,12 +164,13 @@ class Server:
         self.max_tokens = int(env.get("LH_MAX_TOKENS") or 8192)
         self.max_input = int(env.get("LH_MAX_INPUT_CHARS") or 40_000)
         self.web = env.get("LH_WEB", "1") == "1"
+        self.coordinator = env.get("LH_COORDINATOR") == "1"
         self.transport = transport  # pruebas: función (body) -> respuesta JSON de /v1/chat/completions
         self.http_get = http_get or _http_get  # pruebas: función (url, data) -> HTML; sin red de verdad
 
     # --- protocolo
     def tools(self) -> list[dict]:
-        return [ASK] + ([WRITE] if self.write else []) + ([RESEARCH] if self.web else [])
+        return [ASK] + ([WRITE, PLAN] if self.write else []) + ([RESEARCH] if self.web else [])
 
     def handle(self, msg: dict) -> dict | None:
         mid, method = msg.get("id"), msg.get("method")
@@ -152,6 +205,9 @@ class Server:
                 entry["path"] = str(args.get("path", ""))
                 text, stats = self.write_file(str(args.get("path") or ""), str(args.get("instructions") or ""),
                                               args.get("context_files") or [])
+            elif name == "local_execute_plan" and self.write:
+                text, stats = self.execute_plan(args.get("blocks"), str(args.get("check") or ""))
+                entry["task"] = f"plan: {stats['ok']} de {stats['blocks']} bloques"
             elif name == "local_research" and self.web:
                 entry["task"] = str(args.get("question", ""))[:300]
                 text, stats = self.research(str(args.get("question") or ""), str(args.get("query") or ""),
@@ -161,8 +217,9 @@ class Server:
             entry.update(stats, ok=True)
             return {"content": [{"type": "text", "text": text}]}
         except ToolError as e:
-            entry.update(ok=False, error=str(e))
-            return {"content": [{"type": "text", "text": f"No se pudo: {e}"}], "isError": True}
+            msg = self.fallback(str(e))
+            entry.update(ok=False, error=msg)
+            return {"content": [{"type": "text", "text": f"No se pudo: {msg}"}], "isError": True}
         finally:
             entry["seconds"] = round(time.monotonic() - t0, 1)
             self._log(entry)
@@ -199,6 +256,80 @@ class Server:
         verb = "Reescrito" if old is not None else "Creado"
         return (f"{verb} {path} ({lines} líneas). Lo escribió el modelo local: revisa lo importante.\n"
                 f"Primeras líneas:\n```\n{preview}\n```"), {**stats, "files": read, "lines": lines}
+
+    def execute_plan(self, blocks, check: str) -> tuple[str, dict]:
+        """Hace los bloques en orden con el modelo local. Un bloque que falla no para el resto (salvo que no haya
+        modelo). Cada bloque se apunta en el log como su propio encargo; el resumen del plan, sin tokens."""
+        if not isinstance(blocks, list) or not blocks:
+            raise ToolError("falta `blocks` (lista de bloques con `instructions`)")
+        if len(blocks) > MAX_BLOCKS:
+            raise ToolError(f"demasiados bloques ({len(blocks)}); máximo {MAX_BLOCKS} por llamada")
+        lines, ok, wrote = [], 0, 0
+        for i, b in enumerate(blocks, 1):
+            b = b if isinstance(b, dict) else {"instructions": str(b)}
+            bid = str(b.get("id") or i)
+            path = str(b.get("path") or "")
+            kind = b.get("kind") if b.get("kind") in ("write", "ask") else ("write" if path else "ask")
+            title = str(b.get("title") or path or str(b.get("instructions") or "")[:60])
+            files = [f for f in b.get("files") or [] if isinstance(f, str)]
+            entry: dict = {"tool": f"local_execute_plan/{kind}", "at": time.time(), "block": bid, "task": title[:300]}
+            if path:
+                entry["path"] = path
+            t0 = time.monotonic()
+            try:
+                if kind == "write":
+                    text, stats = self.write_file(path, str(b.get("instructions") or ""), files)
+                    wrote += 1
+                else:
+                    text, stats = self.ask(str(b.get("instructions") or ""), files)
+                entry.update(stats, ok=True)
+                ok += 1
+                lines.append(f"## Bloque {bid} — {title} ✅\n{text}")
+            except NoModel:
+                entry.update(ok=False, error="no hay modelo local")
+                raise
+            except ToolError as e:
+                entry.update(ok=False, error=str(e))
+                lines.append(f"## Bloque {bid} — {title} ❌\nNo se pudo: {e}")
+            finally:
+                entry["seconds"] = round(time.monotonic() - t0, 1)
+                self._log(entry)
+        stats = {"blocks": len(blocks), "ok": ok}
+        if check.strip():
+            result = self.run_check(check) if wrote else "(no se ejecutó: ningún bloque escribió archivos)"
+            lines.append(f"## Comprobación: `{check}`\n```\n{result}\n```")
+            stats["check"] = check
+        head = f"Plan hecho por el modelo local: {ok} de {len(blocks)} bloques bien."
+        return head + "\n\n" + "\n\n".join(lines), stats
+
+    def run_check(self, command: str) -> str:
+        """Orden de comprobación (tests/linter) en la raíz del repo, sin shell y de la lista blanca."""
+        try:
+            argv = shlex.split(command)
+        except ValueError as e:
+            return f"orden mal escrita: {e}"
+        allowed = [shlex.split(c) for c in CHECK_COMMANDS]
+        if not argv or not any(argv[: len(p)] == p for p in allowed):
+            return f"orden no permitida. Permitidas: {'; '.join(CHECK_COMMANDS)}"
+        exe = sys.executable if argv[0] in ("python", "python3") else (shutil.which(argv[0]) or argv[0])
+        env = {k: v for k, v in os.environ.items() if k not in ENV_DROP}
+        try:
+            p = subprocess.run([exe, *argv[1:]], cwd=self.root, stdin=subprocess.DEVNULL, capture_output=True,
+                               env=env, timeout=CHECK_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            return f"tardó más de {CHECK_TIMEOUT_S} s y se paró"
+        except OSError as e:
+            return f"no se pudo lanzar {argv[0]}: {e}"
+        out = (p.stdout + p.stderr).decode("utf-8", "replace").strip()
+        if len(out) > MAX_CHECK_CHARS:  # lo útil de unos tests suele estar al final
+            out = "[… principio recortado]\n" + out[-MAX_CHECK_CHARS:]
+        return f"código de salida {p.returncode}\n{out or '(sin salida)'}"
+
+    def fallback(self, msg: str) -> str:
+        """En modo coordinador Claude no tiene con qué hacerlo él: que lo cuente en vez de intentarlo."""
+        if not self.coordinator:
+            return msg
+        return msg.replace("; hazlo tú", "; díselo al usuario (tú solo coordinas, no puedes hacerlo tú)")
 
     def research(self, question: str, query: str, pages) -> tuple[str, dict]:
         if not question.strip():
@@ -298,7 +429,7 @@ class Server:
         except urllib.error.HTTPError as e:
             raise ToolError(f"llama-server HTTP {e.code}: {e.read()[:200].decode('utf-8', 'replace')}") from None
         except (OSError, ValueError):
-            raise ToolError("no hay ningún modelo local arrancado (Modelos locales → Arrancar); hazlo tú") from None
+            raise NoModel("no hay ningún modelo local arrancado (Modelos locales → Arrancar); hazlo tú") from None
 
     def _log(self, entry: dict) -> None:
         if not self.log:

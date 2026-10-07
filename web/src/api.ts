@@ -18,6 +18,7 @@ export interface Agent {
   config: {
     max_turns?: number; max_budget_usd?: number; read_only?: boolean; tools?: string[];
     skills?: string[]; base_url?: string; description?: string; subagents?: boolean; delegate_local?: boolean;
+    coordinator?: boolean;
     mcps?: string[];
     temperature?: number; max_tokens?: number; repo_context?: number;
     tool_mode?: string; web?: boolean; commands?: string[]; command_timeout_s?: number; timeout_s?: number;
