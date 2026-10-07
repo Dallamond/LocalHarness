@@ -265,6 +265,47 @@ class RoutingTests(unittest.TestCase):
                 h.shutdown()
                 h.server_close()
 
+    def test_plan_runs_independent_blocks_at_the_same_time(self):
+        """Con `after`, los bloques que no dependen entre sí van a la vez (cada uno a su modelo)."""
+        slow = [fake_llama("Qwen3.5-9B.gguf", [], delay=0.8), fake_llama("Qwen3.5-4B.gguf", [], delay=0.8)]
+        try:
+            eps = self.endpoints()
+            eps[0]["url"], eps[1]["url"] = (f"http://127.0.0.1:{h.server_port}" for h in slow)
+            s = self.server(eps)
+            t0 = time.monotonic()
+            r = call(s, "local_execute_plan", {"blocks": [
+                {"id": "a", "kind": "write", "path": "a.py", "instructions": "x", "after": []},
+                {"id": "b", "kind": "write", "path": "b.py", "instructions": "y", "after": []},
+                {"id": "c", "kind": "ask", "instructions": "¿qué falta?", "after": []},
+                {"id": "d", "kind": "ask", "instructions": "revisa a y b", "after": ["a", "b"]}]})["result"]
+            took = time.monotonic() - t0
+            text = r["content"][0]["text"]
+            self.assertIn("4 de 4 bloques bien", text)
+            self.assertIn("a la vez", text)
+            self.assertLess(took, 2.6)  # a, b y c juntos (~0,8 s) y luego d (~0,8 s); en serie, más de 3,2 s
+            log = read_log(Path(self.tmp.name) / "log.jsonl")
+            ends = {e["block"]: e["at"] + e["seconds"] for e in log if e.get("block")}
+            starts = {e["block"]: e["at"] for e in log if e.get("block")}
+            self.assertGreaterEqual(starts["d"], max(ends["a"], ends["b"]) - 0.05)  # d esperó a a y b
+            self.assertEqual({e["block"]: e["server"] for e in log if e.get("block")},
+                             {"a": "principal", "b": "principal", "c": "rapido", "d": "rapido"})
+        finally:
+            for h in slow:
+                h.shutdown()
+                h.server_close()
+
+    def test_plan_dependencies_of_a_failed_block_are_skipped(self):
+        s = self.server(self.endpoints())
+        text = call(s, "local_execute_plan", {"blocks": [
+            {"id": "1", "kind": "write", "path": "../fuera.py", "instructions": "x", "after": []},
+            {"id": "2", "kind": "ask", "instructions": "usa lo de 1", "after": ["1"]},
+            {"id": "3", "kind": "ask", "instructions": "independiente", "after": []}]})["result"]["content"][0]["text"]
+        self.assertIn("1 de 3 bloques bien", text)
+        self.assertIn("No se hizo: depende de 1, que falló", text)
+        bad = call(s, "local_execute_plan", {"blocks": [{"id": "1", "instructions": "x", "after": ["2"]},
+                                                        {"id": "2", "instructions": "y"}]})["result"]
+        self.assertTrue(bad["isError"])  # solo se puede depender de bloques anteriores (sin ciclos)
+
     def test_thinking_off_on_the_fast_server_only(self):
         eps = self.endpoints()
         eps[1]["thinking"] = "apagado"

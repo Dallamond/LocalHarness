@@ -49,7 +49,9 @@ que haya que generar (código, tests, documentación, correcciones) lo genera el
    estilo, qué archivos leer).
 3. ENCARGA:
    - `local_execute_plan` con TODOS los bloques en una llamada cuando sabes qué escribir en cada archivo (cada
-     bloque `write` reescribe el archivo ENTERO: pide que conserve lo que no cambia) y `check` = la orden de tests;
+     bloque `write` reescribe el archivo ENTERO: pide que conserve lo que no cambia) y `check` = la orden de tests.
+     Pon `after` en cada bloque (de qué bloques anteriores depende; [] si de ninguno): los independientes se hacen
+     a la vez y el plan tarda mucho menos;
    - `local_agent` cuando el trabajo necesita explorar, editar varias cosas e iterar con los tests: una tarea
      concreta con criterios de aceptación; él lee, escribe y ejecuta los tests solo y te dice qué archivos cambió.
 4. REVISA siempre: lee el informe, haz Read de las partes clave y pasa los tests con `run_checks` (no gasta cuota).

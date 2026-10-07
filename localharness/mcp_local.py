@@ -112,6 +112,10 @@ BLOCK = {
                          "description": "Instrucciones autocontenidas: qué hacer, firmas, casos límite, estilo"},
         "files": {"type": "array", "items": {"type": "string"},
                   "description": "Archivos que debe leer (incluye los que escriban bloques anteriores si dependen)"},
+        "after": {"type": "array", "items": {"type": "string"},
+                  "description": "ids de los bloques ANTERIORES que tienen que estar hechos antes que este ([] = no "
+                                 "depende de ninguno). Si algún bloque lo lleva, los que no dependen entre sí se "
+                                 "hacen A LA VEZ; si ninguno lo lleva, van en orden, uno tras otro"},
     },
     "required": ["instructions"],
 }
@@ -119,9 +123,11 @@ PLAN = {
     "name": "local_execute_plan",
     "description": (
         "Encarga a un modelo local GRATIS un PLAN ENTERO de una vez: una lista de bloques (archivos a escribir o "
-        "reescribir y preguntas/análisis) que hace en orden, cada uno leyendo él los archivos que le indiques. "
-        "Opcionalmente ejecuta al final una orden de comprobación (tests) y te devuelve su salida. Recibes un "
-        "informe por bloque: léelo, comprueba lo crítico y vuelve a llamarla solo con los bloques que fallaron."),
+        "reescribir y preguntas/análisis), cada uno leyendo él los archivos que le indiques. Pon en cada bloque "
+        "`after` (de qué bloques anteriores depende; [] si de ninguno) y los independientes se harán a la vez, "
+        "repartidos entre los modelos locales: mucho más rápido. Sin `after`, van en orden. Opcionalmente ejecuta "
+        "al final una orden de comprobación (tests) y te devuelve su salida. Recibes un informe por bloque: léelo, "
+        "comprueba lo crítico y vuelve a llamarla solo con los bloques que fallaron."),
     "inputSchema": {
         "type": "object",
         "properties": {
@@ -544,55 +550,112 @@ class Server:
                 f"Primeras líneas:\n```\n{preview}\n```"), {**stats, "files": read, "lines": lines}
 
     def execute_plan(self, blocks, check: str) -> tuple[str, dict]:
-        """Hace los bloques en orden con el modelo local. Un bloque que falla no para el resto (salvo que no haya
-        modelo). Cada bloque se apunta en el log como su propio encargo; el resumen del plan, sin tokens."""
+        """Hace los bloques con los modelos locales. Si algún bloque trae `after`, se respetan esas dependencias y
+        los independientes van a la vez (cada uno a su servidor por su tipo, en su hilo); si no, en orden como
+        siempre. Un bloque que falla no para el resto, pero los que dependen de él no se hacen. Sin modelo que
+        conteste se para todo. Cada bloque se apunta en el log como su propio encargo; el resumen, sin tokens."""
         if not isinstance(blocks, list) or not blocks:
             raise ToolError("falta `blocks` (lista de bloques con `instructions`)")
         if len(blocks) > MAX_BLOCKS:
             raise ToolError(f"demasiados bloques ({len(blocks)}); máximo {MAX_BLOCKS} por llamada")
-        lines, ok, wrote = [], 0, 0
+        items = []
         for i, b in enumerate(blocks, 1):
             b = b if isinstance(b, dict) else {"instructions": str(b)}
-            bid = str(b.get("id") or i)
             path = str(b.get("path") or "")
-            kind = b.get("kind") if b.get("kind") in ("write", "ask") else ("write" if path else "ask")
-            title = str(b.get("title") or path or str(b.get("instructions") or "")[:60])
-            files = [f for f in b.get("files") or [] if isinstance(f, str)]
-            entry: dict = {"tool": f"local_execute_plan/{kind}", "at": time.time(), "block": bid, "task": title[:300]}
-            try:
-                self.order = self.route(entry["tool"], b.get("server"))
-            except ToolError as e:
-                lines.append(f"## Bloque {bid} — {title} ❌\nNo se pudo: {e}")
+            items.append({"b": b, "id": str(b.get("id") or i), "path": path,
+                          "kind": b.get("kind") if b.get("kind") in ("write", "ask") else ("write" if path else "ask"),
+                          "title": str(b.get("title") or path or str(b.get("instructions") or "")[:60]),
+                          "files": [f for f in b.get("files") or [] if isinstance(f, str)]})
+        ids = [it["id"] for it in items]
+        if len(set(ids)) != len(ids):
+            raise ToolError("hay dos bloques con el mismo `id`")
+        graph = any(isinstance(it["b"].get("after"), list) for it in items)
+        for k, it in enumerate(items):
+            if not graph:  # como siempre: cada bloque espera al anterior
+                it["after"] = [items[k - 1]["id"]] if k else []
                 continue
-            self.use(self.order[0])
-            self.current = {"tool": entry["tool"], "task": title[:300], "server": self.server_id}
-            if path:
-                entry["path"] = path
+            after = [str(a) for a in it["b"].get("after") or []]
+            bad = [a for a in after if a not in ids[:k]]
+            if bad:
+                raise ToolError(f"el bloque {it['id']} depende de {', '.join(bad)}, que no es un bloque anterior")
+            it["after"] = after
+
+        results: dict[str, tuple[bool, str]] = {}  # id → (bien, texto del informe)
+        wrote = 0
+        stop = threading.Event()
+        stop_msg: list[str] = []
+
+        def run(it: dict) -> tuple[bool, str]:
+            entry: dict = {"tool": f"local_execute_plan/{it['kind']}", "at": time.time(), "block": it["id"],
+                           "task": it["title"][:300]}
+            if it["path"]:
+                entry["path"] = it["path"]
             t0 = time.monotonic()
             try:
-                if kind == "write":
-                    text, stats = self.write_file(path, str(b.get("instructions") or ""), files)
-                    wrote += 1
+                self.order = self.route(entry["tool"], it["b"].get("server"))
+                self.use(self.order[0])
+                self.current = {"tool": entry["tool"], "task": it["title"][:300], "server": self.server_id}
+                if it["kind"] == "write":
+                    text, stats = self.write_file(it["path"], str(it["b"].get("instructions") or ""), it["files"])
                 else:
-                    text, stats = self.ask(str(b.get("instructions") or ""), files)
+                    text, stats = self.ask(str(it["b"].get("instructions") or ""), it["files"])
                 entry.update(stats, ok=True)
-                ok += 1
-                lines.append(f"## Bloque {bid} — {title} ✅\n{text}")
-            except NoModel:
+                return True, text
+            except NoModel as e:
+                stop_msg.append(str(e))
+                stop.set()
                 entry.update(ok=False, error="no hay modelo local")
-                raise
+                return False, str(e)
             except ToolError as e:
                 entry.update(ok=False, error=str(e))
-                lines.append(f"## Bloque {bid} — {title} ❌\nNo se pudo: {e}")
+                return False, f"No se pudo: {e}"
             finally:
                 entry["seconds"] = round(time.monotonic() - t0, 1)
+                if len(self.servers) > 1:
+                    entry.setdefault("server", self.server_id)
                 self._log(entry)
-        stats = {"blocks": len(blocks), "ok": ok}
+
+        from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+        pending = list(items)
+        running: dict = {}
+        most = 0
+        t_plan = time.monotonic()
+        with ThreadPoolExecutor(max_workers=max(2, 2 * len(self.servers)) if graph else 1) as pool:
+            while pending or running:
+                for it in list(pending):
+                    if stop.is_set():
+                        break
+                    # sin `after` el orden es solo orden: un bloque malo no impide los siguientes (como siempre)
+                    failed = [a for a in it["after"] if graph and a in results and not results[a][0]]
+                    if failed:
+                        pending.remove(it)
+                        results[it["id"]] = (False, f"No se hizo: depende de {', '.join(failed)}, que falló")
+                    elif all(a in results for a in it["after"]):
+                        pending.remove(it)
+                        running[pool.submit(run, it)] = it
+                most = max(most, len(running))
+                if not running:
+                    break  # parado (sin modelo) o nada más que se pueda hacer
+                done, _ = wait(list(running), return_when=FIRST_COMPLETED)
+                for fut in done:
+                    it = running.pop(fut)
+                    results[it["id"]] = fut.result()
+                    wrote += it["kind"] == "write" and results[it["id"]][0]
+        if stop.is_set():
+            raise NoModel(stop_msg[0])
+
+        ok = sum(1 for good, _ in results.values() if good)
+        lines = []
+        for it in items:
+            good, text = results.get(it["id"], (False, "No se hizo"))
+            lines.append(f"## Bloque {it['id']} — {it['title']} {'✅' if good else '❌'}\n{text}")
+        stats = {"blocks": len(items), "ok": ok, "parallel": most, "plan_seconds": round(time.monotonic() - t_plan, 1)}
         if check.strip():
             result = self.run_check(check) if wrote else "(no se ejecutó: ningún bloque escribió archivos)"
             lines.append(f"## Comprobación: `{check}`\n```\n{result}\n```")
             stats["check"] = check
-        head = f"Plan hecho por el modelo local: {ok} de {len(blocks)} bloques bien."
+        head = f"Plan hecho por el modelo local: {ok} de {len(items)} bloques bien"
+        head += f" (hasta {most} a la vez, {stats['plan_seconds']} s)." if most > 1 else "."
         return head + "\n\n" + "\n\n".join(lines), stats
 
     def run_check(self, command: str) -> str:
