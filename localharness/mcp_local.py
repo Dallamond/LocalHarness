@@ -29,6 +29,11 @@ qué herramientas lleva el modelo local; se guardan en LH_WORKER (JSON, también
 mientras trabaja) y se aplican en cada encargo siguiente. Cada encargo apunta en el log su petición, su respuesta y
 su pensamiento (`request`, `answer`, `thinking`): es el chat propio del trabajador.
 
+Varios modelos locales (p. ej. uno por GPU): LH_LOCAL_SERVERS (JSON [{id, name, role, device, url, key}]). Cada
+encargo va al servidor cuyo papel encaja (`fuerte`: escribir y `local_agent`; `rapido`: preguntas e investigar;
+`general`: todo) y Claude puede elegir otro con el argumento `server`. Si el elegido no contesta, se prueba el
+siguiente. Sin LH_LOCAL_SERVERS, un solo servidor: LH_LOCAL_URL.
+
 Variables: LH_LOCAL_URL (llama-server), LH_LOCAL_KEY (su --api-key), LH_ROOT, LH_LOG, LH_WRITE (1/0),
 LH_MAX_TOKENS (por defecto 8192), LH_MAX_INPUT_CHARS (texto de archivos por encargo, por defecto 40000),
 LH_WEB (1/0, búsqueda web), LH_COORDINATOR (1: Claude no puede hacerlo él; los errores no le dicen «hazlo tú»),
@@ -50,6 +55,7 @@ import re
 import shlex
 import shutil
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -220,6 +226,16 @@ ENV_DROP = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "LH_L
 JUNK_DIRS = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "node_modules", ".venv"}
 
 
+# qué papel de servidor prefiere cada tipo de encargo (en orden); `general` vale para todo
+LIGHT = ("rapido", "general", "fuerte")
+HEAVY = ("fuerte", "general", "rapido")
+TOOL_WEIGHT = {"local_ask": LIGHT, "local_research": LIGHT, "local_write_file": HEAVY, "local_agent": HEAVY,
+               "local_execute_plan/ask": LIGHT, "local_execute_plan/write": HEAVY}
+ROLE_TEXT = {"fuerte": "escribir código y tareas enteras", "rapido": "preguntas, resúmenes e investigar",
+             "general": "de todo"}
+SERVER_TOOLS = ("local_ask", "local_write_file", "local_execute_plan", "local_research", "local_agent")
+
+
 class ToolError(Exception):
     pass
 
@@ -228,11 +244,43 @@ class NoModel(ToolError):
     """No hay llama-server que conteste: no tiene sentido seguir con más bloques."""
 
 
+def _per_call(name: str, default):
+    """Atributo propio de cada encargo: con varios modelos locales, Claude puede pedir dos cosas a la vez y cada
+    `tools/call` va en su hilo (main), así que a qué servidor va y qué hace no se pueden compartir."""
+    def get(self):
+        if not hasattr(self._tl, name):
+            setattr(self._tl, name, default(self))
+        return getattr(self._tl, name)
+
+    def put(self, value):
+        setattr(self._tl, name, value)
+    return property(get, put)
+
+
 class Server:
+    url = _per_call("url", lambda self: self._default["url"])
+    key = _per_call("key", lambda self: self._default.get("key") or "")
+    server_id = _per_call("server_id", lambda self: self._default["id"])
+    order = _per_call("order", lambda self: [])  # servidores a probar en el encargo en curso (el primero, el elegido)
+    current = _per_call("current", lambda self: {})  # encargo en curso (para el directo)
+
     def __init__(self, env: dict[str, str] | None = None, transport=None, http_get=None):
         env = env if env is not None else dict(os.environ)
-        self.url = (env.get("LH_LOCAL_URL") or "http://127.0.0.1:8080").rstrip("/").removesuffix("/v1")
-        self.key = env.get("LH_LOCAL_KEY") or ""
+        self._tl = threading.local()
+        self._lock = threading.Lock()  # log y directo: los escriben varios encargos a la vez
+        url = (env.get("LH_LOCAL_URL") or "http://127.0.0.1:8080").rstrip("/").removesuffix("/v1")
+        try:
+            servers = json.loads(env["LH_LOCAL_SERVERS"]) if env.get("LH_LOCAL_SERVERS") else []
+        except ValueError:
+            servers = []
+        servers = [srv for srv in servers if isinstance(srv, dict) and srv.get("url") and srv.get("id")]
+        if not servers:
+            servers = [{"id": "principal", "name": "Principal", "role": "general", "url": url,
+                        "key": env.get("LH_LOCAL_KEY") or ""}]
+        self.servers = [{**srv, "url": str(srv["url"]).rstrip("/").removesuffix("/v1"), "key": srv.get("key") or "",
+                         "role": srv.get("role") or "general"} for srv in servers]
+        self._default = self.servers[0]
+        self._models: dict[str, str | None] = {}
         self.root = Path(env.get("LH_ROOT") or os.getcwd()).resolve()
         self.log = Path(env["LH_LOG"]) if env.get("LH_LOG") else None
         self.write = env.get("LH_WRITE", "1") == "1"
@@ -249,15 +297,82 @@ class Server:
         self.worker_path = Path(env["LH_WORKER"]) if env.get("LH_WORKER") else None
         self.skills_path = Path(env["LH_SKILLS"]) if env.get("LH_SKILLS") else None
         self.live_path = Path(env["LH_LIVE"]) if env.get("LH_LIVE") else None
-        self.current: dict = {}  # encargo en curso (para el directo)
         self.transport = transport  # pruebas: función (body) -> respuesta JSON de /v1/chat/completions
         self.http_get = http_get or _http_get  # pruebas: función (url, data) -> HTML; sin red de verdad
 
     # --- protocolo
     def tools(self) -> list[dict]:
         prepare = [self.prepare_tool()] if self.worker_path else []
-        return (prepare + [ASK] + ([WRITE, PLAN, AGENT] if self.write else []) + ([CHECKS] if self.commands != [] else [])
-                + ([RESEARCH] if self.web else []))
+        tools = (prepare + [ASK] + ([WRITE, PLAN, AGENT] if self.write else [])
+                 + ([CHECKS] if self.commands != [] else []) + ([RESEARCH] if self.web else []))
+        return [self.with_server(t) for t in tools] if len(self.servers) > 1 else tools
+
+    # --- varios modelos locales
+    def use(self, srv: dict) -> None:
+        self.url, self.key, self.server_id = srv["url"], srv.get("key") or "", srv["id"]
+
+    def route(self, kind: str, wanted=None) -> list[dict]:
+        """Orden en que probar los servidores para un encargo: el que pidió Claude (`server`) o el de papel más
+        adecuado primero; los demás detrás por si el primero no contesta."""
+        prefs = TOOL_WEIGHT.get(kind, LIGHT)
+        order = sorted(self.servers, key=lambda srv: prefs.index(srv["role"]) if srv["role"] in prefs else 9)
+        if wanted:
+            chosen = [srv for srv in self.servers if srv["id"] == str(wanted)]
+            if not chosen:
+                raise ToolError(f"no hay ningún modelo local llamado {wanted!r}; usa uno de: "
+                                f"{', '.join(srv['id'] for srv in self.servers)}")
+            order = chosen + [srv for srv in order if srv is not chosen[0]]
+        return order
+
+    def model_of(self, srv: dict) -> str | None:
+        """Qué GGUF tiene cargado (para que Claude sepa con quién habla). Se pregunta una vez; None si no contesta."""
+        if srv["id"] not in self._models:
+            req = urllib.request.Request(srv["url"] + "/v1/models")
+            if srv.get("key"):
+                req.add_header("Authorization", f"Bearer {srv['key']}")
+            try:
+                with urllib.request.urlopen(req, timeout=2) as r:
+                    self._models[srv["id"]] = _short((json.loads(r.read()).get("data") or [{}])[0].get("id"))
+            except (OSError, ValueError):
+                self._models[srv["id"]] = None
+        return self._models[srv["id"]]
+
+    def servers_text(self) -> str:
+        lines = []
+        for srv in self.servers:
+            model = self.model_of(srv) if not self.transport else None
+            where = f", {srv['device']}" if srv.get("device") else ""
+            lines.append(f"«{srv['id']}» ({model or 'apagado o sin datos'}{where}): {ROLE_TEXT.get(srv['role'], '')}")
+        return ("Hay varios modelos locales y se trabaja con todos a la vez: " + "; ".join(lines) + ". Si no indicas "
+                "`server`, cada encargo va al que mejor encaja por su papel (y si no contesta, al otro).")
+
+    def with_server(self, tool: dict) -> dict:
+        if tool["name"] not in SERVER_TOOLS:
+            return tool
+        prop = {"type": "string", "enum": [srv["id"] for srv in self.servers],
+                "description": "Qué modelo local lo hace (opcional; por defecto, el que encaja por su papel)"}
+        schema = {**tool["inputSchema"], "properties": {**tool["inputSchema"]["properties"], "server": prop}}
+        if tool["name"] == "local_execute_plan":  # en un plan, cada bloque puede ir a un modelo distinto
+            block = {**BLOCK, "properties": {**BLOCK["properties"], "server": prop}}
+            schema["properties"]["blocks"] = {**schema["properties"]["blocks"], "items": block}
+        desc = tool["description"]
+        if tool["name"] == "local_ask":
+            desc += " " + self.servers_text()
+        return {**tool, "description": desc, "inputSchema": schema}
+
+    def first_up(self, order: list[dict]) -> dict:
+        """El primero que contesta (/health). Para `local_agent`, que hace muchas peticiones seguidas."""
+        if self.transport or len(order) == 1:
+            return order[0]
+        for srv in order:
+            try:
+                with urllib.request.urlopen(srv["url"] + "/health", timeout=2):
+                    return srv
+            except urllib.error.HTTPError:
+                return srv  # 503 = cargando: estará listo enseguida
+            except (OSError, ValueError):
+                continue
+        return order[0]
 
     def handle(self, msg: dict) -> dict | None:
         mid, method = msg.get("id"), msg.get("method")
@@ -287,6 +402,10 @@ class Server:
         self.current = {"tool": name, "task": str(args.get("task") or args.get("path") or args.get("question")
                                                   or args.get("command") or "")[:300]}
         try:
+            if name in SERVER_TOOLS:
+                self.order = self.route(name, args.get("server"))
+                self.use(self.order[0])
+                self.current["server"] = self.server_id
             if name == "local_prepare" and self.worker_path:
                 text, stats = self.prepare(args.get("skills") or [], args.get("tools"), str(args.get("reason") or ""))
                 entry["task"] = stats["summary"]
@@ -316,6 +435,8 @@ class Server:
             else:
                 raise ToolError(f"Herramienta no disponible: {name}")
             entry.update(stats, ok=True)
+            if len(self.servers) > 1 and name in SERVER_TOOLS and name != "local_execute_plan":
+                entry.setdefault("server", self.server_id)
             return {"content": [{"type": "text", "text": text}]}
         except ToolError as e:
             msg = self.fallback(str(e))
@@ -429,7 +550,13 @@ class Server:
             title = str(b.get("title") or path or str(b.get("instructions") or "")[:60])
             files = [f for f in b.get("files") or [] if isinstance(f, str)]
             entry: dict = {"tool": f"local_execute_plan/{kind}", "at": time.time(), "block": bid, "task": title[:300]}
-            self.current = {"tool": entry["tool"], "task": title[:300]}
+            try:
+                self.order = self.route(entry["tool"], b.get("server"))
+            except ToolError as e:
+                lines.append(f"## Bloque {bid} — {title} ❌\nNo se pudo: {e}")
+                continue
+            self.use(self.order[0])
+            self.current = {"tool": entry["tool"], "task": title[:300], "server": self.server_id}
             if path:
                 entry["path"] = path
             t0 = time.monotonic()
@@ -529,6 +656,8 @@ class Server:
         start = [f for f in files if isinstance(f, str)]
         prompt = task + (f"\n\nEmpieza leyendo: {', '.join(start)}" if start else "") + self.skills_text()
         before = self.snapshot()
+        self.use(self.first_up(self.order or self.servers))
+        self.current["server"] = self.server_id
         adapter = LocalAgentAdapter(base_url=self.url, api_key=self.key or None, transport=self._httpx(),
                                     http_get=self.http_get, web=self.web,
                                     commands=CHECK_COMMANDS if self.commands is None else self.commands,
@@ -560,7 +689,8 @@ class Server:
         stats = {"prompt_tokens": seen["usage"].get("prompt_tokens"), "completion_tokens":
                  seen["usage"].get("completion_tokens"), "model": seen["model"], "files": changed,
                  "status": res["status"], "request": task[:MAX_LOG_REQUEST],
-                 "answer": (res.get("final") or "")[:MAX_LOG_ANSWER], "skills": self.worker().get("skills") or []}
+                 "answer": (res.get("final") or "")[:MAX_LOG_ANSWER], "skills": self.worker().get("skills") or [],
+                 "server": self.server_id}
         if seen["thinking"]:
             stats["thinking"] = "\n\n".join(seen["thinking"])[-MAX_LOG_THINKING:]
         if res["status"] != "done" and not seen["tools"] and seen["errors"]:
@@ -653,7 +783,7 @@ class Server:
         body = {"messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
                 "temperature": 0.2, "max_tokens": self.max_tokens}
         t0 = time.monotonic()
-        data = self.transport(body) if self.transport else self._post(body)
+        data = self._post_any(body)
         choice = (data.get("choices") or [{}])[0]
         msg = choice.get("message") or {}
         text = (msg.get("content") or "").strip()
@@ -664,7 +794,7 @@ class Server:
                  "model": _short(data.get("model")), "gen_seconds": round(time.monotonic() - t0, 1),
                  # el chat propio del trabajador local: lo que se le pidió, lo que contestó y lo que pensó
                  "request": user[:MAX_LOG_REQUEST] + ("\n[…]" if len(user) > MAX_LOG_REQUEST else ""),
-                 "answer": text[:MAX_LOG_ANSWER], "skills": skills}
+                 "answer": text[:MAX_LOG_ANSWER], "skills": skills, "server": self.server_id}
         if msg.get("reasoning_content"):
             stats["thinking"] = msg["reasoning_content"][-MAX_LOG_THINKING:]
         if not text:
@@ -675,6 +805,21 @@ class Server:
         if choice.get("finish_reason") == "length":
             text += "\n\n[Aviso: respuesta cortada por límite de tokens]"
         return text, stats
+
+    def _post_any(self, body: dict) -> dict:
+        """Al servidor elegido; si está apagado, a los siguientes del orden (un 401 no: fallarían igual)."""
+        if self.transport:
+            return self.transport(body)
+        order = self.order or [next(srv for srv in self.servers if srv["id"] == self.server_id)]
+        for i, srv in enumerate(order):
+            self.use(srv)
+            self.current["server"] = srv["id"]
+            try:
+                return self._post(body)
+            except NoModel as e:
+                if i == len(order) - 1 or "401" in str(e):
+                    raise
+        raise NoModel("no hay ningún modelo local arrancado; hazlo tú")
 
     def _post(self, body: dict) -> dict:
         headers = {"Content-Type": "application/json"}
@@ -744,8 +889,9 @@ class Server:
                 "skills": self.worker().get("skills") or []}
         tmp = self.live_path.with_suffix(".tmp")
         try:
-            tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-            os.replace(tmp, self.live_path)
+            with self._lock:
+                tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+                os.replace(tmp, self.live_path)
         except OSError:
             pass
 
@@ -753,7 +899,7 @@ class Server:
         if not self.log:
             return
         try:
-            with open(self.log, "a", encoding="utf-8") as f:
+            with self._lock, open(self.log, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         except OSError:
             pass
@@ -857,6 +1003,15 @@ def main() -> None:
     server = Server()
     stdin = sys.stdin.buffer
     out = sys.stdout.buffer
+    lock = threading.Lock()
+
+    def answer(msg: dict) -> None:
+        reply = server.handle(msg)
+        if reply is not None:
+            with lock:  # una respuesta por línea, sin mezclarse con otra que acabe a la vez
+                out.write((json.dumps(reply, ensure_ascii=False) + "\n").encode("utf-8"))
+                out.flush()
+
     for raw in stdin:
         line = raw.decode("utf-8", "replace").strip()
         if not line:
@@ -865,10 +1020,13 @@ def main() -> None:
             msg = json.loads(line)
         except ValueError:
             continue
-        reply = server.handle(msg) if isinstance(msg, dict) else None
-        if reply is not None:
-            out.write((json.dumps(reply, ensure_ascii=False) + "\n").encode("utf-8"))
-            out.flush()
+        if not isinstance(msg, dict):
+            continue
+        if msg.get("method") == "tools/call":
+            # cada encargo en su hilo: con dos modelos locales, Claude puede tener a los dos trabajando a la vez
+            threading.Thread(target=answer, args=(msg,), daemon=True).start()
+        else:
+            answer(msg)
 
 
 if __name__ == "__main__":

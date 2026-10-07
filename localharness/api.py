@@ -46,11 +46,13 @@ class LlamaStartIn(BaseModel):
     ngl: int | None = Field(default=None, ge=0, le=999)
     options: dict[str, Any] | None = None  # ajustes del diálogo de arranque (ver llama.OPTION_FLAGS)
     save: bool = False  # guardarlos como configuración propia de este modelo
+    server: str = llama.PRINCIPAL  # en qué servidor local (Ajustes → llama.servers; uno por GPU)
 
 
 class EstimateIn(BaseModel):
     path: str
     options: dict[str, Any] = {}
+    server: str = llama.PRINCIPAL  # la memoria disponible es la de las GPU de ese servidor
 
 
 class DownloadIn(BaseModel):
@@ -70,7 +72,8 @@ def clean_options(opts: dict[str, Any] | None) -> dict[str, Any]:
             continue
         if not isinstance(v, (str, int, float, bool)):
             raise HTTPException(422, f"Valor no válido para {k}")
-        if k != "extra" and isinstance(v, str) and not v.replace(".", "").replace("_", "").replace("-", "").isalnum():
+        if k != "extra" and isinstance(v, str) and \
+                not v.replace(".", "").replace("_", "").replace("-", "").replace(",", "").isalnum():
             raise HTTPException(422, f"Valor no válido para {k}: {v!r}")
         out[k] = v
     return out
@@ -251,6 +254,13 @@ def gpus() -> list[dict]:
                                 "util": num(f[4]), "temp": num(f[5])})
         except (OSError, subprocess.TimeoutExpired, ValueError):
             out = []
+    devices = list(llama.list_devices())  # misma GPU por nombre (y por memoria si hay dos iguales)
+    for g in out:
+        d = min((d for d in devices if d["name"] == g["name"]),
+                key=lambda d: abs(d["total_mb"] - (g["mem_total_mb"] or 0)), default=None)
+        if d:
+            g["device"] = d["id"]  # lo que entiende -dev de llama.cpp (no coincide con el índice de nvidia-smi)
+            devices.remove(d)
     _GPU_CACHE.update(at=time.time(), data=out)
     return out
 
@@ -366,25 +376,68 @@ class Runner:
             await self.cancel_plan(pid)
 
 
-def autostart_llama(store: Store, manager: "llama.LlamaManager") -> str | None:
-    """Modelos locales → «Arrancar el último modelo al abrir LocalHarness»: lanza llama-server con el último GGUF
-    y sus ajustes. Devuelve qué pasó (para la GUI) o None si está apagado. Nunca impide arrancar."""
+def autostart_llama(store: Store, pool: "llama.LlamaPool") -> str | None:
+    """Modelos locales → «Arrancar el último modelo al abrir LocalHarness»: lanza en cada servidor local el último
+    GGUF que tuvo, con sus ajustes. Devuelve qué pasó (para la GUI) o None si está apagado. Nunca impide arrancar."""
     cfg = settings.load(store)["llama"]
-    last = cfg.get("last") or {}
-    if not cfg.get("autostart") or not last.get("model"):
+    if not cfg.get("autostart"):
         return None
-    model = Path(last["model"])
-    if not model.is_file():
-        return f"no encuentro {model}"
-    if llama.health(cfg["port"]) != "off":
-        return "ya había un llama-server en el puerto"
-    try:
-        own = settings.llama_launch(store, str(model), last.get("options") or None)
-        manager.start(model, cfg["port"], own["ctx"], own["ngl"], own["extra"])
-    except (LookupError, RuntimeError, OSError) as e:
-        return f"no pude arrancarlo: {e}"
-    settings.save(store, {"local_base_url": f"http://127.0.0.1:{cfg['port']}"})
-    return f"arrancando {model.name}"
+    said = []
+    for srv in settings.local_servers(store):
+        main = srv["id"] == llama.PRINCIPAL
+        last = (cfg.get("last") if main else (cfg.get("last_by_server") or {}).get(srv["id"])) or {}
+        if not last.get("model"):
+            continue
+        who = "" if main else f"{srv['name']}: "
+        model = Path(last["model"])
+        if not model.is_file():
+            said.append(f"{who}no encuentro {model}")
+            continue
+        if llama.health(srv["port"]) != "off":
+            said.append(f"{who}ya había un llama-server en el puerto {srv['port']}")
+            continue
+        try:
+            start_on(store, pool, srv, model, last.get("options") or None)
+        except (LookupError, RuntimeError, OSError) as e:
+            said.append(f"{who}no pude arrancarlo: {e}")
+            continue
+        said.append(f"{who}arrancando {model.name}")
+    return " · ".join(said) or None
+
+
+def start_on(store: Store, pool: "llama.LlamaPool", srv: dict, model: Path, options: dict | None = None,
+             ctx: int | None = None, ngl: int | None = None) -> dict:
+    """Arranca `model` en el servidor local `srv` (en su GPU si tiene `device`). Devuelve los ajustes usados."""
+    own = settings.llama_launch(store, str(model), options)
+    extra = own["extra"]
+    if srv.get("device") and not own["options"].get("device"):
+        extra = ["-dev", srv["device"], *extra]
+    pool.get(srv["id"], srv["port"]).start(model, srv["port"], ctx or own["ctx"],
+                                           ngl if ngl is not None else own["ngl"], extra)
+    if srv["id"] == llama.PRINCIPAL:  # los agentes locales sin URL propia se conectan al principal
+        settings.save(store, {"local_base_url": settings.server_url(srv)})
+    return own
+
+
+def servers_status(store: Store, pool: "llama.LlamaPool") -> list[dict]:
+    """Cada servidor local de Ajustes con su estado (off | loading | ready | failed | external)."""
+    out = []
+    for srv in settings.local_servers(store):
+        status = pool.get(srv["id"], srv["port"]).status(srv["port"])
+        out.append({**srv, "url": settings.server_url(srv), "status": status,
+                    "model_name": _model_name(status.get("model")) if status["state"] != "off" else None})
+    return out
+
+
+def suggest_servers(devices: list[dict], current: list[dict]) -> list[dict] | None:
+    """Con 2+ GPU y solo el servidor principal: uno por GPU. El principal («fuerte») en la de más memoria y otro
+    («rápido») en la siguiente. None si no hay nada que proponer."""
+    gpus_ = sorted([d for d in devices if d.get("total_mb")], key=lambda d: -d["total_mb"])
+    if len(gpus_) < 2 or len(current) > 1:
+        return None
+    main = current[0] if current else {"id": llama.PRINCIPAL, "name": "Principal", "port": 8080}
+    return [{**main, "name": "Fuerte", "device": gpus_[0]["id"], "role": "fuerte"},
+            {"id": "rapido", "name": "Rápido", "port": main["port"] + 1, "device": gpus_[1]["id"], "role": "rapido"}]
 
 
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1", "testserver")  # testserver = el TestClient de las pruebas
@@ -414,7 +467,7 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         app.state.runner = Runner(store, app.state.hub, binaries, worktree_root)
         log = Path(db_path).parent / "llama-server.log" if str(db_path) != ":memory:" else Path(
             tempfile.gettempdir()) / "localharness-llama-server.log"
-        app.state.llama = llama.LlamaManager(log)
+        app.state.llama = llama.LlamaPool(log)  # un llama-server por servidor local (uno por GPU)
         app.state.modelinfo = modelinfo.ModelInfo(log.with_name("model-info.json") if str(db_path) != ":memory:"
                                                   else Path(tempfile.mkdtemp()) / "model-info.json")
         app.state.downloads = hf.Downloads()
@@ -425,7 +478,7 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
             app.state.cleanup = {"removed": [], "kept": [], "unknown": [], "errors": [str(e)]}
         app.state.autostart = await asyncio.to_thread(autostart_llama, store, app.state.llama)
         yield
-        await asyncio.to_thread(app.state.llama.stop)  # el llama-server lanzado desde la GUI muere con ella
+        await asyncio.to_thread(app.state.llama.stop_all)  # los llama-server lanzados desde la GUI mueren con ella
         await app.state.runner.shutdown()
         store.close()
 
@@ -461,12 +514,15 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
     # --- estado general
     @app.get("/api/health")
     async def health(request: Request) -> dict[str, Any]:
-        port = settings.load(st(request))["llama"]["port"]
-        ls = await asyncio.to_thread(request.app.state.llama.status, port)
+        servers = await asyncio.to_thread(servers_status, st(request), request.app.state.llama)
         return {"version": __version__, "providers": list(ADAPTERS),
                 "running": sorted(request.app.state.runner.active), "limit": request.app.state.runner.last_limit,
                 # qué modelo responde de verdad a los agentes locales (el arrancado, no el nombre del agente)
-                "local": {"state": ls["state"], "model": _model_name(ls.get("model")) if ls["state"] != "off" else None},
+                "local": {"state": servers[0]["status"]["state"], "model": servers[0]["model_name"]},
+                # todos los servidores locales (con dos GPU, normalmente dos modelos a la vez)
+                "locals": [{"id": s["id"], "name": s["name"], "role": s["role"], "device": s["device"],
+                            "port": s["port"], "state": s["status"]["state"], "model": s["model_name"]}
+                           for s in servers],
                 "speed": request.app.state.runner.last_speed}
 
     # --- proyectos
@@ -508,10 +564,10 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         project = store.get_project(body.project_id)
         if not project:
             raise HTTPException(404, f"No existe el proyecto #{body.project_id}")
-        port = settings.load(store)["llama"]["port"]
-        status = await asyncio.to_thread(request.app.state.llama.status, port)
-        ready = status["state"] in ("ready", "external")
-        model = Path(status["model"]).name if ready and status.get("model") else None
+        servers = await asyncio.to_thread(servers_status, store, request.app.state.llama)
+        up = [s for s in servers if s["status"]["state"] in ("ready", "external")]
+        ready = bool(up)
+        model = ", ".join(Path(s["status"]["model"]).name for s in up if s["status"].get("model")) or None
         binary = (request.app.state.runner.binaries or {}).get("claude")
         return await designer.design(store, body.prompt, project, binary=binary, local_ready=ready, local_model=model)
 
@@ -520,8 +576,8 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         """Guarda una propuesta del diseñador (quizá retocada en la GUI) como agente para la tarea."""
         store = st(request)
         cat = await asyncio.to_thread(designer.catalog, store)
-        port = settings.load(store)["llama"]["port"]
-        ready = (await asyncio.to_thread(request.app.state.llama.status, port))["state"] in ("ready", "external")
+        servers = await asyncio.to_thread(servers_status, store, request.app.state.llama)
+        ready = any(s["status"]["state"] in ("ready", "external") for s in servers)
         spec = {**designer.normalize(body.spec, cat, ready), "designed_by": body.spec.get("designed_by")}
         if body.spec.get("reason"):
             spec["reason"] = str(body.spec["reason"])[:1200]
@@ -633,44 +689,67 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         return {"values": values, "defaults": settings.DEFAULTS}
 
     # --- modelos locales (llama.cpp)
+    def server_or_404(store: Store, server_id: str) -> dict:
+        srv = next((s for s in settings.local_servers(store) if s["id"] == server_id), None)
+        if not srv:
+            raise HTTPException(404, f"No existe el servidor local {server_id!r} (Modelos locales → Servidores)")
+        return srv
+
     @app.get("/api/llama")
     async def llama_info(request: Request) -> dict:
-        cfg = settings.load(st(request))["llama"]
+        store = st(request)
+        cfg = settings.load(store)["llama"]
+        pool = request.app.state.llama
 
         def gather() -> dict:
+            servers = servers_status(store, pool)
+            devices = llama.list_devices()
             return {"server": llama.server_binary(), "dirs": [str(d) for d in llama.model_dirs()],
                     "models": [llama.describe(m) for m in llama.list_models()],
-                    "status": request.app.state.llama.status(cfg["port"]), "config": cfg,
+                    "status": servers[0]["status"], "config": cfg, "servers": servers, "devices": devices,
+                    "suggested_servers": suggest_servers(devices, cfg.get("servers") or []),
+                    "roles": list(settings.SERVER_ROLES),
                     "speed": request.app.state.runner.last_speed,
-                    "load_times": request.app.state.llama.load_times()}
+                    "load_times": pool.load_times()}
         return await asyncio.to_thread(gather)
+
+    @app.get("/api/llama/devices")
+    async def llama_devices(refresh: bool = False) -> dict:
+        """Las GPU tal como las numera llama.cpp (lo que entiende -dev), no como nvidia-smi."""
+        return {"devices": await asyncio.to_thread(llama.list_devices, refresh)}
 
     @app.post("/api/llama/start")
     async def llama_start(request: Request, body: LlamaStartIn) -> dict:
         store = st(request)
         cfg = settings.load(store)["llama"]
+        srv = server_or_404(store, body.server)
         model = Path(body.path)
         if not model.is_file() or model.suffix.lower() != ".gguf":
             raise HTTPException(422, "Eso no es un archivo .gguf")
         opts = clean_options(body.options)
-        if body.save:
-            settings.save(store, {"llama": {"per_model": {**cfg["per_model"], str(model): opts}}})
-        own = settings.llama_launch(store, str(model), None if body.save else opts)
+        if body.save:  # la GPU es del servidor, no del modelo: no se guarda con él
+            settings.save(store, {"llama": {"per_model": {**cfg["per_model"],
+                                                          str(model): {k: v for k, v in opts.items() if k != "device"}}}})
         try:
-            await asyncio.to_thread(request.app.state.llama.start, model, cfg["port"], body.ctx or own["ctx"],
-                                    body.ngl if body.ngl is not None else own["ngl"], own["extra"])
+            own = await asyncio.to_thread(start_on, store, request.app.state.llama, srv, model,
+                                          {k: v for k, v in opts.items() if k == "device"} if body.save else opts,
+                                          body.ctx, body.ngl)
         except (LookupError, RuntimeError, OSError) as e:
             raise HTTPException(409, str(e)) from None
         request.app.state.modelinfo.update(str(model), last_launch={"options": own["options"], "at": time.time()})
-        # los agentes locales sin URL propia se conectan a este servidor; se recuerda para el autoarranque
-        settings.save(store, {"local_base_url": f"http://127.0.0.1:{cfg['port']}",
-                              "llama": {"last": {"model": str(model), "options": {} if body.save else opts}}})
-        return await asyncio.to_thread(request.app.state.llama.status, cfg["port"])
+        last = {"model": str(model), "options": {} if body.save else opts}
+        if srv["id"] == llama.PRINCIPAL:  # se recuerda para el autoarranque
+            settings.save(store, {"llama": {"last": last}})
+        else:
+            settings.save(store, {"llama": {"last_by_server": {**(cfg.get("last_by_server") or {}), srv["id"]: last}}})
+        return await asyncio.to_thread(request.app.state.llama.get(srv["id"], srv["port"]).status, srv["port"])
 
     @app.post("/api/llama/stop")
-    async def llama_stop(request: Request) -> dict:
-        await asyncio.to_thread(request.app.state.llama.stop)
-        return request.app.state.llama.status(settings.load(st(request))["llama"]["port"])
+    async def llama_stop(request: Request, server: str = llama.PRINCIPAL) -> dict:
+        srv = server_or_404(st(request), server)
+        mgr = request.app.state.llama.get(srv["id"], srv["port"])
+        await asyncio.to_thread(mgr.stop)
+        return mgr.status(srv["port"])
 
     # --- hardware, fichas, recomendaciones y descargas de Hugging Face
     def hw_budget(store: Store, force: bool = False) -> tuple[dict, dict]:
@@ -724,15 +803,20 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
             raise HTTPException(404, "No existe ese GGUF")
         opts = clean_options(body.options)
 
+        srv = server_or_404(store, body.server)
+        if srv["device"] and not opts.get("device"):
+            opts["device"] = srv["device"]
+
         def calc() -> dict:
             _, budget = hw_budget(store)
+            budget = hardware.device_budget(budget, llama.list_devices(), opts.get("device"))
             meta = request.app.state.modelinfo.summary(model) or {}
             size = llama.describe(model)["size_gb"]
             launch = settings.llama_launch(store, str(model), opts)
             est = catalog.estimate(meta, size, {**launch["options"], "ctx": launch["ctx"], "ngl": launch["ngl"]},
                                    budget)
             try:
-                cmd = llama.serve_command(model, settings.load(store)["llama"]["port"], launch["ctx"], launch["ngl"],
+                cmd = llama.serve_command(model, srv["port"], launch["ctx"], launch["ngl"],
                                           [*launch["extra"], "--api-key", "<aleatoria>"])
             except LookupError:
                 cmd = None
@@ -839,10 +923,11 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         return {"ok": True}
 
     @app.post("/api/llama/probe")
-    async def llama_probe(request: Request) -> dict:
+    async def llama_probe(request: Request, server: str = llama.PRINCIPAL) -> dict:
         """Prueba real del modelo arrancado (herramientas, JSON, tok/s). Gratis: es tu GPU."""
-        port = settings.load(st(request))["llama"]["port"]
-        status = await asyncio.to_thread(request.app.state.llama.status, port)
+        srv = server_or_404(st(request), server)
+        port = srv["port"]
+        status = await asyncio.to_thread(request.app.state.llama.get(srv["id"], port).status, port)
         if status["state"] not in ("ready", "external"):
             raise HTTPException(409, "Arranca antes un modelo y espera a que esté listo")
         result = await asyncio.to_thread(modelinfo.probe, port)
@@ -964,21 +1049,30 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         return await asyncio.to_thread(gather)
 
     @app.get("/api/llama/usage")
-    async def llama_usage(request: Request) -> dict:
+    async def llama_usage(request: Request, server: str = llama.PRINCIPAL) -> dict:
         """Consumo en vivo para Modelos locales: PC (CPU/RAM), GPU, el proceso de llama-server y dónde está cargado
-        el modelo (capas y MB en GPU o en RAM, del log de llama-server)."""
-        cfg = settings.load(st(request))["llama"]
-        mgr = request.app.state.llama
+        el modelo (capas y MB en GPU o en RAM, del log de llama-server). `server` = el servidor local que se mira;
+        en `servers` va lo mismo de todos (con dos GPU, normalmente dos modelos a la vez)."""
+        store = st(request)
+        pool = request.app.state.llama
+        chosen = server_or_404(store, server)
 
-        def gather() -> dict:
-            status = mgr.status(cfg["port"])
-            pid = status.get("pid") or (usage.find_llama_pid(cfg["port"]) if status["state"] != "off" else None)
+        def one(srv: dict) -> dict:
+            mgr = pool.get(srv["id"], srv["port"])
+            status = mgr.status(srv["port"])
+            pid = status.get("pid") or (usage.find_llama_pid(srv["port"]) if status["state"] != "off" else None)
             proc = usage.process(pid)
             if proc is not None:
                 proc["vram_mb"] = usage.gpu_by_pid().get(pid)
             own = status.get("pid") is not None
-            return {"state": status["state"], "model": status.get("model"), "system": usage.system(), "gpus": gpus(),
-                    "process": proc, "placement": usage.placement(mgr.log_text()) if own else None,
+            return {"id": srv["id"], "name": srv["name"], "role": srv["role"], "device": srv["device"],
+                    "state": status["state"], "model": status.get("model"), "process": proc,
+                    "placement": usage.placement(mgr.log_text()) if own else None}
+
+        def gather() -> dict:
+            servers = [one(s) for s in settings.local_servers(store)]
+            mine = next(s for s in servers if s["id"] == chosen["id"])
+            return {**mine, "system": usage.system(), "gpus": gpus(), "servers": servers,
                     "psutil": usage.psutil is not None}
         return await asyncio.to_thread(gather)
 

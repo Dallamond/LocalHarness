@@ -261,7 +261,7 @@ class AutostartTests(unittest.TestCase):
         from localharness.api import autostart_llama
         with tempfile.TemporaryDirectory() as tmp:
             store = Store(":memory:")
-            m = llama.LlamaManager(Path(tmp) / "llama-server.log")
+            m = llama.LlamaPool(Path(tmp) / "llama-server.log")
             self.assertIsNone(autostart_llama(store, m))  # apagado por defecto
             gguf_path = write_gguf(Path(tmp) / "m.gguf")
             settings.save(store, {"llama": {"autostart": True, "port": 18997,

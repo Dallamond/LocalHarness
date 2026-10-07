@@ -83,10 +83,21 @@ Tienes un modelo local que corre gratis en el PC del usuario; tu cuota es cara. 
 Tú decides y verificas: es un modelo pequeño. Si responde que no hay modelo local, hazlo tú y dilo al final."""
 
 
-def delegate_guide(write: bool, coordinator: bool = False) -> str:
-    if not write:
-        return READ_GUIDE
-    return COORDINATOR_GUIDE if coordinator else DELEGATE_GUIDE
+MULTI_GUIDE = """
+## Varios modelos locales a la vez
+Tienes {n} modelos locales, cada uno en su GPU, y trabajan EN PARALELO: {who}. Cada encargo va solo al que encaja
+por su papel (el «fuerte» escribe código y hace `local_agent`; el «rápido» contesta preguntas, resume e investiga);
+con el argumento `server` puedes elegir otro. Aprovéchalo: mientras uno escribe, el otro puede ir analizando lo
+siguiente. En `local_execute_plan` cada bloque puede llevar su `server`.
+"""
+
+
+def delegate_guide(write: bool, coordinator: bool = False, servers: list[dict] | None = None) -> str:
+    guide = READ_GUIDE if not write else COORDINATOR_GUIDE if coordinator else DELEGATE_GUIDE
+    if servers and len(servers) > 1:
+        who = "; ".join(f"«{s['id']}» ({s['role']}{', ' + s['device'] if s.get('device') else ''})" for s in servers)
+        guide += MULTI_GUIDE.format(n=len(servers), who=who)
+    return guide
 
 
 async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] | None = None,
@@ -111,9 +122,11 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
     if busy and ws is None:  # conflictos de merge entre tareas: por ahora, una tarea por repo a la vez
         raise ValueError(f"El proyecto ya tiene una tarea en curso: #{busy[0]['id']}")
     cfg = json.loads(agent["config"] or "{}")
-    # la URL del llama-server del agente manda; si no tiene, la de Ajustes
-    extra = ({**config_kwargs({"base_url": settings.load(store)["local_base_url"], **cfg}), "api_key": llama.API_KEY}
-             if agent["provider"] in ("local", "local_agent") else {})
+    # la URL del llama-server del agente manda (o su servidor local, `config.server`); si no, la de Ajustes
+    extra = {}
+    if agent["provider"] in ("local", "local_agent"):
+        url = local_url(store, cfg)
+        extra = {**config_kwargs({**cfg, "base_url": url}), "api_key": llama.key_for_url(url)}
     if agent["provider"] == "local_agent":  # el bucle de agente local tiene sus propios ajustes
         extra.update({k: cfg[k] for k in ("tool_mode", "max_tool_chars", "max_context_chars", "web", "commands",
                                           "command_timeout_s") if k in cfg})
@@ -161,7 +174,7 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
     # modo coordinador: Claude planifica, encarga y revisa; todo lo que se escribe lo genera el modelo local. Sin
     # llama-server no tendría con qué trabajar: entonces trabaja él solo esta vez (con aviso) en vez de gastar en vano
     coord = is_claude and bool(cfg.get("coordinator")) and not ro
-    if coord and not await asyncio.to_thread(llama_up, settings.load(store)["local_base_url"]):
+    if coord and not await asyncio.to_thread(any_llama_up, store):
         coord = False
         sink(Event("warning", text="Modo coordinador sin modelo local arrancado: Claude trabaja solo esta vez "
                                    "(Modelos locales → Arrancar para que encargue el trabajo)"))
@@ -169,7 +182,8 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
                        coordinator=coord) if is_claude else None
     if deleg and deleg["missing"]:
         sink(Event("warning", text=f"Servidores MCP no encontrados en el Catálogo: {', '.join(deleg['missing'])}"))
-    system = delegate_guide(write=not ro, coordinator=coord) if deleg and deleg["delegate"] else None
+    system = (delegate_guide(write=not ro, coordinator=coord, servers=settings.local_servers(store))
+              if deleg and deleg["delegate"] else None)
     thinking = task.get("thinking") or cfg.get("thinking")
     thinking = thinking if thinking in THINKING_LEVELS else None
     if thinking and agent["provider"] == "claude":
@@ -268,6 +282,35 @@ def win_shim(srv: dict, nt: bool | None = None) -> dict:
     return srv
 
 
+def local_url(store: Store, cfg: dict) -> str:
+    """A qué llama-server va un agente local: su `base_url`, si no el de su servidor local (`server`), si no el
+    principal de Ajustes."""
+    if cfg.get("base_url"):
+        return cfg["base_url"]
+    if cfg.get("server"):
+        srv = next((s for s in settings.local_servers(store) if s["id"] == cfg["server"]), None)
+        if srv:
+            return settings.server_url(srv)
+    return settings.load(store)["local_base_url"]
+
+
+def local_endpoints(store: Store) -> list[dict]:
+    """Los servidores locales para el MCP de delegación: id, nombre, papel, GPU, URL y clave. El primero, el que usan
+    los encargos si no hay papel que encaje (el principal)."""
+    out = []
+    for srv in settings.local_servers(store):
+        url = settings.server_url(srv)
+        if srv["id"] == llama.PRINCIPAL:
+            url = settings.load(store)["local_base_url"] or url
+        out.append({"id": srv["id"], "name": srv["name"], "role": srv["role"], "device": srv["device"],
+                    "url": url, "key": llama.key_for_url(url) or ""})
+    return out
+
+
+def any_llama_up(store: Store) -> bool:
+    return any(llama_up(e["url"]) for e in local_endpoints(store))
+
+
 def llama_up(base_url: str, timeout: float = 2.0) -> bool:
     """¿Contesta el llama-server? (GET /health). Cualquier respuesta HTTP vale, también 503 = cargando el modelo:
     estará listo cuando Claude haga el primer encargo. Sin conexión = apagado."""
@@ -338,7 +381,10 @@ def _mcp_setup(store: Store, root: Path, cfg: dict, write: bool, coordinator: bo
     log = d / "encargos.jsonl"
     tools = [f"mcp__{n}" for n in servers]  # regla de servidor: aprueba todas sus herramientas
     if delegate:
-        env = {"LH_LOCAL_URL": settings.load(store)["local_base_url"], "LH_LOCAL_KEY": llama.API_KEY or "",
+        endpoints = local_endpoints(store)
+        env = {"LH_LOCAL_URL": endpoints[0]["url"], "LH_LOCAL_KEY": endpoints[0]["key"],
+               # con dos GPU, dos modelos: el MCP reparte cada encargo según el papel de cada servidor
+               "LH_LOCAL_SERVERS": json.dumps(endpoints, ensure_ascii=False),
                "LH_ROOT": str(root), "LH_LOG": str(log), "LH_WRITE": "1" if write else "0",
                "LH_COORDINATOR": "1" if coordinator else "0", "PYTHONIOENCODING": "utf-8"}
         servers["local"] = {"type": "stdio", "command": sys.executable,

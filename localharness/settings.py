@@ -34,10 +34,15 @@ DEFAULTS: dict[str, Any] = {
     # per_model: {ruta del GGUF: {ctx, ngl, extra, y cualquier clave de llama.OPTION_FLAGS/BOOL_FLAGS}} — lo que
     # falte usa los valores generales de arriba. hardware: VRAM/RAM a mano si la detección falla (vacío = detectar).
     # download_dir: dónde dejar lo que se descarga de Hugging Face (vacío = la primera carpeta de modelos).
+    # servers: los llama-server que puede tener encendidos a la vez (uno por GPU, p. ej.): [{id, name, port, device,
+    # role}]. Vacío = solo el «principal» en `port`. role: general (todo) | fuerte (escribir código, agente local) |
+    # rapido (preguntas, resúmenes, buscar): la delegación reparte los encargos según el papel. device: -dev de
+    # llama.cpp (CUDA0, CUDA1, CUDA0,CUDA1…; vacío = lo decide llama.cpp).
     "llama": {"server": "", "model_dirs": [], "port": 8080, "ctx": 16384, "ngl": 99, "per_model": {},
-              "hardware": {}, "hf_token": "", "download_dir": "",
-              # autostart: al abrir LocalHarness arranca el último modelo (last = {model, options} del último arranque)
-              "autostart": False, "last": {}},
+              "hardware": {}, "hf_token": "", "download_dir": "", "servers": [],
+              # autostart: al abrir LocalHarness arranca el último modelo de cada servidor (last = {model, options}
+              # del principal; last_by_server = {id: {model, options}} de los demás)
+              "autostart": False, "last": {}, "last_by_server": {}},
     # Valores que propone el formulario de nuevo agente
     "agent_defaults": {"provider": "claude", "model": "sonnet", "role": "trabajador", "max_turns": 10,
                        "max_budget_usd": 1.0},
@@ -63,6 +68,62 @@ def clean_office_layout(v: Any) -> dict[str, list[float]]:
             raise ValueError(f"Posición no válida para {k!r}")
         out[k] = [max(-20.0, min(20.0, float(p[0]))), max(-20.0, min(20.0, float(p[1]))), int(p[2]) % 4]
     return out
+SERVER_ROLES = ("general", "fuerte", "rapido")
+SERVER_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,23}$")
+DEVICE = re.compile(r"^([A-Za-z]+\d+)(,[A-Za-z]+\d+)*$")
+
+
+def clean_servers(v: Any, default_port: int) -> list[dict]:
+    """Valida `llama.servers`. Siempre queda el «principal» (el primero); ids y puertos únicos."""
+    if not isinstance(v, list):
+        raise ValueError("llama.servers debe ser una lista")
+    out: list[dict] = []
+    for srv in v:
+        if not isinstance(srv, dict):
+            raise ValueError("Cada servidor local debe ser un objeto")
+        sid = str(srv.get("id") or "").strip().lower()
+        if not SERVER_ID.match(sid):
+            raise ValueError(f"Identificador de servidor no válido: {sid!r} (minúsculas, números, - y _)")
+        try:
+            port = int(srv.get("port") or 0)
+        except (TypeError, ValueError):
+            port = 0
+        if not 1024 <= port <= 65535:
+            raise ValueError(f"Puerto no válido para {sid}: {srv.get('port')!r}")
+        device = str(srv.get("device") or "").replace(" ", "")
+        if device and not DEVICE.match(device):
+            raise ValueError(f"Dispositivo no válido para {sid}: {device!r} (p. ej. CUDA0 o CUDA0,CUDA1)")
+        role = srv.get("role") if srv.get("role") in SERVER_ROLES else "general"
+        out.append({"id": sid, "name": str(srv.get("name") or sid)[:40], "port": port, "device": device,
+                    "role": role})
+    ids = [s["id"] for s in out]
+    ports = [s["port"] for s in out]
+    if len(set(ids)) != len(ids):
+        raise ValueError("Hay dos servidores locales con el mismo identificador")
+    if len(set(ports)) != len(ports):
+        raise ValueError("Hay dos servidores locales en el mismo puerto")
+    if len(out) > 4:
+        raise ValueError("Como mucho 4 servidores locales")
+    if llama.PRINCIPAL not in ids:
+        if default_port in ports:
+            raise ValueError(f"El puerto {default_port} es del servidor principal")
+        out.insert(0, {"id": llama.PRINCIPAL, "name": "Principal", "port": default_port, "device": "",
+                       "role": "general"})
+    else:  # el principal siempre el primero
+        out.sort(key=lambda s: s["id"] != llama.PRINCIPAL)
+    return out
+
+
+def local_servers(store: Store) -> list[dict]:
+    """Los servidores locales configurados (como mínimo el principal, en `llama.port`)."""
+    lm = load(store)["llama"]
+    return clean_servers(lm.get("servers") or [], int(lm["port"]))
+
+
+def server_url(srv: dict) -> str:
+    return f"http://127.0.0.1:{srv['port']}"
+
+
 MCP_NAME = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 
 
@@ -116,9 +177,22 @@ def save(store: Store, changes: dict[str, Any]) -> dict[str, Any]:
             if not isinstance(v, dict):
                 raise ValueError(f"{k} debe ser un objeto")
             v = {kk: vv for kk, vv in {**current[k], **v}.items() if kk in DEFAULTS[k]}
+            if k == "llama":
+                v = _sync_principal(v, changes[k])
         store.set_setting(k, v)
     apply(store)
     return load(store)
+
+
+def _sync_principal(lm: dict, changed: dict) -> dict:
+    """`llama.port` y el puerto del servidor «principal» son lo mismo: se cambie lo que se cambie, quedan iguales."""
+    if not lm.get("servers"):
+        return lm
+    if "servers" in changed:
+        servers = clean_servers(lm["servers"], int(lm["port"]))
+        return {**lm, "servers": servers, "port": servers[0]["port"]}
+    servers = [{**s, "port": int(lm["port"])} if s.get("id") == llama.PRINCIPAL else s for s in lm["servers"]]
+    return {**lm, "servers": clean_servers(servers, int(lm["port"]))}
 
 
 def reset(store: Store) -> dict[str, Any]:

@@ -10,6 +10,7 @@ De dónde salen las rutas (la primera que exista):
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -20,7 +21,24 @@ SERVER_OVERRIDE: str | None = None
 DIRS_OVERRIDE: list[str] = []
 # Clave del llama-server lanzado desde la GUI (aleatoria en cada arranque). Sin ella llama-server deja CORS
 # abierto: cualquier web abierta en el navegador podría usar tu GPU a través de 127.0.0.1.
+# API_KEY es la del servidor «principal» (compatibilidad); KEYS, la de cada puerto (varios modelos, uno por GPU).
 API_KEY: str | None = None
+KEYS: dict[int, str] = {}
+PRINCIPAL = "principal"
+
+
+def key_for(port: int | None) -> str | None:
+    """La --api-key del llama-server que escucha en `port` (si lo arrancamos nosotros)."""
+    return KEYS.get(int(port)) if port else None
+
+
+def port_of(url: str | None) -> int | None:
+    m = re.search(r":(\d+)(?:/|$)", url or "")
+    return int(m.group(1)) if m else None
+
+
+def key_for_url(url: str | None) -> str | None:
+    return key_for(port_of(url)) or API_KEY  # uno lanzado a mano no tiene clave: la cabecera no molesta
 
 
 def arena_config() -> dict:
@@ -51,6 +69,40 @@ def server_binary() -> str | None:
             if cand.is_file():
                 return str(cand)
     return shutil.which("llama-server")
+
+
+_devices_cache: dict = {}
+
+
+def parse_devices(text: str) -> list[dict]:
+    """Salida de `llama-server --list-devices` → [{id: "CUDA0", name, total_mb, free_mb}]. Es la numeración que
+    entiende `-dev`, que NO tiene por qué coincidir con la de nvidia-smi (CUDA ordena de la más rápida a la más
+    lenta; nvidia-smi, por bus PCI)."""
+    out = []
+    for line in text.splitlines():
+        m = re.match(r"\s*([A-Za-z]+\d+):\s*(.+?)\s*\((\d+)\s*MiB,\s*(\d+)\s*MiB free\)", line)
+        if m:
+            out.append({"id": m.group(1), "name": m.group(2), "total_mb": int(m.group(3)),
+                        "free_mb": int(m.group(4))})
+    return out
+
+
+def list_devices(force: bool = False) -> list[dict]:
+    """Las GPU tal como las ve llama.cpp (se guarda por binario: preguntar tarda ~1 s)."""
+    exe = server_binary()
+    if not exe:
+        return []
+    if not force and _devices_cache.get("exe") == exe:
+        return _devices_cache["devices"]
+    try:
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        r = subprocess.run([exe, "--list-devices"], capture_output=True, timeout=20, stdin=subprocess.DEVNULL,
+                           creationflags=flags)
+        devices = parse_devices((r.stdout + r.stderr).decode("utf-8", "replace"))
+    except (OSError, subprocess.TimeoutExpired):
+        devices = []
+    _devices_cache.update(exe=exe, devices=devices)
+    return devices
 
 
 def model_dirs() -> list[Path]:
@@ -92,6 +144,8 @@ OPTION_FLAGS = {
     "flash_attn": "-fa", "cache_k": "-ctk", "cache_v": "-ctv", "threads": "-t", "batch": "-b", "ubatch": "-ub",
     "parallel": "-np", "n_cpu_moe": "--n-cpu-moe", "temp": "--temp", "top_p": "--top-p", "top_k": "--top-k",
     "min_p": "--min-p", "repeat_penalty": "--repeat-penalty", "reasoning_budget": "--reasoning-budget",
+    # varias GPUs: en cuáles cargar (CUDA0, CUDA0,CUDA1…), cómo repartir (layer|row|none), proporción (3,1) y la principal
+    "device": "-dev", "split_mode": "-sm", "tensor_split": "-ts", "main_gpu": "-mg",
 }
 BOOL_FLAGS = {"mlock": "--mlock", "no_mmap": "--no-mmap", "cont_batching_off": "--no-cont-batching"}
 
@@ -121,23 +175,33 @@ def serve_command(model: Path, port: int = 8080, ctx: int = 16384, ngl: int = 99
 
 
 class LlamaManager:
-    """Un llama-server lanzado desde la GUI (uno a la vez: una sola GPU). Vive lo que viva el servidor."""
+    """Un llama-server lanzado desde la GUI. Hay uno por cada «servidor local» de Ajustes (p. ej. uno por GPU):
+    `server_id` lo distingue (log, clave y tiempos de carga propios). Vive lo que viva el servidor."""
 
-    def __init__(self, log_path: Path):
+    def __init__(self, log_path: Path, server_id: str = PRINCIPAL, port: int = 8080):
+        self.server_id = server_id
+        main = server_id == PRINCIPAL
+        if not main:
+            log_path = log_path.with_name(f"{log_path.stem}-{server_id}{log_path.suffix}")
         self.log_path = log_path
         self.times_path = log_path.with_name("llama-load-times.json")  # segundos que tardó cada GGUF en cargar
         # la --api-key del último llama-server que arrancamos: si reinicias LocalHarness y ese llama-server sigue
         # encendido, hay que seguir usando SU clave (si no, cada encargo da «401 Invalid API Key»)
-        self.key_path = log_path.with_name("llama-server.key")
+        self.key_path = log_path.with_name("llama-server.key" if main else f"llama-server-{server_id}.key")
+        self.port = port
+        self.key: str | None = None
+        try:
+            self.key = self.key_path.read_text(encoding="utf-8").strip() or None
+        except OSError:
+            pass
         global API_KEY
-        if API_KEY is None:
-            try:
-                API_KEY = self.key_path.read_text(encoding="utf-8").strip() or None
-            except OSError:
-                pass
+        if self.key:
+            KEYS.setdefault(port, self.key)
+            if main and API_KEY is None:
+                API_KEY = self.key
         self.proc: subprocess.Popen | None = None
         self.model: str | None = None
-        self.port = 8080
+        self.device: str | None = None
         self.started_at: float | None = None
         self.ready_at: float | None = None
 
@@ -156,7 +220,11 @@ class LlamaManager:
                                      creationflags=flags)
         log.close()
         self.model, self.port, self.started_at, self.ready_at = str(model), port, time.time(), None
-        API_KEY = key
+        self.key = KEYS[port] = key
+        dev = [a for i, a in enumerate(cmd) if i and cmd[i - 1] == "-dev"]
+        self.device = dev[-1] if dev else None
+        if self.server_id == PRINCIPAL:
+            API_KEY = key
         try:
             self.key_path.write_text(key, encoding="utf-8")
         except OSError:
@@ -181,7 +249,7 @@ class LlamaManager:
                 self.ready_at = time.time()
                 self._remember_load_time(self.model, self.ready_at - (self.started_at or self.ready_at))
             text = self.log_text()
-            return {"state": state, "model": self.model, "port": self.port, "pid": self.proc.pid,
+            return {"state": state, "model": self.model, "port": self.port, "pid": self.proc.pid, "device": self.device,
                     "started_at": self.started_at, "exit_code": code, "log": _tail(text),
                     "log_lines": last_lines(text), "progress": self._progress(state, text)}
         h = health(port)
@@ -314,3 +382,31 @@ def describe(model: Path) -> dict:
     mmproj = any(model.parent.glob("mmproj*.gguf"))
     return {"name": re.sub(r"-\d{5}-of-\d{5}$", "", model.stem), "file": model.name, "path": str(model), "dir": str(model.parent),
             "size_gb": round(size / 2**30, 2), "quant": m.group(1).upper() if m else None, "vision": mmproj}
+
+
+class LlamaPool:
+    """Los llama-server de LocalHarness, uno por «servidor local» de Ajustes (`llama.servers`): lo normal con dos
+    GPU es uno en cada una (p. ej. el modelo «fuerte» en la grande y el «rápido» en la pequeña)."""
+
+    def __init__(self, log_path: Path):
+        self.log_path = log_path
+        self.managers: dict[str, LlamaManager] = {}
+
+    def get(self, server_id: str, port: int | None = None) -> LlamaManager:
+        m = self.managers.get(server_id)
+        if m is None:
+            m = self.managers[server_id] = LlamaManager(self.log_path, server_id, port or 8080)
+        elif port and not (m.proc and m.proc.poll() is None):
+            m.port = port  # el puerto se puede cambiar en Ajustes mientras está apagado
+        return m
+
+    @property
+    def principal(self) -> LlamaManager:
+        return self.get(PRINCIPAL)
+
+    def stop_all(self) -> None:
+        for m in self.managers.values():
+            m.stop()
+
+    def load_times(self) -> dict[str, float]:
+        return self.principal.load_times()

@@ -80,8 +80,9 @@ SCHEMA = {"type": "object", "properties": {"verdict": {"type": "string", "enum":
 def _chat(port: int, body: dict, timeout: float) -> dict:
     req = urllib.request.Request(f"http://127.0.0.1:{port}/v1/chat/completions", data=json.dumps(body).encode(),
                                  headers={"Content-Type": "application/json"})
-    if llama.API_KEY:
-        req.add_header("Authorization", f"Bearer {llama.API_KEY}")
+    key = llama.key_for(port) or llama.API_KEY
+    if key:
+        req.add_header("Authorization", f"Bearer {key}")
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read())
 

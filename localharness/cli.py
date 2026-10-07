@@ -471,7 +471,7 @@ def cmd_delegation_test(args, store: Store) -> int:
                                            encoding="utf-8")
         for cmd in (["init", "-q"], ["add", "."], ["-c", "user.name=lh", "-c", "user.email=lh@local", "commit", "-qm", "base"]):
             subprocess.run(["git", *cmd], cwd=root, check=True)
-        server = mcp_local.Server({"LH_LOCAL_URL": url, "LH_LOCAL_KEY": llama.API_KEY or "", "LH_ROOT": tmp,
+        server = mcp_local.Server({"LH_LOCAL_URL": url, "LH_LOCAL_KEY": llama.key_for_url(url) or "", "LH_ROOT": tmp,
                                    "LH_WRITE": "1", "LH_COMMANDS": '["python -m unittest"]'})
         ok = True
         steps = [("local_ask", {"task": "¿Qué hace la función suma y qué fallo tiene? Una frase.", "files": ["calc.py"]}),

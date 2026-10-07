@@ -151,3 +151,19 @@ def budget(hw: dict, override: dict | None = None) -> dict:
             "bandwidth_gbs": int(o.get("bandwidth_gbs") or bandwidth(o.get("gpu_name") or gpu.get("name"))),
             "manual": bool(o.get("vram_gb") or o.get("ram_gb"))}
 
+
+
+def device_budget(budget: dict, devices: list[dict], device: str | None) -> dict:
+    """El presupuesto de `budget` limitado a las GPU de un servidor local (`device` = -dev de llama.cpp: CUDA1 o
+    CUDA0,CUDA1). Varias GPU suman su VRAM (llama.cpp reparte las capas); el ancho de banda es el de la más lenta,
+    que es la que marca el paso. Sin `device` o sin saber qué es, el presupuesto general (la GPU más grande)."""
+    if not device or budget.get("manual"):
+        return budget
+    chosen = [d for d in devices if d["id"] in device.split(",")]
+    if not chosen:
+        return budget
+    vram = sum(d["total_mb"] for d in chosen) / 1024
+    names = [d["name"] for d in chosen]
+    return {**budget, "gpu": " + ".join(names), "vram_gb": round(vram, 1),
+            "usable_vram_gb": max(0.0, vram - 0.7 * len(chosen)),
+            "bandwidth_gbs": min(bandwidth(n) for n in names), "device": device}
