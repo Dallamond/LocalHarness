@@ -6,7 +6,7 @@ from pathlib import Path
 from localharness import context, settings
 from localharness.adapters import get_adapter
 from localharness.adapters.base import RunSpec
-from localharness.orchestrator import _mcp_setup, delegate_guide
+from localharness.orchestrator import _mcp_setup, delegate_guide, win_shim
 from localharness.store import Store
 from tests.test_core import make_repo
 
@@ -44,7 +44,7 @@ class McpCatalogTests(unittest.TestCase):
             m = _mcp_setup(s, Path(tmp), {"mcps": ["memory", "nada"]}, write=True)
             try:
                 cfg = json.loads(Path(m["config"]).read_text(encoding="utf-8"))["mcpServers"]
-                self.assertEqual(cfg, {"memory": {"command": "npx", "args": ["m"]}})  # sin la descripción
+                self.assertEqual(cfg, {"memory": win_shim({"command": "npx", "args": ["m"]})})  # sin la descripción
                 self.assertEqual(m["tools"], ["mcp__memory"])
                 self.assertEqual(m["missing"], ["nada"])
                 self.assertFalse(m["delegate"])
