@@ -388,13 +388,24 @@ export function onTaskEvent(fn: Handler): () => void {
   return () => eventHandlers.delete(fn);
 }
 
+const DOWN = "El servidor de LocalHarness no responde. ¿Sigue abierta la ventana de «python -m localharness serve» "
+  + "y sin errores? Ábrelo y entra por http://127.0.0.1:8095";
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(path, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-  });
+  let r: Response;
+  try {
+    r = await fetch(path, {
+      ...init,
+      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    });
+  } catch {
+    throw new Error(DOWN);
+  }
   if (r.status === 204) return undefined as T;
   const body = await r.json().catch(() => null);
+  // sin JSON de FastAPI = no ha contestado LocalHarness sino algo intermedio (el servidor de desarrollo de Vite o un
+  // proxy) porque el servidor de Python no está en marcha o se ha caído
+  if (!r.ok && body?.detail === undefined && [502, 503, 504].includes(r.status)) throw new Error(`${DOWN} (HTTP ${r.status})`);
   if (!r.ok) {
     const detail = body?.detail;
     throw new Error(
