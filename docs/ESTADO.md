@@ -1,12 +1,34 @@
 # Estado y traspaso — leer primero al retomar (también desde Claude Code en la web)
 
-Última actualización: 07/10/2026, noche (revisión completa + delegación unificada: ver `docs/REVISION.md`). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
+Última actualización: 07/10/2026, noche (dos GPU, dos modelos y Comparativa; ver «DÓNDE LO DEJAMOS»). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
 
 ## ▶ EMPEZAR AQUÍ — TODO ESTÁ EN `main` (07/10/2026)
 Decisión de Lucas: **se trabaja siempre en `main`**. Se integraron en `main` las ramas `claude/gifted-carson-20grn9`
 (oficina 3D + Catálogo), `claude/hopeful-euler-p8m838` (agente local con herramientas, roles, pensamiento, plan
 editable), `claude/cool-dirac-vmw6s0` (análisis de Paperclip) y `claude/youthful-edison-bi67hm` (Modelos locales +
 rediseño de la oficina). Las secciones de abajo son el historial de cada una; donde digan «rama X», ya está en `main`.
+
+### ▶ DÓNDE LO DEJAMOS (07/10/2026, noche) — leer primero
+- **Todo en `main` y en GitHub** (último trabajo: dos GPU + las 4 mejoras de abajo). 201 pruebas, ruff limpio, web compila.
+- **PC de Lucas**: RTX 3060 12 GB (llama.cpp `CUDA0`) + GTX 1060 6 GB (`CUDA1`; en nvidia-smi el orden es el
+  contrario). llama.cpp en `D:\dev-tools\llama.cpp\b11379`, modelos en `D:\ollama\models` (Qwen3.5-9B y
+  Qwen3.5-4B Q4_K_M). Sandbox creado en `C:\Users\Lucas\LocalHarness-sandbox` (proyecto «sandbox»).
+- **Última prueba de Lucas**: «el segundo modelo también va a la 3060». Diagnóstico: seguía abierto el
+  LocalHarness ANTERIOR a los cambios (arrancado 18:33; el llama-server sin `-dev` ni `-lv 4`; base de datos en
+  esquema 5, la nueva migra a 6; `llama.servers` sin configurar). Con un solo servidor, arrancar otro modelo
+  sustituye al anterior. **Solución**: cerrar LocalHarness del todo, abrir `LocalHarness.bat`, Ctrl+F5, Modelos
+  locales → «Usar las 2 GPU» y arrancar con «Arrancar en Fuerte / Rápido».
+- **Ojo**: la 1060 tenía 3,1 GB ocupados sin modelo (¿monitores conectados a ella?): el 4B va justo; bajar
+  contexto o caché q8_0, o conectar los monitores a la 3060.
+- **Pendiente de probar (Lucas)**, en orden: dos servidores en la GUI (dos paneles, CUDA0/CUDA1) → arranque
+  automático de modelos al lanzar tarea → prompt guiado con un agente coordinador (plantilla programador +
+  Haiku + «Jefe del modelo local») que pide `local_execute_plan` con `after` → prompt natural («arregla todos
+  los fallos y añade tests») para ver si Claude reparte solo → Comparativa en el sandbox con haiku.
+- **Siguiente (yo)**, según lo que salga: reforzar la guía del coordinador si Claude no usa `after` ni reparte;
+  ver a los dos trabajadores en directo en la oficina (hoy un `live.json` por tarea); decidir el modelo de la 1060
+  con los números de la Comparativa.
+- `web/package-lock.json` sale modificado tras `npm install` en Windows (`"dev": true` → `devOptional`): ruido de
+  la versión de npm, no se sube.
 
 ### Mejoras para aprovechar las dos GPU (07/10/2026, noche) — Lucas las prueba a la vuelta
 1. **Pensamiento por servidor** (`llama.servers[].thinking`: normal | apagado | profundo → `chat_template_kwargs`
@@ -328,7 +350,7 @@ tiende a hacerlo todo él. Ideas a llevar a la conversación (de la tarea 8 de a
 
 ## ▶ Rama `claude/hopeful-euler-p8m838` (06/10/2026, noche) — integrada el 07/10 en `claude/youthful-edison-bi67hm`
 
-Última actualización: 06/10/2026, noche (sesión 4: rumbo nuevo — manual del Director, roles, agente local con herramientas, plan editable, pensamiento). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
+Última actualización: 07/10/2026, noche (dos GPU, dos modelos y Comparativa; ver «DÓNDE LO DEJAMOS»). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
 
 ### Lo que quedaba pendiente en esa rama
 
