@@ -6,7 +6,7 @@ import Markdown from "../components/Markdown.vue";
 import StatusChip from "../components/StatusChip.vue";
 import {
   ROLE_TEXT, STATUS_TEXT, agentName, ago, api, live, onTaskEvent, parseTs, pickPath, post, projectName, putTask,
-  refreshAll, speedText, statusChip, taskList, usd,
+  refreshAll, speedText, statusChip, taskList, usd, localModelsText,
   type Plan, type Project, type Review, type Skill, type Task, type TaskEvent, THINKING_TEXT
 } from "../api";
 
@@ -312,7 +312,7 @@ const placeholder = computed(() => {
           <span class="muted small">{{ agentName(task.agent_id) }}<template v-if="agent?.provider?.startsWith('local')"> · usa
             <strong>{{ localModel ?? "ningún modelo arrancado" }}</strong></template>
             <template v-if="agent?.provider === 'claude'"> ·
-              <span v-if="agent.config.delegate_local" title="Puede encargar trabajo al modelo arrancado">🦙 delega en {{ live.local.model ?? "local (nada arrancado)" }}</span>
+              <span v-if="agent.config.delegate_local" title="Puede encargar trabajo a los modelos arrancados">🦙 delega en {{ localModelsText("local (nada arrancado)") }}</span>
               <RouterLink v-else to="/ajustes?s=agentes" title="Ajustes → Agentes → Editar → «Puede delegar en el modelo local»">no delega en local</RouterLink>
             </template> · {{ projectName(task.project_id) }} · {{ usd(task.cost_usd) }}</span>
         </div>

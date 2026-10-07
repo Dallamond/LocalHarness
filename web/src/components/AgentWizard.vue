@@ -6,7 +6,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import {
   ROLE_TEXT, api, live, post, refreshAll, ui,
-  type Agent, type AgentTemplate, type Library, type LlamaInfo, type ModelRating, type Settings, type Skill, type Thinking,
+  type Agent, type AgentTemplate, type Library, type LlamaInfo, type LocalServer, type ModelRating, type Settings, type Skill, type Thinking,
 } from "../api";
 
 const router = useRouter();
@@ -17,6 +17,7 @@ const lib = ref<Library | null>(null);
 const installed = ref<Skill[]>([]);
 const servers = ref<Settings["mcp_servers"]>({});
 const models = ref<{ name: string; path: string; size_gb: number; rating?: ModelRating["rating"] }[]>([]);
+const llamaServers = ref<LocalServer[]>([]); // servidores locales (uno por GPU); con uno solo no se pregunta
 const modelsLoading = ref(true);
 
 const ROLE_HEX: Record<string, string> = { director: "#5b5bf0", jefe: "#10b981", trabajador: "#f97316", consultas: "#0ea5e9" };
@@ -33,6 +34,7 @@ interface Form {
   brain: "claude" | "local";
   claude_model: string;
   local_model: string;       // nombre del GGUF preferido ("" = el que esté arrancado)
+  local_server: string;      // servidor local (GPU) en el que trabaja ("" = el principal)
   local_provider: "local" | "local_agent";
   local_use: string;
   description: string;
@@ -49,7 +51,7 @@ interface Form {
   timeout_min: number | null;
 }
 const f = reactive<Form>({
-  template: "", name: "", role: "trabajador", brain: "claude", claude_model: "sonnet", local_model: "",
+  template: "", name: "", role: "trabajador", brain: "claude", claude_model: "sonnet", local_model: "", local_server: "",
   local_provider: "local_agent", local_use: "agente con herramientas", description: "", instructions: "", skills: [],
   mcps: [], web: false, delegate_local: false, coordinator: false, read_only: false, thinking: "", max_turns: 10, max_budget_usd: 0.5,
   timeout_min: null,
@@ -82,7 +84,7 @@ function fromAgent(a: Agent) {
   const local = a.provider.startsWith("local");
   Object.assign(f, {
     template: c.template ?? "", name: a.name, role: a.role ?? "trabajador", brain: local ? "local" : "claude",
-    claude_model: local ? "sonnet" : a.model ?? "sonnet", local_model: local ? a.model ?? "" : "",
+    claude_model: local ? "sonnet" : a.model ?? "sonnet", local_model: local ? a.model ?? "" : "", local_server: c.server ?? "",
     local_provider: a.provider === "local" ? "local" : "local_agent",
     local_use: a.role === "director" ? "director" : a.role === "jefe" ? "jefe técnico" : "agente con herramientas",
     description: c.description ?? "", instructions: c.instructions ?? "", skills: [...(c.skills ?? [])],
@@ -111,6 +113,7 @@ async function loadModels() {
       api<{ models: Record<string, ModelRating> }>("/api/llama/ratings").catch(() => ({ models: {} as Record<string, ModelRating> })),
     ]);
     models.value = info.models.map((m) => ({ name: m.name, path: m.path, size_gb: m.size_gb, rating: r.models[m.path]?.rating }));
+    llamaServers.value = info.servers ?? [];
     if (f.brain === "local" && !f.local_model && !editing.value) f.local_model = best.value?.name ?? "";
   } catch {
     models.value = [];
@@ -138,7 +141,18 @@ watch(() => f.brain, (b) => {
   if (b === "local" && !f.local_model) f.local_model = best.value?.name ?? "";
   if (b === "local" && f.local_provider === "local_agent" && !editing.value) f.web = f.web || f.role === "consultas";
 });
-const servedName = computed(() => live.local.state !== "off" && live.local.model ? live.local.model.split(/[\\/]/).pop()!.replace(/\.gguf$/i, "") : null);
+// el modelo arrancado en el servidor de este agente (el principal si no tiene uno)
+const chosenServer = computed(() => llamaServers.value.find((x) => x.id === f.local_server) ?? llamaServers.value[0]);
+const servedName = computed(() => {
+  if (chosenServer.value) return chosenServer.value.model_name;
+  return live.local.state !== "off" && live.local.model ? live.local.model.split(/[\\/]/).pop()!.replace(/\.gguf$/i, "") : null;
+});
+// al elegir un modelo que ya está arrancado en otro servidor, el agente se va a ese servidor
+watch(() => f.local_model, (name) => {
+  if (!name || llamaServers.value.length < 2) return;
+  const on = llamaServers.value.find((x) => x.model_name?.toLowerCase().includes(name.toLowerCase()));
+  if (on) f.local_server = on.id === "principal" ? "" : on.id;
+});
 const scoreClass = (s?: number) => (s === undefined ? "" : s >= 80 ? "s-hi" : s >= 60 ? "s-ok" : s >= 40 ? "s-mid" : "s-lo");
 
 // ---------- skills y servidores: las instaladas + las de la biblioteca (se instalan al guardar)
@@ -228,6 +242,7 @@ async function save() {
       timeout_s: f.timeout_min ? f.timeout_min * 60 : null,
       web: provider.value === "local" ? null : f.web, mcps: isClaude ? mcps : [], delegate_local: isClaude && f.delegate_local,
       coordinator: isClaude && f.delegate_local && f.coordinator && !f.read_only,
+      server: isClaude ? null : f.local_server || null,
     };
     let id: number;
     if (editing.value) {
@@ -334,6 +349,15 @@ async function save() {
                   <span v-if="servedName && servedName.toLowerCase().includes(m.name.toLowerCase())" class="pill pill--active">arrancado</span>
                 </label>
                 <p v-if="models.length" class="muted small">Nota de la pestaña Modelos para «{{ f.local_use }}». El agente usa el modelo que esté arrancado; este queda como preferido.</p>
+              </div>
+              <div v-if="llamaServers.length > 1" class="srvpick">
+                <span class="small muted">Trabaja en</span>
+                <div class="seg">
+                  <button v-for="x in llamaServers" :key="x.id" type="button" :class="{ on: (f.local_server || 'principal') === x.id }"
+                          @click="f.local_server = x.id === 'principal' ? '' : x.id">
+                    <b>{{ x.name }}</b><small>{{ x.device || "GPU automática" }} · {{ x.model_name ?? "apagado" }}</small>
+                  </button>
+                </div>
               </div>
             </template>
           </section>
@@ -465,6 +489,11 @@ async function save() {
 </template>
 
 <style scoped>
+.srvpick {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
 .overlay {
   position: fixed;
   inset: 0;

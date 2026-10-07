@@ -8,6 +8,37 @@ Decisión de Lucas: **se trabaja siempre en `main`**. Se integraron en `main` la
 editable), `claude/cool-dirac-vmw6s0` (análisis de Paperclip) y `claude/youthful-edison-bi67hm` (Modelos locales +
 rediseño de la oficina). Las secciones de abajo son el historial de cada una; donde digan «rama X», ya está en `main`.
 
+### Dos GPU, dos modelos (07/10/2026, tarde — en el PC de Lucas: RTX 3060 12 GB + GTX 1060 6 GB)
+Objetivo de Lucas: que todo el sistema vea normal tener dos modelos locales y dos GPU, para probar el reparto de
+trabajo entre ellos y Claude.
+- **Servidores locales** (`llama.servers` en Ajustes; `settings.local_servers`): `[{id, name, port, device, role}]`,
+  el «principal» siempre (su puerto = `llama.port`), máx. 4. `role`: `general` | `fuerte` (escribe código, `local_agent`)
+  | `rapido` (preguntas, resúmenes, investigar). `device` = `-dev` de llama.cpp (`CUDA0`, `CUDA1`, `CUDA0,CUDA1`).
+- **Numeración de GPU**: `llama.list_devices()` usa `llama-server --list-devices`. En este PC **CUDA0 = RTX 3060 y
+  CUDA1 = GTX 1060**, al revés que nvidia-smi (índice 0 = la 1060). La GUI siempre dice nombre + CUDAn.
+- **`LlamaPool`** (api: `app.state.llama`): un `LlamaManager` por servidor, con su log (`llama-server-<id>.log`),
+  su `--api-key` (`llama.KEYS[puerto]`, `key_for_url`) y su autoarranque (`llama.last` del principal,
+  `llama.last_by_server` del resto). Arranque con `-lv 4`: desde ~b11000 llama.cpp no escribe en qué GPU carga
+  nada con la verbosidad normal (sin eso, «Dónde está cargado» y la barra de carga se quedaban vacíos).
+- **API**: `start` (`server` en el cuerpo), `stop`/`probe`/`usage` (`?server=`), `estimate` (`server`: memoria de las
+  GPU de ese servidor, `hardware.device_budget`), `GET /api/llama` (`servers`, `devices`, `suggested_servers`),
+  `GET /api/llama/devices`, `/api/health` → `locals`. Opciones nuevas de arranque: `device`, `split_mode`,
+  `tensor_split`, `main_gpu`. Un agente local puede fijarse a un servidor (`config.server`).
+- **Delegación** (`mcp_local`, `LH_LOCAL_SERVERS`): cada encargo va al modelo de su papel; Claude puede elegir con
+  `server` (también por bloque en `local_execute_plan`); si el elegido no contesta, el siguiente; **cada `tools/call`
+  va en su hilo**, así que si Claude pide dos cosas a la vez los dos modelos trabajan en paralelo. La guía de
+  delegación lista los modelos cuando hay más de uno. El log de encargos apunta `server`.
+- **GUI**: Modelos locales → un panel por servidor (estado, GPU, Parar, 🧪, log), tarjeta «Servidores locales»
+  (editar; «Usar las 2 GPU» propone fuerte en la grande y rápido en la otra), «Arrancar en …» sobre Tus modelos,
+  el diálogo de arranque dice dónde arranca y deja cambiar/juntar GPU; Consumo en vivo con un bloque por proceso;
+  oficina, chat, catálogo y asistente de agentes muestran los dos modelos.
+- **Probado de verdad** (sin Claude): LocalHarness arrancó Qwen3.5-9B en CUDA0 y Qwen3.5-4B en CUDA1 (listos en 9 s),
+  dos encargos a la vez fueron cada uno a su modelo (el 9B escribió un archivo a 51 tok/s), y con el rápido apagado la
+  pregunta pasó sola al fuerte. 194 pruebas.
+- **Pendiente / siguiente**: probar desde la GUI (reiniciar LocalHarness); una tarea real con Claude coordinando a los
+  dos; medir si compensa (¿4B como rápido o mejor otro modelo en la 1060?); que `local_execute_plan` haga en paralelo
+  los bloques independientes; el directo (`live.json`) es uno por tarea aunque trabajen dos modelos (gana el último).
+
 ### Lista de Lucas (08/10/2026, mediodía) — analíticas, consumo, agentes a medida, Trabajo, directo del modelo local
 - **Integrar sin identidad de git** (fallaba en el PC del instituto: «Committer identity unknown»): el merge usa tu
   identidad si git la tiene y, si no, `LocalHarness <localharness@local>` (`workspace.identity`). No toca tu config.

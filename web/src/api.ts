@@ -23,6 +23,7 @@ export interface Agent {
     temperature?: number; max_tokens?: number; repo_context?: number;
     tool_mode?: string; web?: boolean; commands?: string[]; command_timeout_s?: number; timeout_s?: number;
     from_role?: string; instructions?: string; thinking?: Thinking; off?: boolean; template?: string;
+    server?: string; // local: en qué servidor local (GPU) trabaja; vacío = el principal
   };
 }
 
@@ -252,6 +253,8 @@ export interface Settings {
     download_dir: string;
     autostart: boolean;
     last?: { model?: string; options?: ModelLaunch };
+    last_by_server?: Record<string, { model?: string; options?: ModelLaunch }>;
+    servers: LocalServerCfg[];
   };
   agent_defaults: { provider: string; model: string; role: string; max_turns: number | null; max_budget_usd: number | null };
   mcp_servers: Record<string, McpServer>;
@@ -278,7 +281,38 @@ export interface ModelLaunch {
   reasoning_budget?: number | null;
   mlock?: boolean;
   no_mmap?: boolean;
+  // varias GPU: en cuáles (-dev CUDA0,CUDA1), cómo repartir (-sm), proporción (-ts 2,1) y la principal (-mg)
+  device?: string;
+  split_mode?: "layer" | "row" | "none" | "";
+  tensor_split?: string;
+  main_gpu?: number | null;
 }
+
+/** Un llama-server de los que puede tener encendidos LocalHarness a la vez (normalmente uno por GPU). */
+export type ServerRole = "general" | "fuerte" | "rapido";
+export interface LocalServerCfg {
+  id: string;
+  name: string;
+  port: number;
+  device: string; // -dev de llama.cpp: CUDA0, CUDA1, CUDA0,CUDA1… ("" = lo decide llama.cpp)
+  role: ServerRole;
+}
+export interface LocalServer extends LocalServerCfg {
+  url: string;
+  status: LlamaStatus;
+  model_name: string | null;
+}
+/** Una GPU tal como la numera llama.cpp (no coincide con el índice de nvidia-smi). */
+export interface LlamaDevice {
+  id: string;
+  name: string;
+  total_mb: number;
+  free_mb: number;
+}
+export const SERVER_ROLE_TEXT: Record<ServerRole, string> = {
+  general: "de todo", fuerte: "escribe código y tareas enteras", rapido: "preguntas, resúmenes e investigar",
+};
+export const SERVER_ROLE_LABEL: Record<ServerRole, string> = { general: "General", fuerte: "Fuerte", rapido: "Rápido" };
 
 export interface Budget {
   gpu: string | null;
@@ -402,6 +436,7 @@ export interface LlamaStatus {
   state: "off" | "loading" | "ready" | "failed" | "external";
   model: string | null;
   port: number;
+  device?: string | null;
   pid: number | null;
   started_at: number | null;
   exit_code: number | null;
@@ -416,6 +451,10 @@ export interface LlamaInfo {
   models: LocalModel[];
   status: LlamaStatus;
   config: Settings["llama"];
+  servers: LocalServer[];
+  devices: LlamaDevice[];
+  suggested_servers: LocalServerCfg[] | null;
+  roles: ServerRole[];
   speed: Speed | null;
   load_times: Record<string, number>;
 }
@@ -437,9 +476,34 @@ export const live = reactive({
   recent: [] as RecentTask[],
   speed: {} as Record<number, Speed>,          // tokens/s en vivo por tarea (modelos locales)
   thinking: {} as Record<number, { text: string; at: number; live: boolean }>, // último pensamiento por tarea
-  local: { state: "off", model: null } as { state: string; model: string | null }, // el modelo ARRANCADO
+  local: { state: "off", model: null } as { state: string; model: string | null }, // el modelo ARRANCADO (principal)
+  locals: [] as LocalLive[], // todos los servidores locales (con dos GPU, normalmente dos modelos a la vez)
   lastSpeed: null as Speed | null,
 });
+
+export interface LocalLive {
+  id: string;
+  name: string;
+  role: ServerRole;
+  device: string;
+  port: number;
+  state: string;
+  model: string | null;
+}
+
+/** Los modelos locales que responden ahora (encendidos), para enseñarlos juntos: «Qwen3.5-9B + Qwen3.5-4B». */
+export function localModelsText(empty = "ningún modelo arrancado"): string {
+  const on = live.locals.filter((l) => l.state !== "off" && l.model);
+  if (!on.length) return live.local.model ?? empty;
+  return on.length === 1 ? on[0].model! : on.map((l) => `${l.model} (${l.name})`).join(" + ");
+}
+
+/** Solo /api/health: estado de los modelos locales (lo usan las vistas que lo enseñan, cada pocos segundos). */
+export async function refreshLocals(): Promise<void> {
+  const h = await api<{ local: typeof live.local; locals?: LocalLive[] }>("/api/health");
+  live.local = h.local ?? live.local;
+  live.locals = h.locals ?? [];
+}
 
 type Handler = (ev: TaskEvent) => void;
 const eventHandlers = new Set<Handler>();
@@ -498,7 +562,7 @@ export async function refreshAll(): Promise<void> {
     api<Agent[]>("/api/agents"),
     api<Task[]>("/api/tasks"),
     api<Plan[]>("/api/plans"),
-    api<{ limit: Limit | null; local: typeof live.local; speed: Speed | null }>("/api/health"),
+    api<{ limit: Limit | null; local: typeof live.local; locals?: LocalLive[]; speed: Speed | null }>("/api/health"),
   ]);
   live.projects = projects;
   live.agents = agents;
@@ -506,6 +570,7 @@ export async function refreshAll(): Promise<void> {
   live.plans = Object.fromEntries(plans.map((p) => [p.id, p]));
   live.limit = health.limit;
   live.local = health.local ?? live.local;
+  live.locals = health.locals ?? [];
   live.lastSpeed = health.speed ? { ...health.speed, at: health.speed.at * 1000 } : null;
   await Promise.all([refreshInbox(), refreshActivity()]);
 }
@@ -696,7 +761,11 @@ export const PROVIDER_TEXT: Record<string, string> = {
 
 /** Qué modelo usa de verdad: los locales, el que esté arrancado en llama-server. */
 export function modelText(a: Agent): string {
-  if (a.provider.startsWith("local")) return live.local.model ? `${live.local.model} (arrancado)` : "ningún modelo arrancado";
+  if (a.provider.startsWith("local")) {
+    const srv = a.config?.server ? live.locals.find((l) => l.id === a.config.server) : null;
+    if (srv) return srv.model ? `${srv.model} (${srv.name})` : `${srv.name}: apagado`;
+    return live.local.model ? `${live.local.model} (arrancado)` : "ningún modelo arrancado";
+  }
   return [a.provider === "claude" ? "Claude" : a.provider, a.model].filter(Boolean).join(" ");
 }
 

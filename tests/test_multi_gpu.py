@@ -88,6 +88,28 @@ class DevicesTests(unittest.TestCase):
         self.assertEqual(llama.option_args({"device": "CUDA0,CUDA1", "tensor_split": "2,1", "split_mode": "layer"}),
                          ["-dev", "CUDA0,CUDA1", "-sm", "layer", "-ts", "2,1"])
 
+    def test_placement_from_real_log_with_lv4(self):
+        """Log real de llama.cpp b11379 con -lv 4 (el 4B en la GTX 1060): dónde está cargado."""
+        from localharness import usage
+        log = """0.01.737.164 I load_tensors: offloaded 34/34 layers to GPU
+0.01.737.172 I load_tensors:   CPU_Mapped model buffer size =   497.31 MiB
+0.01.737.173 I load_tensors:        CUDA1 model buffer size =  2740.75 MiB
+0.03.970.573 I llama_context:  CUDA_Host  output buffer size =     3.79 MiB
+0.03.971.157 I llama_kv_cache:      CUDA1 KV buffer size =   128.00 MiB
+0.03.994.960 I sched_reserve:      CUDA1 compute buffer size =    68.02 MiB
+"""
+        p = usage.placement(log)
+        self.assertEqual((p["layers_gpu"], p["layers_total"]), (34, 34))
+        self.assertEqual({d["device"] for d in p["devices"] if d["gpu"]}, {"CUDA1"})
+        self.assertGreater(p["gpu_mb"], 2900)
+
+    def test_serve_command_asks_for_verbose_log(self):
+        with unittest.mock.patch.object(llama, "server_binary", return_value="llama-server"):
+            cmd = llama.serve_command(Path("m.gguf"), 8081, 4096, 99, ["-dev", "CUDA1"])
+            self.assertEqual(cmd[cmd.index("-lv") + 1], "4")
+            mine = llama.serve_command(Path("m.gguf"), 8081, 4096, 99, ["-lv", "2"])
+            self.assertEqual(mine.count("-lv"), 1)
+
     def test_keys_by_port(self):
         self.assertEqual(llama.port_of("http://127.0.0.1:8081/v1"), 8081)
         with unittest.mock.patch.dict(llama.KEYS, {8081: "k2"}, clear=True):

@@ -441,6 +441,8 @@ class Server:
         except ToolError as e:
             msg = self.fallback(str(e))
             entry.update(ok=False, error=msg)
+            if len(self.servers) > 1 and name in SERVER_TOOLS and name != "local_execute_plan":
+                entry.setdefault("server", self.server_id)
             return {"content": [{"type": "text", "text": f"No se pudo: {msg}"}], "isError": True}
         finally:
             entry["seconds"] = round(time.monotonic() - t0, 1)

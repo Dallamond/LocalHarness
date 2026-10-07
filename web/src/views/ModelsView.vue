@@ -5,15 +5,15 @@ import Card from "../components/Card.vue";
 import LaunchDialog from "../components/LaunchDialog.vue";
 import StatusChip from "../components/StatusChip.vue";
 import {
-  ROLE_TEXT, ago, api, duration, live, pickPath, post, refreshAll, tps, type DownloadJob, type Hardware, type LlamaInfo,
-  type LocalModel, type ModelLaunch, type ModelRating, type Recommendation,
+  ROLE_TEXT, SERVER_ROLE_LABEL, SERVER_ROLE_TEXT, ago, api, duration, live, pickPath, post, refreshAll, refreshLocals,
+  tps, type DownloadJob, type Hardware, type LlamaInfo, type LocalModel, type LocalServer, type LocalServerCfg,
+  type ModelLaunch, type ModelRating, type Recommendation, type ServerRole,
 } from "../api";
 
 const info = ref<LlamaInfo | null>(null);
 const error = ref("");
 const msg = ref("");
 const starting = ref<string | null>(null);
-const showLog = ref(false);
 const now = ref(Date.now());
 
 // configuración editable (se guarda en Ajustes → llama)
@@ -27,7 +27,16 @@ const newDir = ref("");
 async function load(withCfg = false) {
   try {
     info.value = await api<LlamaInfo>("/api/llama");
-    if (withCfg) Object.assign(cfg, JSON.parse(JSON.stringify(info.value.config)));
+    if (withCfg) {
+      // los servidores se guardan aparte (si fueran con el resto, cambiar el puerto aquí no movería el del principal)
+      const { servers, last, last_by_server, ...rest } = JSON.parse(JSON.stringify(info.value.config));
+      void last; void last_by_server;
+      Object.assign(cfg, rest);
+      editServers.value = (servers?.length ? servers : info.value.servers.map(serverCfg)) as LocalServerCfg[];
+    }
+    if (!info.value.servers.some((s) => s.id === target.value)) target.value = info.value.servers[0]?.id ?? "principal";
+    live.locals = info.value.servers.map((s) => ({ id: s.id, name: s.name, role: s.role, device: s.device,
+      port: s.port, state: s.status.state, model: s.model_name }));
     error.value = "";
   } catch (e) {
     error.value = (e as Error).message;
@@ -39,8 +48,8 @@ let timer: ReturnType<typeof setTimeout>;
 let clock: ReturnType<typeof setInterval>;
 async function poll() {
   await load();
-  const s = info.value?.status.state;
-  timer = setTimeout(poll, s === "loading" || starting.value ? 2000 : 6000);
+  const busy = info.value?.servers.some((s) => s.status.state === "loading");
+  timer = setTimeout(poll, busy || starting.value ? 2000 : 6000);
 }
 onMounted(async () => {
   await load(true);
@@ -57,7 +66,24 @@ onUnmounted(() => {
   clearInterval(clock);
 });
 
-const status = computed(() => info.value?.status);
+const status = computed(() => info.value?.status); // el principal
+// --- varios servidores locales (normalmente uno por GPU)
+const servers = computed<LocalServer[]>(() => info.value?.servers ?? []);
+const target = ref("principal"); // dónde arrancan los botones de «Tus modelos»
+const targetSrv = computed(() => servers.value.find((s) => s.id === target.value) ?? servers.value[0]);
+const openLog = ref<string | null>(null);
+const serverCfg = (s: LocalServer): LocalServerCfg => ({ id: s.id, name: s.name, port: s.port, device: s.device, role: s.role });
+const devices = computed(() => info.value?.devices ?? []);
+const short = (name: string) => name.replace(/^NVIDIA GeForce /, "").replace(/^NVIDIA /, "");
+function gpuText(dev: string): string {
+  if (!dev) return devices.value.length > 1 ? "GPU: la que elija llama.cpp" : "";
+  return dev.split(",").map((id) => {
+    const d = devices.value.find((x) => x.id === id);
+    return d ? `${short(d.name)} · ${Math.round(d.total_mb / 1024)} GB (${id})` : id;
+  }).join(" + ");
+}
+const serversWith = (m: LocalModel) => servers.value.filter((s) => s.status.model === m.path && s.status.state !== "off");
+const pid = (s: LocalServer) => s.status.pid;
 const STATE: Record<string, { text: string; chip: "ok" | "warn" | "crit" | "pending" | "off" }> = {
   off: { text: "apagado", chip: "off" },
   loading: { text: "cargando el modelo…", chip: "pending" },
@@ -65,7 +91,6 @@ const STATE: Record<string, { text: string; chip: "ok" | "warn" | "crit" | "pend
   failed: { text: "se ha caído", chip: "crit" },
   external: { text: "en marcha (lanzado fuera)", chip: "ok" },
 };
-const progress = computed(() => status.value?.progress ?? null);
 const speed = computed(() => info.value?.speed ?? live.lastSpeed);
 
 // --- arranque con ajustes (diálogo) y configuración propia de cada modelo
@@ -124,11 +149,12 @@ async function loadRatings() {
 const openInfo = ref<string | null>(null);
 const scoreCls = (n: number) => (n >= 80 ? "ok" : n >= 60 ? "good" : n >= 40 ? "warn" : "crit");
 const probing = ref(false);
-async function probe() {
+async function probe(server = "principal") {
   probing.value = true;
   error.value = msg.value = "";
   try {
-    const r = await post<{ model: string; probe: { tool_calls: boolean | null; json: boolean | null; tps?: number } }>("/api/llama/probe");
+    const r = await post<{ model: string; probe: { tool_calls: boolean | null; json: boolean | null; tps?: number } }>(
+      `/api/llama/probe?server=${encodeURIComponent(server)}`);
     const p = r.probe;
     msg.value = `Prueba hecha: herramientas ${p.tool_calls ? "✔" : "✘"} · JSON ${p.json ? "✔" : "✘"}${p.tps ? ` · ${p.tps} tok/s` : ""}`;
     await loadRatings();
@@ -254,7 +280,7 @@ async function cancelDownload(id: string) {
 const gb = (b: number) => (b / 2 ** 30).toFixed(1);
 const loadTime = (m: LocalModel) => info.value?.load_times?.[m.path];
 
-const isCurrent = (m: LocalModel) => status.value?.model === m.path && status.value.state !== "off";
+const isCurrent = (m: LocalModel) => serversWith(m).length > 0;
 const groups = computed(() => {
   const g: Record<string, LocalModel[]> = {};
   for (const m of info.value?.models ?? []) (g[m.dir] ??= []).push(m);
@@ -302,11 +328,14 @@ async function pickServer() {
 async function start(m: LocalModel, options?: ModelLaunch, save = false) {
   error.value = msg.value = "";
   starting.value = m.path;
+  const srv = targetSrv.value;
   try {
-    await post("/api/llama/start", { path: m.path, options, save });
+    await post("/api/llama/start", { path: m.path, options, save, server: srv?.id ?? "principal" });
     if (save) await load(true);
     await load();
-    msg.value = `Arrancando ${m.name}. Los agentes locales se conectarán a http://127.0.0.1:${cfg.port} cuando esté listo.`;
+    msg.value = servers.value.length > 1 && srv
+      ? `Arrancando ${m.name} en ${srv.name} (${gpuText(srv.device) || `puerto ${srv.port}`}).`
+      : `Arrancando ${m.name}. Los agentes locales se conectarán a http://127.0.0.1:${cfg.port} cuando esté listo.`;
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
@@ -314,15 +343,51 @@ async function start(m: LocalModel, options?: ModelLaunch, save = false) {
   }
 }
 
-async function stop() {
+async function stop(server = "principal") {
   error.value = "";
   try {
-    await post("/api/llama/stop");
+    await post(`/api/llama/stop?server=${encodeURIComponent(server)}`);
     await load();
+    await refreshLocals().catch(() => undefined);
   } catch (e) {
     error.value = (e as Error).message;
   }
 }
+
+// --- editor de servidores locales (Ajustes → llama.servers)
+const editServers = ref<LocalServerCfg[]>([]);
+const serversDirty = ref(false);
+const ROLES: ServerRole[] = ["general", "fuerte", "rapido"];
+function addServer() {
+  const ports = editServers.value.map((s) => s.port);
+  let port = Math.max(...ports, cfg.port) + 1;
+  while (ports.includes(port)) port++;
+  let id = "local2";
+  for (let i = 2; editServers.value.some((s) => s.id === id); i++) id = `local${i}`;
+  const used = editServers.value.map((s) => s.device);
+  const free = devices.value.find((d) => !used.includes(d.id));
+  editServers.value.push({ id, name: `Local ${editServers.value.length + 1}`, port, device: free?.id ?? "", role: "rapido" });
+  serversDirty.value = true;
+}
+function removeServer(id: string) {
+  editServers.value = editServers.value.filter((s) => s.id !== id);
+  serversDirty.value = true;
+}
+async function saveServers(list: LocalServerCfg[] = editServers.value) {
+  error.value = msg.value = "";
+  try {
+    await api("/api/settings", { method: "PUT", body: JSON.stringify({ llama: { servers: list } }) });
+    serversDirty.value = false;
+    await load(true);
+    await refreshLocals().catch(() => undefined);
+    msg.value = list.length > 1
+      ? `Guardado: ${list.length} servidores locales. Arranca un modelo en cada uno desde «Tus modelos».`
+      : "Guardado.";
+  } catch (e) {
+    error.value = (e as Error).message;
+  }
+}
+const running = (id: string) => servers.value.find((s) => s.id === id)?.status.state !== "off";
 
 // Agentes locales por ROL y sin modelo fijo: llama-server sirve uno a la vez y todos usan el que esté arrancado.
 // Cambiar de modelo no obliga a crear otro agente.
@@ -358,6 +423,21 @@ const servedName = computed(() => {
 const mismatch = (model: string | null) =>
   !!model && !!servedName.value && !servedName.value.toLowerCase().includes(model.toLowerCase());
 const modelFor = (name: string | null) => info.value?.models.find((m) => m.name === name);
+function agentModel(a: { config: { server?: string } }): string {
+  const s = a.config.server ? servers.value.find((x) => x.id === a.config.server) : servers.value[0];
+  if (!s) return servedName.value ?? "(nada arrancado)";
+  const name = s.model_name ?? "(nada arrancado)";
+  return servers.value.length > 1 ? `${name} en ${s.name}` : name;
+}
+async function setAgentServer(id: number, server: string) {
+  error.value = "";
+  try {
+    await api(`/api/agents/${id}`, { method: "PATCH", body: JSON.stringify({ server: server || null }) });
+    await refreshAll();
+  } catch (e) {
+    error.value = (e as Error).message;
+  }
+}
 </script>
 
 <template>
@@ -370,44 +450,105 @@ const modelFor = (name: string | null) => info.value?.models.find((m) => m.name 
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="msg" class="okmsg">{{ msg }}</p>
 
-    <!-- estado del servidor -->
-    <section v-if="status" class="server" :class="`server--${status.state}`">
-      <div class="server__main">
-        <span class="dot" aria-hidden="true" />
-        <div class="server__txt">
-          <strong>llama-server {{ STATE[status.state]?.text }}</strong>
-          <span class="muted small">
-            <template v-if="status.model">{{ status.model.split(/[\\/]/).pop() }} · </template>
-            puerto {{ status.port }}
-            <template v-if="status.started_at"> · hace {{ duration(now - status.started_at * 1000) }}</template>
-            <template v-if="status.state === 'failed'"> · código {{ status.exit_code }}</template>
+    <!-- estado de cada servidor local (uno por GPU) -->
+    <div class="servers" :class="{ 'servers--multi': servers.length > 1 }">
+      <section v-for="srv in servers" :key="srv.id" class="server" :class="`server--${srv.status.state}`">
+        <div class="server__main">
+          <span class="dot" aria-hidden="true" />
+          <div class="server__txt">
+            <strong>
+              <template v-if="servers.length > 1">{{ srv.name }} <span class="role" :class="`role--${srv.role}`">{{ SERVER_ROLE_LABEL[srv.role] }}</span> · </template>
+              llama-server {{ STATE[srv.status.state]?.text }}
+            </strong>
+            <span class="muted small">
+              <template v-if="srv.status.model">{{ srv.status.model.split(/[\\/]/).pop() }} · </template>
+              <template v-if="gpuText(srv.device)">{{ gpuText(srv.device) }} · </template>
+              puerto {{ srv.status.port }}
+              <template v-if="srv.status.started_at"> · hace {{ duration(now - srv.status.started_at * 1000) }}</template>
+              <template v-if="srv.status.state === 'failed'"> · código {{ srv.status.exit_code }}</template>
+            </span>
+            <span v-if="servers.length > 1" class="small muted">{{ SERVER_ROLE_TEXT[srv.role] }}</span>
+          </div>
+          <StatusChip :state="STATE[srv.status.state]?.chip ?? 'off'" :text="STATE[srv.status.state]?.text ?? srv.status.state" />
+          <button v-if="srv.status.state === 'ready' || srv.status.state === 'external'" class="btn btn--small"
+                  :disabled="probing" title="Herramientas, JSON y velocidad: gratis, es tu GPU" @click="probe(srv.id)">🧪</button>
+          <button v-if="pid(srv)" class="btn btn--danger btn--small" @click="stop(srv.id)">Parar</button>
+          <button v-if="srv.status.log" class="btn btn--ghost btn--small" @click="openLog = openLog === srv.id ? null : srv.id">
+            {{ openLog === srv.id ? "Ocultar log" : "Ver log" }}</button>
+        </div>
+        <div v-if="srv.status.state === 'loading'" class="progress">
+          <div class="bar" :class="{ 'bar--unknown': srv.status.progress?.pct == null }" role="progressbar"
+               :aria-valuenow="srv.status.progress?.pct ?? undefined" aria-valuemin="0" aria-valuemax="100">
+            <span :style="{ width: srv.status.progress?.pct != null ? `${srv.status.progress.pct}%` : undefined }" />
+          </div>
+          <span class="small muted">
+            {{ srv.status.progress?.stage ?? "arrancando" }}<template v-if="srv.status.progress?.pct != null"> · {{ srv.status.progress.pct }} %</template>
+            <template v-if="srv.status.progress?.eta_s"> · faltan ~{{ duration(srv.status.progress.eta_s * 1000) }}</template>
+            <template v-if="srv.status.progress?.source === 'tiempo'"> (según lo que tardó la última vez)</template>
+            <template v-else-if="srv.status.progress?.pct == null"> · la primera carga de cada modelo no tiene estimación</template>
           </span>
         </div>
-        <StatusChip :state="STATE[status.state]?.chip ?? 'off'" :text="STATE[status.state]?.text ?? status.state" />
-        <button v-if="status.pid" class="btn btn--danger btn--small" @click="stop">Parar</button>
-        <button v-if="status.log" class="btn btn--ghost btn--small" @click="showLog = !showLog">{{ showLog ? "Ocultar log" : "Ver log" }}</button>
-      </div>
-      <div v-if="status.state === 'loading'" class="progress">
-        <div class="bar" :class="{ 'bar--unknown': progress?.pct == null }" role="progressbar"
-             :aria-valuenow="progress?.pct ?? undefined" aria-valuemin="0" aria-valuemax="100">
-          <span :style="{ width: progress?.pct != null ? `${progress.pct}%` : undefined }" />
+        <div v-if="srv.status.log_lines?.length && openLog !== srv.id" class="loglines">
+          <code v-for="(l, k) in srv.status.log_lines" :key="k">{{ l }}</code>
         </div>
-        <span class="small muted">
-          {{ progress?.stage ?? "arrancando" }}<template v-if="progress?.pct != null"> · {{ progress.pct }} %</template>
-          <template v-if="progress?.eta_s"> · faltan ~{{ duration(progress.eta_s * 1000) }}</template>
-          <template v-if="progress?.source === 'tiempo'"> (según lo que tardó la última vez)</template>
-          <template v-else-if="progress?.pct == null"> · la primera carga de cada modelo no tiene estimación</template>
+        <pre v-if="openLog === srv.id && srv.status.log" class="block log">{{ srv.status.log }}</pre>
+      </section>
+    </div>
+    <p v-if="speed?.tps" class="muted small hint">
+      Velocidad {{ speed.final ? "de la última respuesta" : "ahora" }}: <strong>{{ tps(speed.tps) }}</strong>
+      <template v-if="speed.model"> · {{ speed.model }}</template> · {{ ago(speed.at, now) }}
+    </p>
+
+    <!-- servidores locales: uno por GPU -->
+    <Card title="Servidores locales" :subtitle="servers.length > 1
+      ? `${servers.length} modelos a la vez: Claude reparte los encargos según el papel de cada uno`
+      : 'Un llama-server. Con dos GPU puedes tener un modelo en cada una'">
+      <div v-if="info?.suggested_servers" class="warnline block-info">
+        <span>
+          Tienes <strong>{{ devices.length }} GPU</strong>:
+          <template v-for="(d, k) in devices" :key="d.id">{{ k ? " y " : "" }}{{ short(d.name) }} ({{ Math.round(d.total_mb / 1024) }} GB)</template>.
+          Propuesta: el modelo <strong>fuerte</strong> (escribe código) en la grande y uno <strong>rápido</strong> (preguntas, resúmenes,
+          investigar) en la otra, trabajando a la vez.
         </span>
+        <button class="btn btn--primary btn--small" @click="saveServers(info.suggested_servers!)">Usar las {{ devices.length }} GPU</button>
       </div>
-      <div v-if="status.log_lines?.length && !showLog" class="loglines">
-        <code v-for="(l, k) in status.log_lines" :key="k">{{ l }}</code>
+      <table class="srvtab">
+        <thead><tr><th>Nombre</th><th>Papel</th><th>GPU</th><th>Puerto</th><th /></tr></thead>
+        <tbody>
+          <tr v-for="s in editServers" :key="s.id">
+            <td><input v-model.trim="s.name" class="input mini" maxlength="40" :aria-label="`Nombre de ${s.id}`" @input="serversDirty = true" />
+              <span class="muted small mono"> {{ s.id }}</span></td>
+            <td>
+              <select v-model="s.role" class="input mini" aria-label="Papel" @change="serversDirty = true">
+                <option v-for="r in ROLES" :key="r" :value="r">{{ SERVER_ROLE_LABEL[r] }} — {{ SERVER_ROLE_TEXT[r] }}</option>
+              </select>
+            </td>
+            <td>
+              <select v-model="s.device" class="input mini" aria-label="GPU" @change="serversDirty = true">
+                <option value="">la que elija llama.cpp</option>
+                <option v-for="d in devices" :key="d.id" :value="d.id">{{ gpuText(d.id) }}</option>
+                <option v-if="devices.length > 1" :value="devices.map((d) => d.id).join(',')">las {{ devices.length }} juntas</option>
+              </select>
+            </td>
+            <td><input v-model.number="s.port" class="input mini num" type="number" min="1024" max="65535" aria-label="Puerto" @input="serversDirty = true" /></td>
+            <td>
+              <button v-if="s.id !== 'principal'" class="btn btn--ghost btn--small" :disabled="running(s.id)"
+                      :title="running(s.id) ? 'Páralo antes de quitarlo' : 'Quitar'" @click="removeServer(s.id)">Quitar</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="row">
+        <button class="btn btn--small" :disabled="editServers.length >= 4" @click="addServer">+ Añadir servidor</button>
+        <span class="grow" />
+        <button class="btn btn--primary btn--small" :disabled="!serversDirty" @click="saveServers()">Guardar servidores</button>
       </div>
-      <pre v-if="showLog && status.log" class="block log">{{ status.log }}</pre>
-      <p v-if="speed?.tps" class="muted small hint">
-        Velocidad {{ speed.final ? "de la última respuesta" : "ahora" }}: <strong>{{ tps(speed.tps) }}</strong>
-        <template v-if="speed.model"> · {{ speed.model }}</template> · {{ ago(speed.at, now) }}
+      <p v-if="devices.length > 1" class="hint">
+        La numeración (CUDA0, CUDA1…) es la de llama.cpp, que ordena de la GPU más rápida a la más lenta: no tiene por qué
+        coincidir con la de nvidia-smi ni con la del Administrador de tareas. Los cambios de GPU o puerto se aplican al
+        volver a arrancar el modelo de ese servidor.
       </p>
-    </section>
+    </Card>
 
     <!-- hardware -->
     <ResourceUsage />
@@ -460,9 +601,18 @@ const modelFor = (name: string | null) => info.value?.models.find((m) => m.name 
           Elige el archivo (o la carpeta de llama.cpp que descomprimiste).</span>
         <button class="btn btn--primary btn--small" @click="pickServer">Elegir llama-server…</button>
       </div>
-      <div v-if="status?.state === 'external'" class="warnline block-warn">
-        <span>Hay un llama-server <strong>lanzado fuera de la app</strong> en el puerto {{ status.port }}: los agentes ya lo usan,
-          pero para arrancar otro modelo desde aquí ciérralo antes (su ventana o Ctrl+C) o cambia el puerto abajo.</span>
+      <div v-for="srv in servers.filter((x) => x.status.state === 'external')" :key="srv.id" class="warnline block-warn">
+        <span>Hay un llama-server <strong>lanzado fuera de la app</strong> en el puerto {{ srv.status.port }}<template
+          v-if="servers.length > 1"> ({{ srv.name }})</template>: los agentes ya lo usan, pero para arrancar otro modelo ahí desde
+          aquí ciérralo antes (su ventana o Ctrl+C) o cambia el puerto en «Servidores locales».</span>
+      </div>
+      <div v-if="servers.length > 1" class="target">
+        <span class="label">Arrancar en</span>
+        <button v-for="srv in servers" :key="srv.id" type="button" class="preset" :class="{ on: target === srv.id }"
+                :title="SERVER_ROLE_TEXT[srv.role]" @click="target = srv.id">
+          {{ srv.name }}<small v-if="srv.device"> · {{ gpuText(srv.device) }}</small>
+          <small v-if="srv.model_name"> · ahora {{ srv.model_name }}</small>
+        </button>
       </div>
       <p v-if="info && !info.dirs.length" class="empty">
         No hay ninguna carpeta de modelos. <button class="btn btn--primary btn--small" @click="pickDir">Elegir carpeta…</button>
@@ -517,18 +667,20 @@ const modelFor = (name: string | null) => info.value?.models.find((m) => m.name 
               <p v-if="ratings[m.path].catalog" class="muted">{{ ratings[m.path].catalog!.notes }}</p>
             </div>
             <div class="row">
-              <template v-if="isCurrent(m)">
-                <StatusChip :state="STATE[status!.state].chip" :text="STATE[status!.state].text" />
-                <button v-if="status!.pid" class="btn btn--small btn--danger" @click="stop">Parar</button>
-                <button v-if="status!.state === 'ready'" class="btn btn--small" :disabled="probing" title="Herramientas, JSON y velocidad: gratis, es tu GPU" @click="probe">
+              <template v-for="srv in serversWith(m)" :key="srv.id">
+                <StatusChip :state="STATE[srv.status.state].chip"
+                            :text="servers.length > 1 ? `${STATE[srv.status.state].text} en ${srv.name}` : STATE[srv.status.state].text" />
+                <button v-if="pid(srv)" class="btn btn--small btn--danger" @click="stop(srv.id)">Parar</button>
+                <button v-if="srv.status.state === 'ready'" class="btn btn--small" :disabled="probing" title="Herramientas, JSON y velocidad: gratis, es tu GPU" @click="probe(srv.id)">
                   {{ probing ? "Probando…" : "🧪 Probar capacidades" }}
                 </button>
               </template>
-              <template v-else>
+              <template v-if="!serversWith(m).some((x) => x.id === targetSrv?.id)">
                 <button
                   class="btn btn--primary btn--small" :disabled="!!starting || !info?.server"
                   :title="info?.server ? 'Elegir contexto, caché, muestreo… antes de arrancar' : 'Falta la ruta de llama-server'" @click="dialogFor = m"
-                >{{ starting === m.path ? "Arrancando…" : status?.pid ? "Cambiar a este…" : "Arrancar…" }}</button>
+                >{{ starting === m.path ? "Arrancando…" : targetSrv?.status.pid ? "Cambiar a este…" : "Arrancar…" }}<template
+                  v-if="servers.length > 1 && targetSrv"> en {{ targetSrv.name }}</template></button>
                 <button class="btn btn--small btn--ghost" :disabled="!!starting || !info?.server" title="Con lo guardado, sin preguntar" @click="start(m)">Rápido</button>
               </template>
             </div>
@@ -638,7 +790,12 @@ const modelFor = (name: string | null) => info.value?.models.find((m) => m.name 
       <ul class="lagents">
         <li v-for="a in localAgents" :key="a.id">
           <strong>{{ a.name }}</strong>
-          <span class="muted small">{{ ROLE_TEXT[a.role ?? ""] ?? a.role ?? "sin rol" }} · usa {{ servedName ?? "(nada arrancado)" }}</span>
+          <span class="muted small">{{ ROLE_TEXT[a.role ?? ""] ?? a.role ?? "sin rol" }} · usa {{ agentModel(a) }}</span>
+          <select v-if="servers.length > 1" class="input mini" :value="a.config.server ?? ''" aria-label="Servidor local"
+                  @change="setAgentServer(a.id, ($event.target as HTMLSelectElement).value)">
+            <option value="">el principal</option>
+            <option v-for="s in servers.slice(1)" :key="s.id" :value="s.id">{{ s.name }}</option>
+          </select>
           <span v-if="mismatch(a.model)" class="warnline small">
             Se creó para «{{ a.model }}» pero el arrancado es otro (responde el arrancado).
             <button v-if="modelFor(a.model)" class="btn btn--small" :disabled="!!starting" @click="start(modelFor(a.model)!)">Arrancar {{ a.model }}</button>
@@ -687,7 +844,7 @@ const modelFor = (name: string | null) => info.value?.models.find((m) => m.name 
         <label class="check">
           <input v-model="cfg.autostart" type="checkbox" @change="saveCfg()" />
           Arrancar el último modelo al abrir LocalHarness
-          <span class="muted small">(el que arrancaste la última vez, con los mismos ajustes)</span>
+          <span class="muted small">(el que arrancaste la última vez en cada servidor, con los mismos ajustes)</span>
         </label>
         <div class="nums">
           <label class="field">
@@ -700,7 +857,7 @@ const modelFor = (name: string | null) => info.value?.models.find((m) => m.name 
           </label>
         </div>
         <div class="nums">
-          <label class="field"><span class="label">Puerto</span><input v-model.number="cfg.port" type="number" min="1024" max="65535" @change="saveCfg()" /></label>
+          <label class="field"><span class="label">Puerto del principal</span><input v-model.number="cfg.port" type="number" min="1024" max="65535" @change="saveCfg()" /></label>
           <label class="field"><span class="label">Contexto (tokens)</span><input v-model.number="cfg.ctx" type="number" min="512" step="1024" @change="saveCfg()" /></label>
           <label class="field">
             <span class="label">Capas en GPU</span><input v-model.number="cfg.ngl" type="number" min="0" @change="saveCfg()" />
@@ -734,7 +891,7 @@ const modelFor = (name: string | null) => info.value?.models.find((m) => m.name 
 
     <LaunchDialog
       v-if="dialogFor" :model="dialogFor" :rating="ratings[dialogFor.path]" :saved="cfg.per_model[dialogFor.path]"
-      :defaults="{ ctx: cfg.ctx, ngl: cfg.ngl }" :busy="!!starting"
+      :defaults="{ ctx: cfg.ctx, ngl: cfg.ngl }" :busy="!!starting" :server="targetSrv" :devices="devices"
       @close="dialogFor = null" @launch="(o, save) => launchWith(dialogFor!, o, save)"
       @save="async (o) => { await saveOwn(dialogFor!, o); dialogFor = null; }"
     />
@@ -742,6 +899,79 @@ const modelFor = (name: string | null) => info.value?.models.find((m) => m.name 
 </template>
 
 <style scoped>
+.servers {
+  display: grid;
+  gap: 12px;
+}
+.servers--multi {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+.role {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 99px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  vertical-align: 1px;
+  background: var(--panel-raised);
+  color: var(--ink-dim);
+}
+.role--fuerte {
+  background: var(--info-weak);
+  color: var(--info);
+}
+.role--rapido {
+  background: var(--ok-weak);
+  color: var(--ok);
+}
+.block-info {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--info-weak);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.srvtab {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.srvtab th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--ink-dim);
+  padding: 4px 6px;
+}
+.srvtab td {
+  padding: 4px 6px;
+  border-top: 1px solid var(--line);
+}
+.srvtab .num {
+  width: 90px;
+}
+.target {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.target .preset {
+  padding: 6px 12px;
+  border-radius: 99px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+}
+.target .preset.on {
+  border-color: var(--info);
+  background: var(--info-weak);
+  color: var(--info);
+  font-weight: 600;
+}
 .okmsg {
   margin: 0;
   padding: 8px 14px;

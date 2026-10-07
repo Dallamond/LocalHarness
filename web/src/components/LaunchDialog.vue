@@ -2,7 +2,10 @@
 // Antes de arrancar un GGUF: elegir contexto, caché, capas/expertos en GPU, hilos, muestreo… con la memoria que
 // ocupará calculada en vivo y la orden exacta de llama-server. Se puede arrancar solo esta vez o guardarlo.
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
-import { post, type Estimate, type LocalModel, type ModelLaunch, type ModelRating } from "../api";
+import {
+  SERVER_ROLE_LABEL, post, type Estimate, type LlamaDevice, type LocalModel, type LocalServer, type ModelLaunch,
+  type ModelRating,
+} from "../api";
 
 const props = defineProps<{
   model: LocalModel;
@@ -10,6 +13,8 @@ const props = defineProps<{
   saved?: ModelLaunch;
   defaults: { ctx: number; ngl: number };
   busy?: boolean;
+  server?: LocalServer; // en qué servidor local (GPU) se arranca; la memoria es la de sus GPU
+  devices?: LlamaDevice[];
 }>();
 const emit = defineEmits<{
   close: [];
@@ -26,6 +31,7 @@ const blank = (): ModelLaunch => ({
   ctx: null, ngl: null, flash_attn: "auto", cache_k: "f16", cache_v: "f16", threads: null, batch: null,
   ubatch: null, parallel: null, n_cpu_moe: null, temp: null, top_p: null, top_k: null, min_p: null,
   repeat_penalty: null, reasoning_budget: null, mlock: false, no_mmap: false, extra: "",
+  device: "", split_mode: "", tensor_split: "", main_gpu: null,
 });
 const o = reactive<ModelLaunch>(blank());
 function apply(src: ModelLaunch | undefined) {
@@ -68,6 +74,7 @@ function onKey(e: KeyboardEvent) {
   if (e.key === "Escape") emit("close");
 }
 
+const TEXT_KEYS = ["extra", "flash_attn", "device", "split_mode", "tensor_split"];
 // solo las claves con valor (lo vacío = lo decide llama.cpp o los valores generales)
 const clean = computed<ModelLaunch>(() => {
   const out: Record<string, unknown> = {};
@@ -75,7 +82,7 @@ const clean = computed<ModelLaunch>(() => {
     if (v === null || v === "" || v === false || v === undefined) continue;
     if (k === "flash_attn" && v === "auto") continue;
     if ((k === "cache_k" || k === "cache_v") && v === "f16") continue;
-    out[k] = typeof v === "string" && k !== "extra" && k !== "flash_attn" && !k.startsWith("cache") ? Number(v) : v;
+    out[k] = typeof v === "string" && !TEXT_KEYS.includes(k) && !k.startsWith("cache") ? Number(v) : v;
   }
   return out as ModelLaunch;
 });
@@ -91,7 +98,7 @@ watch(clean, () => {
   t = setTimeout(async () => {
     try {
       const r = await post<{ estimate: Estimate; budget: any; command: string[] | null }>("/api/llama/estimate",
-        { path: props.model.path, options: clean.value });
+        { path: props.model.path, options: clean.value, server: props.server?.id });
       est.value = r.estimate;
       budget.value = r.budget;
       command.value = r.command;
@@ -115,6 +122,15 @@ const kvQuantNoFa = computed(() => o.flash_attn === "off" && o.cache_v && o.cach
 const ctxSteps = [4096, 8192, 16384, 24576, 32768, 49152, 65536, 98304, 131072, 262144];
 const ctxOptions = computed(() => ctxSteps.filter((c) => c <= ctxTrain.value));
 const showAdvanced = ref(false);
+
+// GPU: la del servidor por defecto; se puede cambiar para esta vez (o juntar varias)
+const devName = (id: string) => props.devices?.find((d) => d.id === id);
+const gpuText = (dev: string) =>
+  dev ? dev.split(",").map((id) => `${id} ${devName(id)?.name.replace(/^NVIDIA GeForce /, "") ?? ""}`.trim()).join(" + ")
+    : "la que elija llama.cpp";
+const allDevices = computed(() => (props.devices ?? []).map((d) => d.id).join(","));
+const effectiveDevice = computed(() => o.device || props.server?.device || "");
+const multi = computed(() => effectiveDevice.value.includes(","));
 </script>
 
 <template>
@@ -129,6 +145,10 @@ const showAdvanced = ref(false);
             <template v-if="meta.n_layer"> · {{ meta.n_layer }} capas</template>
             <template v-if="meta.ctx_train"> · contexto máx. {{ Math.round(meta.ctx_train / 1024) }}k</template>
             <template v-if="meta.moe"> · MoE</template>
+          </p>
+          <p v-if="server" class="small where">
+            en <strong>{{ server.name }}</strong> ({{ SERVER_ROLE_LABEL[server.role] }}) · {{ gpuText(effectiveDevice) }} ·
+            puerto {{ server.port }}
           </p>
         </div>
         <button class="btn btn--ghost btn--small" aria-label="Cerrar" @click="emit('close')">✕</button>
@@ -224,6 +244,26 @@ const showAdvanced = ref(false);
           {{ showAdvanced ? "▾" : "▸" }} Avanzado
         </button>
         <template v-if="showAdvanced">
+          <label v-if="devices && devices.length > 1" class="field">
+            <span class="label">GPU (-dev)</span>
+            <select v-model="o.device">
+              <option value="">la del servidor ({{ gpuText(server?.device ?? "") }})</option>
+              <option v-for="d in devices" :key="d.id" :value="d.id">{{ gpuText(d.id) }} · {{ Math.round(d.total_mb / 1024) }} GB</option>
+              <option :value="allDevices">todas juntas ({{ Math.round(devices.reduce((n, d) => n + d.total_mb, 0) / 1024) }} GB)</option>
+            </select>
+            <span class="hint">Juntas caben modelos más grandes; va al paso de la más lenta.</span>
+          </label>
+          <template v-if="multi">
+            <label class="field">
+              <span class="label">Reparto (-sm)</span>
+              <select v-model="o.split_mode"><option value="">por capas (normal)</option><option value="row">por filas</option><option value="none">solo una</option></select>
+            </label>
+            <label class="field">
+              <span class="label">Proporción (-ts)</span>
+              <input v-model="o.tensor_split" class="code" placeholder="2,1 = el doble en la primera" />
+              <span class="hint">Vacío = según la memoria de cada una.</span>
+            </label>
+          </template>
           <label class="field"><span class="label">Hilos de CPU</span><input v-model.number="o.threads" type="number" min="1" placeholder="auto" /></label>
           <label class="field"><span class="label">Lote (-b)</span><input v-model.number="o.batch" type="number" min="32" step="256" placeholder="2048" /></label>
           <label class="field"><span class="label">Microlote (-ub)</span><input v-model.number="o.ubatch" type="number" min="32" step="128" placeholder="512" /></label>
@@ -249,6 +289,10 @@ const showAdvanced = ref(false);
 </template>
 
 <style scoped>
+.where {
+  margin: 4px 0 0;
+  color: var(--info);
+}
 .overlay {
   position: fixed;
   inset: 0;

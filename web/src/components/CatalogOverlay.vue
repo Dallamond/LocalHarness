@@ -6,7 +6,7 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import Markdown from "./Markdown.vue";
 import {
-  PROVIDER_TEXT, ROLE_TEXT, agentColor, api, live, modelText, openWizard, pickPath, post, refreshAll, ui,
+  PROVIDER_TEXT, ROLE_TEXT, agentColor, api, live, localModelsText, modelText, openWizard, pickPath, post, refreshAll, ui,
   type Agent, type Library, type LibraryMcp, type McpServer, type Settings, type Skill,
 } from "../api";
 
@@ -551,7 +551,7 @@ const EXAMPLES: Record<string, string> = {
             <div v-if="hit('local modelo')" class="cc" style="--c: #16a34a">
               <div class="cc-h">
                 <span class="av av--sm" :style="{ background: live.local.state === 'ready' ? '#16a34a' : '#8a8f99' }"><i class="fa-solid fa-plug" /></span>
-                <div><b class="mono">local</b><small><span class="dotst" :class="{ on: live.local.state === 'ready' }" /> {{ live.local.model ?? "sin modelo arrancado" }}</small></div>
+                <div><b class="mono">local</b><small><span class="dotst" :class="{ on: live.local.state === 'ready' || live.locals.some((l) => l.state === 'ready') }" /> {{ localModelsText("sin modelo arrancado") }}</small></div>
                 <span class="badge team">de serie</span>
               </div>
               <p>El modelo local de LocalHarness: Claude le encarga leer, resumir, escribir archivos, tareas enteras (local_agent), pasar los tests e investigar, sin gastar plan.</p>

@@ -169,9 +169,15 @@ def serve_command(model: Path, port: int = 8080, ctx: int = 16384, ngl: int = 99
     exe = server_binary()
     if not exe:
         raise LookupError("No encuentro llama-server: define LOCALHARNESS_LLAMA_SERVER con su ruta")
+    # -lv 4: desde ~b11000 llama.cpp ya no escribe con la verbosidad por defecto en qué GPU/RAM carga cada parte
+    # («offloaded 34/34 layers», «CUDA1 model buffer size»…) ni los puntos de progreso; sin eso no se sabe dónde está
+    # cada modelo (usage.placement) ni cuánto le falta. Si pasas tú otra verbosidad, manda la tuya.
+    extra = list(extra or [])
+    verbosity = [] if any(a in extra for a in ("-lv", "--verbosity", "--log-verbosity", "-v", "--verbose",
+                                               "--log-verbose")) else ["-lv", "4"]
     # 127.0.0.1: el servidor no queda expuesto en la red
     return [exe, "-m", str(model), "--host", "127.0.0.1", "--port", str(port), "-c", str(ctx),
-            "-ngl", str(ngl), "--jinja", *(extra or [])]
+            "-ngl", str(ngl), "--jinja", *verbosity, *extra]
 
 
 class LlamaManager:

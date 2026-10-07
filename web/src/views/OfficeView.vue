@@ -11,7 +11,7 @@ import { MAX_STATIONS, Office, type BoardStep, type GitRow, type Placement, type
 import {
   PLAN_TEXT, PROVIDER_TEXT, ROLE_TEXT, STATUS_TEXT, agentColor, agentName, api, describeActivity, duration, live,
   modelText, onTaskEvent, openCatalog, putTask, openWizard, parseTs, pct, planChip, planList, post, projectName, refreshAll, speedText,
-  statusChip, tps, ui, usd,
+  statusChip, tps, ui, usd, localModelsText, refreshLocals, SERVER_ROLE_LABEL,
   type Agent, type Gpu, type InboxItem, type Review, type Task, type TaskEvent, type Worktree,
 } from "../api";
 
@@ -447,7 +447,15 @@ const sys = ref<SysUsage | null>(null);
 async function loadResources() {
   const r = await api<{ gpus: Gpu[]; worktrees: Worktree[]; system?: SysUsage }>("/api/resources").catch(() => null);
   if (r) { gpus.value = r.gpus; worktrees.value = r.worktrees; sys.value = r.system ?? null; }
+  await refreshLocals().catch(() => undefined); // con dos GPU, dos modelos: el estado de cada uno
 }
+// estado conjunto de los modelos locales: listo si alguno lo está, si no el del principal
+const localState = computed(() => {
+  const states = live.locals.map((l) => l.state);
+  return states.includes("ready") ? "ready" : states.includes("external") ? "external"
+    : states.includes("loading") ? "loading" : live.local.state;
+});
+const localsOn = computed(() => live.locals.filter((l) => l.state !== "off"));
 let resTimer: ReturnType<typeof setInterval>;
 const gpuFrac = (g: Gpu) => (g.mem_used_mb && g.mem_total_mb ? g.mem_used_mb / g.mem_total_mb : 0);
 const gpuColor = (v: number) => (v > 0.85 ? "#ef4444" : v > 0.6 ? "#f59e0b" : "#22c55e");
@@ -616,7 +624,7 @@ function resetLayout() {
   saveLayout();
   location.reload();
 }
-const localOn = computed(() => live.local.state !== "off");
+const localOn = computed(() => localState.value !== "off");
 
 // ---------- tamaño de los paneles: arrastrar las asas entre columnas y sobre el panel de abajo
 const SIZE_DEFAULT = { left: 330, right: 330, dock: 230 };
@@ -741,8 +749,8 @@ watch(() => [specs.value.map((s) => `${s.id}${s.color}${s.kind}`).join(), live.i
 watch(() => [missionTitle.value, JSON.stringify(steps.value.map((s) => [s.label, s.who, s.state])), progress.value],
   () => office?.drawBoard(missionTitle.value, steps.value, progress.value), { immediate: true, flush: "post" });
 watch(worktrees, (w) => office?.drawGit(w.map((x) => ({ name: x.branch, status: wtState(x) }))));
-watch(() => [gpus.value, live.local.state, tpsNow.value > 0], () =>
-  office?.setGpu(gpus.value.map(gpuFrac), Math.max(0, ...gpus.value.map((g) => (g.util ?? 0) / 100)), live.local.state));
+watch(() => [gpus.value, localState.value, tpsNow.value > 0], () =>
+  office?.setGpu(gpus.value.map(gpuFrac), Math.max(0, ...gpus.value.map((g) => (g.util ?? 0) / 100)), localState.value));
 watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) / 100));
 </script>
 
@@ -920,7 +928,7 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
           </div>
           <div v-if="localOn" class="lbl" data-lbl="rack">
             <button class="tag tag--btn" @click="pick('rack')">
-              <i class="fa-solid fa-server" /> Modelo local · {{ live.local.model ?? LOCAL_TEXT[live.local.state] ?? live.local.state }}
+              <i class="fa-solid fa-server" /> {{ localsOn.length > 1 ? "Modelos locales" : "Modelo local" }} · {{ localModelsText(LOCAL_TEXT[localState] ?? localState) }}
             </button>
           </div>
           <div class="lbl" data-lbl="wb"><span class="tag">Misión</span></div>
@@ -982,8 +990,13 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
           <span class="meter"><span :style="{ width: `${sys?.ram_pct ?? 0}%`, background: gpuColor((sys?.ram_pct ?? 0) / 100) }" /></span>
         </div>
         <div class="res-row">
-          <div class="l">Modelo local <span :class="`ls-${live.local.state}`">{{ LOCAL_TEXT[live.local.state] ?? live.local.state }}</span></div>
-          <div class="sub">
+          <div class="l">{{ live.locals.length > 1 ? "Modelos locales" : "Modelo local" }} <span :class="`ls-${localState}`">{{ LOCAL_TEXT[localState] ?? localState }}</span></div>
+          <div v-if="live.locals.length > 1" class="sub sub--list">
+            <span v-for="l in live.locals" :key="l.id" class="mono" :class="`ls-${l.state}`" :title="`${l.name} · ${l.device || 'GPU automática'} · puerto ${l.port}`">
+              {{ l.name }}: {{ l.model ?? LOCAL_TEXT[l.state] ?? l.state }}</span>
+            <RouterLink to="/modelos" class="small">Modelos →</RouterLink>
+          </div>
+          <div v-else class="sub">
             <span class="mono">{{ live.local.model ?? "—" }}</span>
             <RouterLink to="/modelos" class="small">{{ live.local.state === "off" ? "Arrancar" : "Modelos" }} →</RouterLink>
           </div>
@@ -1031,13 +1044,19 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
 
         <!-- el modelo local -->
         <template v-else-if="sel === 'rack'">
-          <h3 class="card-title">Inspector <em>{{ (LOCAL_TEXT[live.local.state] ?? live.local.state).toUpperCase() }}</em></h3>
+          <h3 class="card-title">Inspector <em>{{ (LOCAL_TEXT[localState] ?? localState).toUpperCase() }}</em></h3>
           <div class="insp-h">
             <div class="avatar" :style="{ '--c': LOCAL }"><i class="fa-solid fa-server" /></div>
-            <div><b>Modelo local</b><small>llama-server · GPU</small></div>
+            <div><b>{{ live.locals.length > 1 ? `${live.locals.length} modelos locales` : "Modelo local" }}</b><small>llama-server · {{ live.locals.length > 1 ? "uno por GPU" : "GPU" }}</small></div>
             <span class="prov prov--local">Gratis</span>
           </div>
-          <div class="res-row"><div class="l">Arrancado <span>{{ live.local.model ?? "ninguno" }}</span></div></div>
+          <template v-if="live.locals.length > 1">
+            <div v-for="l in live.locals" :key="l.id" class="res-row">
+              <div class="l">{{ l.name }} · {{ SERVER_ROLE_LABEL[l.role] }} <span :class="`ls-${l.state}`">{{ l.model ?? LOCAL_TEXT[l.state] ?? l.state }}</span></div>
+              <div class="sub"><span class="mono small">{{ l.device || "GPU automática" }} · puerto {{ l.port }}</span></div>
+            </div>
+          </template>
+          <div v-else class="res-row"><div class="l">Arrancado <span>{{ live.local.model ?? "ninguno" }}</span></div></div>
           <div class="res-row"><div class="l">Última velocidad <span>{{ live.lastSpeed?.tps ? tps(live.lastSpeed.tps) : "—" }}</span></div></div>
           <p class="small muted">
             Responde a los agentes locales y hace los encargos de los agentes Claude con «Puede delegar en el modelo local»:
@@ -1897,6 +1916,13 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
   gap: 8px;
   font-size: 11.5px;
   color: var(--ink-dim);
+}
+.sub--list {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+.sub--list .mono:not(.ls-off) {
+  color: var(--ink);
 }
 .spark {
   width: 100%;

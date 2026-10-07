@@ -99,6 +99,7 @@ class AgentIn(BaseModel):
     tools: list[str] | None = None
     skills: list[str] | None = None
     base_url: str | None = None  # solo proveedor local
+    server: str | None = None  # solo proveedor local: en qué servidor local (GPU) trabaja (vacío = el principal)
     description: str | None = None  # en qué es bueno: el Director lo lee para repartir subtareas
     subagents: bool = False  # solo claude: puede lanzar subagentes (herramienta Agent; gasta más)
     delegate_local: bool = False  # solo claude: puede encargar trabajo al modelo local (MCP local_ask/local_write_file)
@@ -128,6 +129,7 @@ class AgentPatch(BaseModel):
     read_only: bool | None = None
     skills: list[str] | None = None
     base_url: str | None = None
+    server: str | None = None
     description: str | None = None
     subagents: bool | None = None
     delegate_local: bool | None = None
@@ -151,7 +153,7 @@ class AgentPatch(BaseModel):
 
 AGENT_CFG = ("max_turns", "max_budget_usd", "read_only", "skills", "base_url", "description", "subagents",
              "delegate_local", "coordinator", "local_skills", "web", "mcps", "temperature", "max_tokens", "repo_context", "tool_mode",
-             "commands", "command_timeout_s", "timeout_s", "thinking", "off", "instructions")
+             "commands", "command_timeout_s", "timeout_s", "thinking", "off", "instructions", "server")
 KEEP_FALSY = ("web", "commands")  # web=False y commands=[] significan algo (apagar), no «quitar el ajuste»
 
 
@@ -592,7 +594,7 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
             raise HTTPException(409, f"Ya existe un agente llamado {body.name!r}")
         cfg = {k: v for k, v in {"max_turns": body.max_turns, "max_budget_usd": body.max_budget_usd,
                                  "read_only": body.read_only or None, "tools": body.tools,
-                                 "skills": body.skills or None, "base_url": body.base_url or None,
+                                 "skills": body.skills or None, "base_url": body.base_url or None, "server": body.server or None,
                                  "description": (body.description or "").strip() or None,
                                  "subagents": body.subagents or None, "delegate_local": body.delegate_local or None,
                                  "coordinator": body.coordinator or None,
