@@ -236,5 +236,23 @@ class ModelsApiTests(unittest.TestCase):
                 self.assertTrue(next(x for x in recs["models"] if x["id"] == "qwen3-8b")["downloaded"])
 
 
+class AutostartTests(unittest.TestCase):
+    def test_autostart_last_model(self):
+        from localharness.api import autostart_llama
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(":memory:")
+            m = llama.LlamaManager(Path(tmp) / "llama-server.log")
+            self.assertIsNone(autostart_llama(store, m))  # apagado por defecto
+            gguf_path = write_gguf(Path(tmp) / "m.gguf")
+            settings.save(store, {"llama": {"autostart": True, "port": 18997,
+                                            "last": {"model": str(Path(tmp) / "no.gguf")}}})
+            self.assertIn("no encuentro", autostart_llama(store, m))
+            settings.save(store, {"llama": {"last": {"model": str(gguf_path), "options": {"ctx": 4096}}}})
+            with unittest.mock.patch.object(llama.LlamaManager, "start") as start:
+                self.assertIn("arrancando", autostart_llama(store, m))
+            self.assertEqual(start.call_args.args[2], 4096)  # con los ajustes del último arranque
+            self.assertEqual(settings.load(store)["local_base_url"], "http://127.0.0.1:18997")
+
+
 if __name__ == "__main__":
     unittest.main()

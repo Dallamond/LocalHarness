@@ -190,6 +190,8 @@ export interface Settings {
     hardware: { vram_gb?: number | null; ram_gb?: number | null; gpu_name?: string; bandwidth_gbs?: number | null };
     hf_token: string;
     download_dir: string;
+    autostart: boolean;
+    last?: { model?: string; options?: ModelLaunch };
   };
   agent_defaults: { provider: string; model: string; role: string; max_turns: number | null; max_budget_usd: number | null };
   mcp_servers: Record<string, McpServer>;

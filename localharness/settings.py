@@ -35,7 +35,9 @@ DEFAULTS: dict[str, Any] = {
     # falte usa los valores generales de arriba. hardware: VRAM/RAM a mano si la detección falla (vacío = detectar).
     # download_dir: dónde dejar lo que se descarga de Hugging Face (vacío = la primera carpeta de modelos).
     "llama": {"server": "", "model_dirs": [], "port": 8080, "ctx": 16384, "ngl": 99, "per_model": {},
-              "hardware": {}, "hf_token": "", "download_dir": ""},
+              "hardware": {}, "hf_token": "", "download_dir": "",
+              # autostart: al abrir LocalHarness arranca el último modelo (last = {model, options} del último arranque)
+              "autostart": False, "last": {}},
     # Valores que propone el formulario de nuevo agente
     "agent_defaults": {"provider": "claude", "model": "sonnet", "role": "trabajador", "max_turns": 10,
                        "max_budget_usd": 1.0},

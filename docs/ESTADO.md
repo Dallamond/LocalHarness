@@ -23,6 +23,14 @@ rediseño de la oficina). Las secciones de abajo son el historial de cada una; d
   defecto; agente local: buscar_web/leer_url, encendido); la delegación MCP suma `local_research` a los servidores
   del Catálogo; el Inicio lo sustituyó la Oficina.
 
+- **Arranque fácil** (07/10, tarde): `LocalHarness.bat` (prepara la primera vez y arranca), `Actualizar.bat`,
+  `Crear acceso directo.bat` (icono `scripts/localharness.ico` en escritorio y menú Inicio), `scripts/preparar.bat`;
+  `localharness start` (servidor + navegador; si ya está en marcha solo abre la pestaña); ajuste
+  `llama.autostart` + `llama.last` → al abrir arranca el último modelo con sus ajustes (`api.autostart_llama`).
+- **Fase 2 propuesta (sin hacer)**: instalador `.exe` con asistente (Inno Setup) que lleve Python embebido y la web ya
+  compilada (sin pedir Git/Python/Node), descargue llama.cpp según la GPU (CUDA/Vulkan/CPU), cree accesos directos,
+  y «Buscar actualizaciones» en Ajustes (versiones publicadas en GitHub Releases por una Action al etiquetar).
+
 ### Siguiente (lista de Lucas)
 1. **Catálogo con muchas más skills y funcionalidades** (importar desde repos de skills, plantillas, buscar).
 2. **Creador de agentes mejor** (en Ajustes es pobre y lento): asistente rápido con plantillas por rol, elegir skills

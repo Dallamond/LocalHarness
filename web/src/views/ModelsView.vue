@@ -19,7 +19,7 @@ const now = ref(Date.now());
 const cfg = reactive({
   server: "", model_dirs: [] as string[], port: 8080, ctx: 16384, ngl: 99, per_model: {} as Record<string, ModelLaunch>,
   hardware: {} as { vram_gb?: number | null; ram_gb?: number | null; gpu_name?: string; bandwidth_gbs?: number | null },
-  hf_token: "", download_dir: "",
+  hf_token: "", download_dir: "", autostart: false,
 });
 const newDir = ref("");
 
@@ -681,6 +681,11 @@ const modelFor = (name: string | null) => info.value?.models.find((m) => m.name 
           </div>
           <span class="hint">{{ info?.server ? `Se usará: ${info.server}` : "No lo encuentro: indica dónde está llama-server.exe" }}</span>
         </div>
+        <label class="check">
+          <input v-model="cfg.autostart" type="checkbox" @change="saveCfg()" />
+          Arrancar el último modelo al abrir LocalHarness
+          <span class="muted small">(el que arrancaste la última vez, con los mismos ajustes)</span>
+        </label>
         <div class="nums">
           <label class="field">
             <span class="label">Carpeta de descargas</span>
@@ -1079,6 +1084,12 @@ const modelFor = (name: string | null) => info.value?.models.find((m) => m.name 
 }
 .dl-actions {
   justify-content: flex-end;
+}
+.check {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
 }
 .block-warn {
   margin-bottom: 12px;

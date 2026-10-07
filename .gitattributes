@@ -1,4 +1,2 @@
-* text=auto eol=lf
-*.png binary
-*.woff binary
-*.woff2 binary
+*.bat text eol=crlf
+*.ico binary

@@ -328,6 +328,27 @@ class Runner:
             await self.cancel_plan(pid)
 
 
+def autostart_llama(store: Store, manager: "llama.LlamaManager") -> str | None:
+    """Modelos locales → «Arrancar el último modelo al abrir LocalHarness»: lanza llama-server con el último GGUF
+    y sus ajustes. Devuelve qué pasó (para la GUI) o None si está apagado. Nunca impide arrancar."""
+    cfg = settings.load(store)["llama"]
+    last = cfg.get("last") or {}
+    if not cfg.get("autostart") or not last.get("model"):
+        return None
+    model = Path(last["model"])
+    if not model.is_file():
+        return f"no encuentro {model}"
+    if llama.health(cfg["port"]) != "off":
+        return "ya había un llama-server en el puerto"
+    try:
+        own = settings.llama_launch(store, str(model), last.get("options") or None)
+        manager.start(model, cfg["port"], own["ctx"], own["ngl"], own["extra"])
+    except (LookupError, RuntimeError, OSError) as e:
+        return f"no pude arrancarlo: {e}"
+    settings.save(store, {"local_base_url": f"http://127.0.0.1:{cfg['port']}"})
+    return f"arrancando {model.name}"
+
+
 def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | None = None,
                worktree_root: str | None = None, web_dist: Path | None = WEB_DIST) -> FastAPI:
     @asynccontextmanager
@@ -350,6 +371,7 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
             app.state.cleanup = await asyncio.to_thread(maintenance.cleanup, store)
         except Exception as e:  # noqa: BLE001 — una limpieza fallida no impide arrancar
             app.state.cleanup = {"removed": [], "kept": [], "unknown": [], "errors": [str(e)]}
+        app.state.autostart = await asyncio.to_thread(autostart_llama, store, app.state.llama)
         yield
         await asyncio.to_thread(app.state.llama.stop)  # el llama-server lanzado desde la GUI muere con ella
         await app.state.runner.shutdown()
@@ -529,8 +551,9 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         except (LookupError, RuntimeError, OSError) as e:
             raise HTTPException(409, str(e)) from None
         request.app.state.modelinfo.update(str(model), last_launch={"options": own["options"], "at": time.time()})
-        # los agentes locales sin URL propia se conectan a este servidor
-        settings.save(store, {"local_base_url": f"http://127.0.0.1:{cfg['port']}"})
+        # los agentes locales sin URL propia se conectan a este servidor; se recuerda para el autoarranque
+        settings.save(store, {"local_base_url": f"http://127.0.0.1:{cfg['port']}",
+                              "llama": {"last": {"model": str(model), "options": {} if body.save else opts}}})
         return await asyncio.to_thread(request.app.state.llama.status, cfg["port"])
 
     @app.post("/api/llama/stop")

@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from localharness import actions, settings, workspace
@@ -383,6 +384,44 @@ def cmd_serve(args) -> int:
     return 0
 
 
+def cmd_start(args) -> int:
+    """Para el usuario básico (doble clic en LocalHarness.bat o el icono): si ya está en marcha, solo abre el
+    navegador; si no, arranca el servidor (y el último modelo local si lo pediste en Modelos) y abre la GUI."""
+    import threading
+    import urllib.request
+    import webbrowser
+    url = f"http://127.0.0.1:{args.port}"
+
+    def alive() -> bool:
+        try:
+            with urllib.request.urlopen(f"{url}/api/health", timeout=1.5) as r:
+                return r.status == 200 and b"providers" in r.read()
+        except OSError:
+            return False
+
+    if alive():
+        print(f"LocalHarness ya estaba en marcha: abro {url}")
+        if not args.no_browser:
+            webbrowser.open(url)
+        return 0
+    dist = Path(__file__).resolve().parent.parent / "web" / "dist" / "index.html"
+    if not dist.is_file():
+        print("Aviso: falta la web compilada (web/dist). Ejecuta Actualizar.bat o: cd web; npm install; npm run build")
+
+    def open_when_ready() -> None:
+        for _ in range(120):
+            if alive():
+                webbrowser.open(url)
+                return
+            time.sleep(0.5)
+
+    if not args.no_browser:
+        threading.Thread(target=open_when_ready, daemon=True).start()
+    print("No cierres esta ventana mientras uses LocalHarness (al cerrarla se apaga, también el modelo local).")
+    args.host = "127.0.0.1"
+    return cmd_serve(args)
+
+
 def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):  # la consola de Windows no es UTF-8 por defecto
         if hasattr(stream, "reconfigure"):
@@ -396,6 +435,10 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("serve", help="API + GUI web (M2)")
     p.add_argument("--host", default="127.0.0.1"); p.add_argument("--port", type=int, default=8095)
     p.set_defaults(fn=cmd_serve)
+
+    p = sub.add_parser("start", help="arranca todo y abre la GUI en el navegador (lo que usa el icono)")
+    p.add_argument("--port", type=int, default=8095); p.add_argument("--no-browser", action="store_true")
+    p.set_defaults(fn=cmd_start)
 
     p = sub.add_parser("project", help="proyectos (repos git)")
     p.add_argument("action", choices=["add", "list", "memory"])
@@ -456,7 +499,7 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("falta el nombre")
     if args.cmd == "project" and args.action == "add" and not args.path:
         ap.error("falta la ruta del repo")
-    if args.cmd in ("doctor", "serve", "llama", "skills"):
+    if args.cmd in ("doctor", "serve", "start", "llama", "skills"):
         return args.fn(args)
     store = _store(args)
     try:

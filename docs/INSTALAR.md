@@ -2,6 +2,18 @@
 
 Pensado para Windows y PowerShell. Sin GPU, los modelos locales no funcionan, pero todo lo demás sí.
 
+## Lo fácil (doble clic)
+Con Git, Python y Node.js instalados (tabla de abajo) y el repo clonado (apartado 2):
+- **`LocalHarness.bat`**: la primera vez lo prepara todo (entorno de Python, dependencias, web); después arranca el
+  servidor y abre el navegador. Si ya estaba abierto, solo abre la pestaña. Al cerrar su ventana se apaga todo,
+  también el modelo local.
+- **`Crear acceso directo.bat`** (una vez): icono de LocalHarness en el escritorio y en el menú Inicio.
+- **`Actualizar.bat`**: baja lo último de `main` y vuelve a preparar.
+- En Modelos locales → «Dónde están las cosas», marca **«Arrancar el último modelo al abrir LocalHarness»** y el icono
+  arranca también llama-server con el último modelo y sus ajustes.
+
+Los apartados de abajo son lo mismo a mano.
+
 ## 1. Programas que hacen falta (una vez)
 | Programa | Para qué | Cómo comprobarlo |
 |---|---|---|
@@ -42,6 +54,7 @@ cd web; npm install; npm run build; cd ..
 
 ## 4. Arrancar
 ```powershell
+.venv\Scripts\python -m localharness start     # lo mismo que el icono: servidor + navegador (+ modelo si lo marcaste)
 .venv\Scripts\python -m localharness sandbox     # opcional: repo de pruebas en tu carpeta de usuario + agentes de ejemplo
 .venv\Scripts\python -m localharness serve       # abre http://127.0.0.1:8095
 ```
