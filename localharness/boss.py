@@ -328,9 +328,16 @@ class Boss:
 
 
 def detect_check(root: Path) -> str:
-    """La orden de tests del repo si no se configuró: node --test si hay package.json, unittest si hay tests/*.py."""
-    if (root / "package.json").is_file():
-        return "node --test"
+    """La orden de tests del repo si no se configuró: `npm test` si package.json la define (así corre también el
+    pretest: en poeta regenera los índices, y con `node --test` el jefe perseguía fallos de archivos generados),
+    node --test si no; unittest si hay tests de Python."""
+    pkg = root / "package.json"
+    if pkg.is_file():
+        try:
+            has_test = bool((json.loads(pkg.read_text(encoding="utf-8")).get("scripts") or {}).get("test"))
+        except (OSError, ValueError, AttributeError):
+            has_test = False
+        return "npm test" if has_test else "node --test"
     if (root / "pyproject.toml").is_file() or any((root / "tests").glob("test_*.py")) or any(root.glob("test_*.py")):
         return "python -m unittest"
     return ""
@@ -346,8 +353,8 @@ SYSTEM_PROPOSE = (
     "SIGUIENTES parches. Cada uno es una sola línea que se pueda hacer en un rato y comprobar con tests: qué archivos "
     "crear o cambiar, las funciones con su nombre exacto y qué devuelven, y qué casos tienen que probar los tests. "
     "Lo que mejor sale a estos modelos: código con funciones puras y tests, herramientas en tools/, datos JSON, "
-    "cambios repetidos en muchas páginas. Lo que peor: prosa larga (relatos, adivinanzas, poemas largos), así que "
-    "nada de eso más allá de la entrada de blog corta de cada parche. No repitas nada de lo ya hecho ni lo que ya "
+    "cambios repetidos en muchos archivos. Lo que peor: prosa larga (relatos, adivinanzas, poemas largos) y archivos "
+    "enormes. Sigue la hoja de ruta y las normas del proyecto si las hay. No repitas nada de lo ya hecho ni lo que ya "
     "existe en el MAPA. Responde SOLO con el JSON.")
 
 

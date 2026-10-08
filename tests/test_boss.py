@@ -169,6 +169,9 @@ class BossTests(unittest.TestCase):
         self.assertEqual(boss.mentioned("recalc.pyx y micalc.py no son calc.py"), ["calc.py"])
         (self.root / "package.json").write_text("{}", encoding="utf-8")
         self.assertEqual(detect_check(self.root), "node --test")
+        (self.root / "package.json").write_text('{"scripts": {"pretest": "node x.mjs", "test": "node --test"}}',
+                                                encoding="utf-8")
+        self.assertEqual(detect_check(self.root), "npm test")
 
 
 if __name__ == "__main__":

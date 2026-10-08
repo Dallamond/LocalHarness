@@ -1,7 +1,8 @@
 @echo off
 rem Plan automático de mañana (lo lanza la tarea programada «LocalHarness - autopiloto local»): abre LocalHarness si
-rem no está abierto, espera a que conteste y hace 6 h de autopiloto 100 % local (sin Claude, 0 $) con la lista
-rem autopilot\poeta-local.md; cuando se acaba, los modelos proponen los parches siguientes (--continuo).
+rem no está abierto, espera a que conteste y hace 24 h de autopiloto 100 % local (sin Claude, 0 $): el juego de
+rem plataformas «Saltarín» (proyecto «plataformas», lista autopilot\plataformas.md). Cuando se acaba la lista, los
+rem modelos proponen los parches siguientes (--continuo).
 rem Los modelos los arranca el autopiloto: gpt-oss-20b en la 3060 (n_cpu_moe 4) y Qwen3.5-4B en la 1060.
 chcp 65001 >nul
 title LocalHarness - Autopiloto local de la mañana (no cierres esta ventana)
@@ -17,7 +18,7 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-".venv\Scripts\python.exe" -m localharness autopilot --project poeta --agent "Jefe local" --list "autopilot\poeta-local.md" --hours 6 --budget 1 --task-minutes 40 --check "node --test" --continuo
+".venv\Scripts\python.exe" -m localharness autopilot --project plataformas --agent "Jefe local" --list "autopilot\plataformas.md" --hours 24 --budget 1 --task-minutes 40 --check "npm test" --continuo
 echo.
-echo Autopiloto terminado. Informe: data\autopilot\poeta-local-informe.md
+echo Autopiloto terminado. Informe: data\autopilot\plataformas-informe.md
 pause
