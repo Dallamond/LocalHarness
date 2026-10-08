@@ -158,6 +158,9 @@ class SwapTests(unittest.TestCase):
         with mock.patch("localharness.orchestrator.llama_up", return_value=False):
             self.assertEqual([e["id"] for e in local_endpoints(self.store)], ["principal"])  # el MCP solo ve uno
         with mock.patch("localharness.orchestrator.llama_up", return_value=True):  # el pequeño sigue arrancado al lado
+            # medido el 08/10: en este equipo comparte la 1060 con gpt-oss y los dos se arrastran → no, salvo ajuste
+            self.assertEqual([e["id"] for e in local_endpoints(self.store)], ["principal"])
+            settings.save(self.store, {"llama": {"joined_helpers": True}})
             self.assertEqual([e["id"] for e in local_endpoints(self.store)], ["principal", "rapido"])
         r = local_servers.set_topology(self.store, pool, "separado")
         self.assertEqual(r["started"], ["Fuerte", "Rápido"])
@@ -191,7 +194,8 @@ class LocalPlanTests(unittest.TestCase):
     def test_plan_is_validated_retried_and_executed(self):
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "mapa.html").write_text("<li>uno</li>\n", encoding="utf-8")
-            bad = {"blocks": [{"id": "1", "kind": "edit", "path": "no-existe.html", "instructions": "x", "after": []}]}
+            # un fallo que no tiene arreglo automático (editar lo que no existe ya se convierte en `write`)
+            bad = {"blocks": [{"id": "1", "kind": "write", "path": "../fuera.html", "instructions": "x", "after": []}]}
             good = {"blocks": [
                 {"id": "1", "kind": "edit", "path": "mapa.html", "instructions": "añade dos", "after": []},
                 {"id": "2", "kind": "write", "path": "dos.html", "instructions": "página dos", "after": ["1"]}]}
@@ -211,7 +215,7 @@ class LocalPlanTests(unittest.TestCase):
             self.assertIn("2 de 2 bloques bien", text)
             plans = [b for b in seen if b["messages"][1]["content"].startswith("TAREA:")]
             self.assertEqual(len(plans), 2)
-            self.assertIn("no-existe.html, que no existe", plans[1]["messages"][1]["content"])
+            self.assertIn("no tiene una ruta válida dentro del repo: '../fuera.html'", plans[1]["messages"][1]["content"])
             self.assertEqual(plans[0]["response_format"]["type"], "json_schema")  # JSON garantizado (P9)
             self.assertIn("MAPA DEL REPO", plans[0]["messages"][1]["content"])
             self.assertIn("<li>dos</li>", (Path(tmp) / "mapa.html").read_text(encoding="utf-8"))

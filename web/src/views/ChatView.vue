@@ -35,14 +35,45 @@ type Msg =
   | { type: "agent"; text: string }
   | { type: "tools"; items: { name: string; target: string }[] }
   | { type: "note"; text: string; tone: "ok" | "warn" | "crit" | "dim" }
-  | { type: "delegate"; ok: boolean; what: string; tool: string; detail: string; thinking: string; answer: string; request: string; skills: string[] }
+  | { type: "delegate"; ok: boolean; what: string; tool: string; detail: string; thinking: string; answer: string; request: string; skills: string[]; to: Worker; step: string; boss: boolean }
+  | { type: "plan"; label: string; by: Worker; blocks: PlanBlock[] }
   | { type: "thinking"; text: string; local?: boolean };
+
+// --- chat de grupo: el jefe (Claude o el jefe local) y cada modelo local, por su servidor
+type Worker = { id: string; name: string; model: string; tone: "fuerte" | "rapido" | "otro" };
+type PlanBlock = { id: string; kind: string; path: string; title: string; after: string[]; to?: Worker; ok?: boolean; seconds?: number; tps?: number };
+const TONE_EMOJI = { fuerte: "🦙", rapido: "⚡", otro: "🤖" } as const;
+function workerOf(id: unknown, model?: unknown): Worker {
+  const sid = String(id ?? "principal");
+  const srv = live.locals.find((l) => l.id === sid);
+  const tone = srv?.role === "rapido" || sid === "rapido" ? "rapido" : srv?.role === "fuerte" || sid === "principal" ? "fuerte" : "otro";
+  return { id: sid, name: srv?.name ?? (sid === "principal" ? "Principal" : sid), tone,
+           model: String(model ?? srv?.model ?? "").replace(/\.gguf$/i, "") };
+}
+const BOSS_STEP: Record<string, string> = {
+  elegir_archivos: "elige qué archivos hay que leer", revisar: "revisa el diff contra el encargo",
+  proponer_parches: "propone los parches siguientes",
+};
+function bossStep(tool: string): string {
+  const step = tool.replace(/^jefe_local\//, "");
+  const m = step.match(/^planificar \((.+)\)$/);
+  return m ? `planifica (${m[1].toLowerCase()})` : BOSS_STEP[step] ?? step;
+}
+function stepOf(tool: string, d: Record<string, unknown>): string {
+  if (tool.startsWith("local_execute_plan/")) return `bloque ${d.block ?? ""} · ${tool.split("/")[1] === "edit" ? "editar" : tool.split("/")[1] === "write" ? "escribir" : "pregunta"}`;
+  return { local_ask: "pregunta", local_write_file: "escribir", local_edit_file: "editar", local_agent: "tarea con herramientas",
+           local_research: "investigar en la web", local_plan: "planificar", local_map: "mapa del repo",
+           local_read_documents: "leer documentos", local_look: "mirar la página" }[tool] ?? tool.replace(/^local_/, "");
+}
+const bossName = computed(() => agent.value?.name ?? "El jefe");
+const bossKind = computed(() => (agent.value?.provider === "local_boss" ? "jefe local" : agent.value?.provider === "claude" ? "Claude" : "jefe"));
 
 const TERMINAL = new Set(["review", "done", "failed", "timeout", "cancelled", "interrupted", "merged", "rejected"]);
 
 const messages = computed<Msg[]>(() => {
   if (!task.value) return [];
   const out: Msg[] = [{ type: "user", text: task.value.prompt }];
+  let currentPlan: Extract<Msg, { type: "plan" }> | null = null;
   let spoke = false; // el agente ya habló desde tu último mensaje (para no duplicar con `result`)
   for (const e of events.value) {
     const last = out[out.length - 1];
@@ -80,17 +111,36 @@ const messages = computed<Msg[]>(() => {
       out.push({ type: "thinking", text: e.text, local: true });
     } else if (e.kind === "delegate") {
       const d = e.data as Record<string, unknown>;
-      if (d.tool === "local_prepare") continue; // lo cuenta el evento `worker`
-      if (d.tool === "local_execute_plan") {
-        out.push({ type: "note", text: `📋 Modelo local: ${d.task ?? "plan terminado"}`, tone: "ok" });
+      const tool = String(d.tool ?? "");
+      if (tool === "local_prepare") continue; // lo cuenta el evento `worker`
+      if (tool === "local_execute_plan") {
+        const good = Number(d.blocks_ok ?? (typeof d.ok === "number" ? d.ok : NaN));
+        out.push({ type: "note", tone: "ok", text: `📋 Plan ejecutado: ${Number.isFinite(good) ? `${good} de ${d.blocks} bloques bien` : d.task ?? "terminado"}`
+          + `${Number(d.parallel ?? 0) > 1 ? ` · hasta ${d.parallel} a la vez` : ""}${d.plan_seconds ? ` · ${d.plan_seconds} s` : ""}` });
         continue;
       }
+      if (tool === "run_checks") {
+        const exit = String(d.exit ?? "");
+        out.push({ type: "note", tone: exit.endsWith(" 0") ? "ok" : "warn",
+                   text: `🧪 Tests (${d.task ?? ""}): ${exit === "código de salida 0" ? "pasan" : exit || (d.ok ? "ejecutados" : String(d.error ?? "no se pudieron lanzar"))}` });
+        continue;
+      }
+      const to = workerOf(d.server, d.model);
+      if (tool.startsWith("jefe_local/planificar") && Array.isArray(d.plan)) {
+        currentPlan = { type: "plan", label: bossStep(tool), by: to, blocks: (d.plan as PlanBlock[]).map((b) => ({ ...b, after: b.after ?? [] })) };
+        out.push(currentPlan);
+      }
+      if (currentPlan && tool.startsWith("local_execute_plan/") && d.block != null) {
+        const b = currentPlan.blocks.find((x) => x.id === String(d.block));
+        if (b) Object.assign(b, { to, ok: !!d.ok, seconds: Number(d.gen_seconds ?? d.seconds ?? 0) || undefined, tps: Number(d.tps ?? 0) || undefined });
+      }
       const toks = Number(d.completion_tokens ?? 0);
+      const boss = tool.startsWith("jefe_local/");
       out.push({
-        type: "delegate", ok: !!d.ok, tool: String(d.tool ?? ""),
-        what: String(d.path ?? d.task ?? ""),
+        type: "delegate", ok: !!d.ok, tool, to, boss, step: boss ? bossStep(tool) : stepOf(tool, d),
+        what: boss ? "" : String(d.path ?? d.task ?? ""),
         detail: d.ok
-          ? [d.model, toks ? `${toks} tokens` : null, d.tps ? `${d.tps} tok/s` : null, d.seconds ? `${d.seconds} s` : null]
+          ? [toks ? `${toks} tokens` : null, d.tps ? `${d.tps} tok/s` : null, d.gen_seconds ?? d.seconds ? `${d.gen_seconds ?? d.seconds} s` : null]
               .filter(Boolean).join(" · ")
           : String(d.error ?? "falló"),
         thinking: String(d.thinking ?? ""), answer: String(d.answer ?? ""), request: String(d.request ?? ""),
@@ -110,6 +160,57 @@ const messages = computed<Msg[]>(() => {
 });
 
 const openTools = reactive<Record<number, boolean>>({});
+
+// --- los participantes: el jefe y cada modelo local que ha trabajado o está arrancado; quién tiene la pelota
+type Party = { key: string; name: string; sub: string; tone: string; emoji: string; n: number; bad: number; tokens: number; seconds: number; ball: boolean; doing: string };
+const party = computed<Party[]>(() => {
+  const ws: Record<string, Party> = {};
+  const add = (w: Worker) => (ws[w.id] ??= { key: w.id, name: w.name, sub: w.model || "modelo local", tone: w.tone, emoji: TONE_EMOJI[w.tone], n: 0, bad: 0, tokens: 0, seconds: 0, ball: false, doing: "" });
+  for (const l of live.locals) if (l.state === "ready" || l.state === "external") add(workerOf(l.id, l.model));
+  for (const e of events.value) {
+    const d = e.data as Record<string, unknown> | undefined;
+    if (e.kind !== "delegate" || !d || !d.server) continue;
+    const r = add(workerOf(d.server, d.model));
+    r.n++;
+    if (!d.ok) r.bad++;
+    r.tokens += Number(d.completion_tokens ?? 0);
+    r.seconds += Number(d.gen_seconds ?? 0);
+  }
+  let bossThinking = "";
+  for (const w of liveNow.value) {
+    const r = add(workerOf(w.server));
+    r.ball = true;
+    r.doing = String(w.tool ?? "").startsWith("jefe_local/") ? `piensa para el jefe: ${bossStep(String(w.tool))}` : `${stepOf(String(w.tool ?? ""), {})}: ${w.task ?? ""}`;
+    if (String(w.tool ?? "").startsWith("jefe_local/")) bossThinking = r.doing;
+  }
+  const workers = Object.values(ws);
+  const boss: Party = {
+    key: "jefe", name: bossName.value, sub: bossKind.value, tone: "jefe", emoji: "🧭", n: 0, bad: 0, tokens: 0, seconds: 0,
+    ball: busy.value && (!workers.some((w) => w.ball) || !!bossThinking),
+    doing: bossThinking || (busy.value && !workers.some((w) => w.ball) ? "organiza, reparte o pasa los tests" : ""),
+  };
+  return [boss, ...workers];
+});
+const ball = computed(() => {
+  if (!task.value) return "";
+  if (busy.value) {
+    const now = party.value.filter((p) => p.ball && p.key !== "jefe");
+    if (now.length) return `🏀 Tiene la pelota: ${now.map((p) => `${p.name} (${p.doing.slice(0, 80)})`).join(" y ")}`;
+    return `🏀 Tiene la pelota: ${bossName.value} — ${party.value[0].doing}`;
+  }
+  if (task.value.status === "review") return "🏀 Te toca a ti: revisa los cambios y aprueba, rechaza o pide algo más";
+  return "";
+});
+// filtro: seguir solo a un participante (clic en su ficha)
+const who = ref("todo");
+watch(() => props.id, () => (who.value = "todo"));
+function shown(m: Msg): boolean {
+  if (who.value === "todo") return true;
+  if (who.value === "jefe") return m.type !== "delegate" || m.boss;
+  return (m.type === "delegate" && m.to.id === who.value) || m.type === "plan" || m.type === "user";
+}
+// la lista de conversaciones se pliega para dar todo el ancho al chat
+const listOpen = ref(!props.id);
 
 function toBottom() {
   nextTick(() => scroller.value?.scrollTo({ top: scroller.value.scrollHeight, behavior: "smooth" }));
@@ -138,13 +239,16 @@ async function load() {
   }
 }
 
-// el modelo local pensando/escribiendo AHORA (eventos `worker_live`, no se guardan)
-const localLive = ref<{ tool?: string; task?: string; thinking: string; text: string; done: boolean; at: number } | null>(null);
-const localNow = computed(() => (localLive.value && !localLive.value.done && busy.value ? localLive.value : null));
+// cada modelo local pensando/escribiendo AHORA (eventos `worker_live`, no se guardan): uno por servidor
+type LiveWork = { server?: string; tool?: string; task?: string; thinking: string; text: string; done: boolean; at: number; tps?: number | null };
+const liveBy = reactive<Record<string, LiveWork>>({});
+const liveNow = computed(() => (busy.value ? Object.values(liveBy).filter((w) => !w.done) : []));
+watch(() => props.id, () => { for (const k of Object.keys(liveBy)) delete liveBy[k]; });
 const off = onTaskEvent((ev) => {
   if (ev.task_id !== props.id) return;
   if (ev.kind === "worker_live") {
-    localLive.value = ev.data as unknown as NonNullable<typeof localLive.value>;
+    const w = ev.data as unknown as LiveWork;
+    liveBy[String(w.server ?? "principal")] = w;
     toBottom();
     return;
   }
@@ -286,9 +390,9 @@ const placeholder = computed(() => {
 </script>
 
 <template>
-  <div class="chat">
-    <!-- conversaciones -->
-    <aside class="list">
+  <div class="chat" :class="{ 'chat--wide': !listOpen }">
+    <!-- conversaciones (plegable: así el chat de grupo usa toda la pantalla) -->
+    <aside v-if="listOpen" class="list">
       <RouterLink to="/chat" class="btn btn--primary new">+ Nueva conversación</RouterLink>
       <p v-if="!conversations.length" class="muted small pad">Aún no hay conversaciones.</p>
       <RouterLink
@@ -306,6 +410,7 @@ const placeholder = computed(() => {
     <section class="room">
       <!-- cabecera -->
       <header v-if="task" class="room__head">
+        <button class="btn btn--small btn--ghost" :title="listOpen ? 'Ocultar conversaciones' : 'Ver conversaciones'" @click="listOpen = !listOpen">☰</button>
         <AgentAvatar :agent="agent" :busy="busy" :size="34" />
         <div class="room__who">
           <strong>{{ task.title }}</strong>
@@ -320,20 +425,43 @@ const placeholder = computed(() => {
         <RouterLink :to="`/tareas/${task.id}`" class="btn btn--small btn--ghost">Detalle y diff</RouterLink>
       </header>
       <header v-else class="room__head">
+        <button class="btn btn--small btn--ghost" title="Conversaciones" @click="listOpen = !listOpen">☰</button>
         <div class="room__who">
           <strong>Nueva conversación</strong>
           <span class="muted small">Elige carpeta y agente, y escribe abajo.</span>
         </div>
       </header>
 
+      <!-- participantes: quién es quién, cuánto ha hecho y quién tiene la pelota (clic = ver solo a ese) -->
+      <div v-if="task && party.length > 1" class="party">
+        <button class="party__all" :class="{ on: who === 'todo' }" @click="who = 'todo'">Todos</button>
+        <button
+          v-for="p in party" :key="p.key" class="party__m" :class="[`party__m--${p.tone}`, { on: who === p.key, 'party__m--ball': p.ball }]"
+          @click="who = who === p.key ? 'todo' : p.key"
+        >
+          <span class="party__face" :class="`face--${p.tone}`">{{ p.emoji }}</span>
+          <span class="party__txt">
+            <strong>{{ p.name }}</strong>
+            <span class="small">{{ p.sub }}</span>
+            <span v-if="p.key !== 'jefe'" class="small">{{ p.n }} encargos{{ p.bad ? ` · ${p.bad} fallidos` : "" }} · {{ p.tokens }} tok · {{ Math.round(p.seconds) }} s</span>
+          </span>
+          <span v-if="p.ball" class="party__ball" title="Tiene la pelota">🏀</span>
+        </button>
+      </div>
+      <p v-if="ball" class="ball" :class="{ 'ball--you': !busy }">{{ ball }}</p>
+
       <!-- mensajes -->
       <div ref="scroller" class="msgs">
         <template v-if="task">
           <template v-for="(m, i) in messages" :key="i">
-            <div v-if="m.type === 'user'" class="bubble bubble--me"><Markdown :text="m.text" /></div>
-            <div v-else-if="m.type === 'agent'" class="from">
-              <AgentAvatar :agent="agent" :size="28" />
-              <div class="bubble bubble--agent"><Markdown :text="m.text" /></div>
+            <template v-if="!shown(m)" />
+            <div v-else-if="m.type === 'user'" class="bubble bubble--me"><Markdown :text="m.text" /></div>
+            <div v-else-if="m.type === 'agent'" class="gm">
+              <span class="gm__face face--jefe">🧭</span>
+              <div class="gm__body">
+                <span class="gm__name name--jefe">{{ bossName }} <span class="muted small">· informe</span></span>
+                <div class="bubble bubble--agent bubble--jefe"><Markdown :text="m.text" /></div>
+              </div>
             </div>
             <div v-else-if="m.type === 'tools'" class="tools">
               <button class="tools__btn" @click="openTools[i] = !openTools[i]">
@@ -344,40 +472,78 @@ const placeholder = computed(() => {
                 <li v-for="(x, j) in m.items" :key="j"><strong>{{ x.name }}</strong> <code>{{ x.target }}</code></li>
               </ul>
             </div>
-            <div v-else-if="m.type === 'delegate'" class="deleg" :class="{ 'deleg--bad': !m.ok }">
-              <div class="deleg__h">
-                <span class="deleg__who">🦙 Modelo local</span>
-                <span>{{ m.tool.includes("write") ? "escribió" : m.tool === "local_research" ? "investigó en la web" : m.tool === "local_agent" ? "hizo la tarea" : "respondió a" }} <strong>{{ m.what }}</strong></span>
-                <span class="muted small">{{ m.detail }}</span>
-                <span v-for="sk in m.skills" :key="sk" class="pill pill--active small">⚡ {{ sk }}</span>
+            <!-- el plan del jefe: una tarjeta con el reparto (a quién fue cada bloque y cómo salió) -->
+            <div v-else-if="m.type === 'plan'" class="gm">
+              <span class="gm__face face--jefe">🧭</span>
+              <div class="gm__body">
+                <span class="gm__name name--jefe">{{ bossName }} <span class="muted small">· {{ m.label }} · lo pensó {{ m.by.name }}</span></span>
+                <div class="plan">
+                  <ol class="plan__list">
+                    <li v-for="b in m.blocks" :key="b.id">
+                      <span>{{ b.ok === undefined ? "⏳" : b.ok ? "✅" : "❌" }}</span>
+                      <code class="small">{{ b.kind }}</code>
+                      <strong>{{ b.path || b.title || b.id }}</strong>
+                      <span v-if="b.to" class="tag" :class="`tag--${b.to.tone}`">→ {{ b.to.name }}</span>
+                      <span v-if="b.after.length" class="muted small">tras {{ b.after.join(", ") }}</span>
+                      <span v-if="b.seconds" class="muted small">{{ b.seconds }} s{{ b.tps ? ` · ${b.tps} tok/s` : "" }}</span>
+                    </li>
+                  </ol>
+                </div>
               </div>
-              <details v-if="m.thinking" class="deleg__more" open>
-                <summary>💭 Cómo lo pensó</summary>
-                <p class="deleg__think">{{ m.thinking }}</p>
-              </details>
-              <details v-if="m.answer && m.ok" class="deleg__more">
-                <summary>💬 Su respuesta</summary>
-                <Markdown :text="m.answer.length > 4000 ? m.answer.slice(0, 4000) + '\n\n…' : m.answer" />
-              </details>
-              <details v-if="m.request" class="deleg__more">
-                <summary>📨 Lo que le pidió Claude</summary>
-                <p class="deleg__think">{{ m.request }}</p>
-              </details>
             </div>
+            <!-- un encargo: el jefe se lo pide a un modelo (o piensa con él) y el modelo contesta -->
+            <template v-else-if="m.type === 'delegate'">
+              <div class="gm gm--ask">
+                <span class="gm__face face--jefe">🧭</span>
+                <div class="gm__body">
+                  <span class="gm__name name--jefe">{{ bossName }}</span>
+                  <div class="bubble bubble--ask">
+                    <template v-if="m.boss">Piensa con <span class="tag" :class="`tag--${m.to.tone}`">{{ m.to.name }}</span>: {{ m.step }}</template>
+                    <template v-else><span class="tag" :class="`tag--${m.to.tone}`">@{{ m.to.name }}</span> {{ m.step }}<template v-if="m.what">: <strong>{{ m.what }}</strong></template></template>
+                    <details v-if="m.request" class="deleg__more">
+                      <summary>📨 El encargo entero</summary>
+                      <p class="deleg__think">{{ m.request }}</p>
+                    </details>
+                  </div>
+                </div>
+              </div>
+              <div class="gm">
+                <span class="gm__face" :class="`face--${m.to.tone}`">{{ TONE_EMOJI[m.to.tone] }}</span>
+                <div class="gm__body">
+                  <span class="gm__name" :class="`name--${m.to.tone}`">{{ m.to.name }} <span class="muted small">{{ m.to.model }} · {{ m.detail }}</span></span>
+                  <div class="bubble bubble--model" :class="[`bubble--${m.to.tone}`, { 'bubble--bad': !m.ok }]">
+                    <p v-if="!m.ok" class="gm__err">❌ {{ m.detail }}</p>
+                    <details v-if="m.thinking" class="deleg__more">
+                      <summary>💭 Lo que pensó ({{ m.thinking.length }} caracteres)</summary>
+                      <p class="deleg__think">{{ m.thinking }}</p>
+                    </details>
+                    <details v-if="m.answer && m.ok" class="deleg__more" :open="m.answer.length < 700">
+                      <summary>💬 Lo que contestó</summary>
+                      <Markdown :text="m.answer.length > 4000 ? m.answer.slice(0, 4000) + '\n\n…' : m.answer" />
+                    </details>
+                    <p v-if="m.ok && !m.answer && !m.thinking" class="muted small">Hecho.</p>
+                    <span v-for="sk in m.skills" :key="sk" class="pill pill--active small">⚡ {{ sk }}</span>
+                  </div>
+                </div>
+              </div>
+            </template>
             <details v-else-if="m.type === 'thinking'" class="think" :class="{ 'think--local': m.local }" :open="m.local">
               <summary>💭 {{ m.local ? "Pensamiento del modelo local" : "Pensamiento" }} ({{ m.text.length }} caracteres)</summary>
               <p>{{ m.text }}</p>
             </details>
             <p v-else class="note" :class="`note--${m.tone}`">{{ m.text }}</p>
           </template>
-          <div v-if="localNow" class="deleg deleg--live">
-            <div class="deleg__h">
-              <span class="deleg__who">🦙 Modelo local · en directo</span>
-              <span class="muted small">{{ localNow.task }}</span>
+          <!-- en directo: cada modelo que está pensando o escribiendo ahora -->
+          <div v-for="w in liveNow" :key="w.server" class="gm gm--live">
+            <span class="gm__face" :class="`face--${workerOf(w.server).tone}`">{{ TONE_EMOJI[workerOf(w.server).tone] }}</span>
+            <div class="gm__body">
+              <span class="gm__name" :class="`name--${workerOf(w.server).tone}`">{{ workerOf(w.server).name }} <span class="muted small">en directo · {{ String(w.tool ?? "").startsWith("jefe_local/") ? `piensa para el jefe: ${bossStep(String(w.tool))}` : w.task }}{{ w.tps ? ` · ${w.tps} tok/s` : "" }}</span></span>
+              <div class="bubble bubble--model bubble--live" :class="`bubble--${workerOf(w.server).tone}`">
+                <p v-if="w.thinking" class="deleg__think">💭 {{ w.thinking.slice(-1200) }}</p>
+                <p v-if="w.text" class="deleg__write">{{ w.text.slice(-1500) }}▍</p>
+                <p v-if="!w.thinking && !w.text" class="muted small">leyendo el encargo…</p>
+              </div>
             </div>
-            <p v-if="localNow.thinking" class="deleg__think">💭 {{ localNow.thinking.slice(-1200) }}</p>
-            <p v-if="localNow.text" class="deleg__write">{{ localNow.text.slice(-1500) }}▍</p>
-            <p v-if="!localNow.thinking && !localNow.text" class="muted small">leyendo el encargo…</p>
           </div>
           <div v-if="busy" class="from">
             <AgentAvatar :agent="agent" :busy="true" :size="28" />
@@ -516,8 +682,122 @@ const placeholder = computed(() => {
   gap: var(--gap);
   height: calc(100vh / var(--zoom) - 90px);
   min-height: 480px;
-  max-width: 1280px;
 }
+.chat--wide {
+  grid-template-columns: minmax(0, 1fr);
+}
+/* participantes del chat de grupo */
+.party {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.party button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 6px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+.party__all { padding: 6px 14px !important; }
+.party button.on { outline: 2px solid var(--ink-dim); }
+.party__txt { display: grid; line-height: 1.25; }
+.party__txt .small { color: var(--ink-dim); }
+.party__m--ball { box-shadow: 0 0 0 3px color-mix(in srgb, #f59e0b 55%, transparent); animation: ball 1.6s ease-in-out infinite; }
+@keyframes ball { 50% { box-shadow: 0 0 0 6px color-mix(in srgb, #f59e0b 20%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .party__m--ball { animation: none; } }
+.party__ball { font-size: 18px; }
+.party__face, .gm__face {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  font-size: 16px;
+  color: #fff;
+}
+.face--jefe { background: #7c3aed; }
+.face--fuerte { background: #d97706; }
+.face--rapido { background: #0d9488; }
+.face--otro { background: #64748b; }
+.ball {
+  margin: 0;
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  background: color-mix(in srgb, #f59e0b 12%, var(--panel));
+  border-bottom: 1px solid var(--line);
+}
+.ball--you { background: color-mix(in srgb, var(--ok) 14%, var(--panel)); }
+/* mensajes de grupo: cara + nombre + burbuja */
+.gm {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.gm__body {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  max-width: min(980px, 92%);
+}
+.gm__name { font-size: 12.5px; font-weight: 700; }
+.name--jefe { color: #7c3aed; }
+.name--fuerte { color: #b45309; }
+.name--rapido { color: #0f766e; }
+.bubble--jefe { border-left: 3px solid #7c3aed; }
+.bubble--ask {
+  padding: 7px 12px;
+  border-radius: 14px;
+  background: color-mix(in srgb, #7c3aed 9%, var(--panel));
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.bubble--model {
+  padding: 8px 12px;
+  border-radius: 14px;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+  display: grid;
+  gap: 4px;
+}
+.bubble--fuerte { background: color-mix(in srgb, #d97706 9%, var(--panel)); }
+.bubble--rapido { background: color-mix(in srgb, #0d9488 9%, var(--panel)); }
+.bubble--otro { background: var(--panel-2, var(--panel)); }
+.bubble--bad { background: var(--warn-weak); }
+.bubble--live { outline: 2px dashed color-mix(in srgb, #f59e0b 60%, transparent); }
+.gm__err { margin: 0; color: var(--warn); font-weight: 600; }
+.tag {
+  display: inline-block;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  background: #64748b;
+}
+.tag--fuerte { background: #b45309; }
+.tag--rapido { background: #0f766e; }
+.plan {
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, #7c3aed 35%, var(--line));
+  background: color-mix(in srgb, #7c3aed 6%, var(--panel));
+  font-size: 14px;
+}
+.plan__list { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+.plan__list li { overflow-wrap: anywhere; }
+.plan__list li > * { margin-right: 6px; }
 .list {
   display: flex;
   flex-direction: column;

@@ -157,6 +157,8 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
     if agent["provider"] == "local_agent":  # el bucle de agente local tiene sus propios ajustes
         extra.update({k: cfg[k] for k in ("tool_mode", "max_tool_chars", "max_context_chars", "web", "commands",
                                           "command_timeout_s") if k in cfg})
+    if agent["provider"] == "local_boss":  # jefe local: su orden de tests (vacío = la detecta en el repo)
+        extra = {"check": cfg.get("check")}
     adapter = get_adapter(agent["provider"], binary=(binaries or {}).get(agent["provider"]) or cfg.get("binary"),
                           **extra)
 
@@ -198,11 +200,13 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
 
     ro = bool(cfg.get("read_only")) if read_only is None else read_only
     is_claude = agent["provider"] == "claude"
+    # jefe local (modo 100 % local): el mismo entorno de modelos locales que el MCP del coordinador Claude
+    is_boss = agent["provider"] == "local_boss"
     # modo coordinador: Claude planifica, encarga y revisa; todo lo que se escribe lo genera el modelo local. Sin
     # llama-server no tendría con qué trabajar: entonces trabaja él solo esta vez (con aviso) en vez de gastar en vano
     coord = is_claude and bool(cfg.get("coordinator")) and not ro
     # modelos locales apagados que esta tarea va a usar: se arrancan solos con el último modelo de cada servidor
-    if is_claude and (coord or cfg.get("delegate_local")):
+    if (is_claude and (coord or cfg.get("delegate_local"))) or is_boss:
         await asyncio.to_thread(local_servers.ensure_for_task, store, cfg.get("local_servers"), 180,
                                 lambda t: sink(Event("warning", text=t)))
     for text in pre_warn:
@@ -211,14 +215,14 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
         coord = False
         sink(Event("warning", text="Modo coordinador sin modelo local arrancado: Claude trabaja solo esta vez "
                                    "(Modelos locales → Arrancar para que encargue el trabajo)"))
-    deleg = _mcp_setup(store, ws.path, {**cfg, "delegate_local": True} if coord else cfg, write=not ro,
-                       coordinator=coord) if is_claude else None
+    deleg = (_mcp_setup(store, ws.path, {**cfg, "delegate_local": True} if coord or is_boss else cfg, write=not ro,
+                        coordinator=coord) if is_claude or is_boss else None)
     if deleg and deleg["missing"]:
         sink(Event("warning", text=f"Servidores MCP no encontrados en el Catálogo: {', '.join(deleg['missing'])}"))
     only = cfg.get("local_servers")  # la Comparativa limita a qué modelos locales puede encargar
     system = (delegate_guide(write=not ro, coordinator=coord,
                              servers=[s for s in settings.local_servers(store) if not only or s["id"] in only])
-              if deleg and deleg["delegate"] else None)
+              if deleg and deleg["delegate"] and is_claude else None)
     thinking = task.get("thinking") or cfg.get("thinking")
     if not thinking and agent["provider"] in ("local", "local_agent"):  # si no, el de su servidor local
         srv = next((s for s in settings.local_servers(store) if s["id"] == (cfg.get("server") or llama.PRINCIPAL)), None)
@@ -226,6 +230,8 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
     thinking = thinking if thinking in THINKING_LEVELS else None
     if thinking and agent["provider"] == "claude":
         deleg_env = {**(deleg["env"] if deleg else {}), **thinking_env(thinking)}
+    elif is_boss:
+        deleg_env = deleg["local_env"] if deleg else {}  # el jefe local monta él mismo el «servidor» de encargos
     else:
         deleg_env = deleg["env"] if deleg else {}
     spec = RunSpec(prompt=prompt, cwd=str(ws.path), model=agent["model"], thinking=thinking,
@@ -343,9 +349,10 @@ def local_endpoints(store: Store, only: list[str] | None = None) -> list[dict]:
         url = settings.server_url(srv)
         if srv["id"] == llama.PRINCIPAL:
             url = settings.load(store)["local_base_url"] or url
-        elif joined and not llama_up(url):
-            # GPU unidas: normalmente solo queda el principal (con las dos). Pero si al lado sigue un modelo pequeño
-            # (el 08/10, Qwen3.5-4B en la 1060 junto a gpt-oss), también trabaja: antes pasó 20 parches parado
+        elif joined and not (settings.load(store)["llama"].get("joined_helpers") and llama_up(url)):
+            # GPU unidas: solo el principal (con las dos). Medido el 08/10: Qwen3.5-4B en la 1060 junto a la parte de
+            # gpt-oss que vive allí llena la VRAM (5,9 de 6 GB) y los dos se arrastran (gpt-oss 47 → 4-6 tok/s, el
+            # 4B 24 → 7). Con `llama.joined_helpers` se usa igual (por si otro equipo tiene VRAM de sobra)
             continue
         out.append({"id": srv["id"], "name": srv["name"], "role": srv["role"],
                     "device": srv["device"], "thinking": srv.get("thinking") or "normal", "url": url,
@@ -428,6 +435,7 @@ def _mcp_setup(store: Store, root: Path, cfg: dict, write: bool, coordinator: bo
     d = Path(tempfile.mkdtemp(prefix="lh-mcp-"))
     log = d / "encargos.jsonl"
     tools = [f"mcp__{n}" for n in servers]  # regla de servidor: aprueba todas sus herramientas
+    env: dict = {}
     if delegate:
         endpoints = local_endpoints(store, cfg.get("local_servers"))
         env = {"LH_LOCAL_URL": endpoints[0]["url"], "LH_LOCAL_KEY": endpoints[0]["key"],
@@ -462,7 +470,7 @@ def _mcp_setup(store: Store, root: Path, cfg: dict, write: bool, coordinator: bo
     # los encargos al modelo local pueden tardar minutos: el tope por defecto de la CLI para una herramienta MCP es corto
     return {"dir": d, "config": str(path), "log": log, "tools": tools, "seen": 0, "delegate": delegate,
             "worker": str(d / "worker.json"), "skills": str(d / "skills.json"), "worker_seen": None,
-            "live": str(d / "live.json"), "live_at": 0.0,
+            "live": str(d / "live.json"), "live_at": 0.0, "local_env": env,
             "missing": [n for n in wanted if n not in catalog],
             # sin --safe-mode (bloquea el MCP): el CLAUDE.md del usuario/vault se apaga con esta variable (verificado)
             "env": {"MCP_TOOL_TIMEOUT": "900000", "MCP_TIMEOUT": "30000", "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1"}}

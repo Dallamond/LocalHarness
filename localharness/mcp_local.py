@@ -847,11 +847,24 @@ class Server:
 
     # --- el modelo local planifica (P8), con JSON garantizado (P9)
     def plan(self, task: str, files: list, execute: bool, check: str) -> tuple[str, dict]:
+        blocks, stats = self.plan_blocks(task, files)
+        listing = "\n".join(f"- {b['id']} [{b['kind']}] {b.get('path') or ''} ← after {b.get('after') or []}: "
+                            f"{str(b.get('title') or b['instructions'])[:100]}" for b in blocks)
+        if not execute:
+            return (f"Plan del modelo local ({len(blocks)} bloques):\n{listing}\n\nJSON para `local_execute_plan` "
+                    f"(revísalo y corrígelo si hace falta):\n```json\n{json.dumps(blocks, ensure_ascii=False)}\n```"), stats
+        text, run = self.execute_plan(blocks, check)
+        return f"Plan del modelo local ({len(blocks)} bloques):\n{listing}\n\n{text}", {**stats, **run}
+
+    def plan_blocks(self, task: str, files: list, rules: str = "", effort: str = "medium") -> tuple[list, dict]:
+        """Los bloques del plan (validados, con un reintento con los errores). `rules`: normas del proyecto
+        (ENCARGO.md…) que el planificador tiene que seguir; las usa el jefe local (boss.py)."""
         from localharness.repomap import repo_map
         if not task.strip():
             raise ToolError("falta `task`")
         ctx, read = self.read_files(files)
-        user = (f"TAREA:\n{task}\n\nMAPA DEL REPO:\n{repo_map(self.root)[:12000]}"
+        user = ((f"NORMAS DEL PROYECTO:\n{rules}\n\n" if rules else "")
+                + f"TAREA:\n{task}\n\nMAPA DEL REPO:\n{repo_map(self.root)[:12000]}"
                 + (f"\n\nARCHIVOS:\n{ctx}" if ctx else ""))
         errors: list[str] = []
         stats: dict = {}
@@ -859,9 +872,9 @@ class Server:
         for _ in range(2):
             raw, stats = self.complete(SYSTEM_PLAN, user + (
                 "\n\nTU PLAN ANTERIOR TENÍA ESTOS ERRORES, corrígelos:\n- " + "\n- ".join(errors) if errors else ""),
-                schema=PLAN_SCHEMA, effort="medium")
+                schema=PLAN_SCHEMA, effort=effort)
             try:
-                blocks = json.loads(strip_fence(raw)).get("blocks") or []
+                blocks = normalize_plan(json.loads(strip_fence(raw)).get("blocks") or [], self.root)
             except (ValueError, AttributeError):
                 blocks, errors = [], ["la respuesta no era un JSON con `blocks`"]
                 continue
@@ -870,14 +883,7 @@ class Server:
                 break
         if errors:
             raise ToolError("el plan del modelo local no vale: " + "; ".join(errors[:5]) + ". Planifícalo tú")
-        stats = {**stats, "files": read, "blocks": len(blocks)}
-        listing = "\n".join(f"- {b['id']} [{b['kind']}] {b.get('path') or ''} ← after {b.get('after') or []}: "
-                            f"{str(b.get('title') or b['instructions'])[:100]}" for b in blocks)
-        if not execute:
-            return (f"Plan del modelo local ({len(blocks)} bloques):\n{listing}\n\nJSON para `local_execute_plan` "
-                    f"(revísalo y corrígelo si hace falta):\n```json\n{json.dumps(blocks, ensure_ascii=False)}\n```"), stats
-        text, run = self.execute_plan(blocks, check)
-        return f"Plan del modelo local ({len(blocks)} bloques):\n{listing}\n\n{text}", {**stats, **run}
+        return blocks, {**stats, "files": read, "blocks": len(blocks)}
 
     # --- documentos e imágenes (P14) y revisión visual (P15)
     def vision_complete(self, question: str, images: list[Path], extra_text: str = "") -> tuple[str, dict]:
@@ -1403,7 +1409,8 @@ class Server:
                 self._ctx[srv["id"]] = None
         return self._ctx[srv["id"]]
 
-    def complete(self, system: str, user, schema: dict | None = None, effort: str = "low") -> tuple[str, dict]:
+    def complete(self, system: str, user, schema: dict | None = None, effort: str = "low",
+                 max_tokens: int | None = None) -> tuple[str, dict]:
         """Un encargo al modelo. `schema`: JSON Schema que la respuesta TIENE que cumplir (llama-server lo impone con
         una gramática: se acaban los planes y JSON mal formados). `effort`: razonamiento de gpt-oss y similares; el
         08/10, con los mismos encargos, «low» escribió 3-4 veces más rápido que «medium» y el mismo código."""
@@ -1412,7 +1419,8 @@ class Server:
         # cache_prompt: los bloques de un plan comparten prompt de sistema y archivos; llama-server reutiliza lo ya
         # procesado en la ranura en vez de leerlo otra vez
         body = {"messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                "temperature": 0.2, "max_tokens": self.max_tokens, "cache_prompt": True, "_effort": effort}
+                "temperature": 0.2, "max_tokens": max_tokens or self.max_tokens, "cache_prompt": True,
+                "_effort": effort}
         if schema:
             body["response_format"] = {"type": "json_schema", "json_schema": {"name": "respuesta", "strict": True,
                                                                               "schema": schema}}
@@ -1432,6 +1440,8 @@ class Server:
                  "answer": text[:MAX_LOG_ANSWER], "skills": skills, "server": self.server_id}
         if msg.get("reasoning_content"):
             stats["thinking"] = msg["reasoning_content"][-MAX_LOG_THINKING:]
+        if choice.get("finish_reason") == "loop":
+            raise ToolError("el modelo local entró en bucle (repetía lo mismo una y otra vez) y se cortó; hazlo tú")
         if not text:
             if msg.get("reasoning_content"):
                 raise ToolError("el modelo local se quedó pensando y no llegó a responder (sube LH_MAX_TOKENS o "
@@ -1535,6 +1545,9 @@ class Server:
                 el = last - t_first if t_first else 0
                 self._live("".join(reasoning), "".join(content), tps=round(pieces / el, 1) if el > 0.5 else None,
                            tokens=pieces)
+                if looping("".join(reasoning)) or looping("".join(content), 300, 6):
+                    finish = "loop"  # al cerrar la conexión, llama-server deja de generar
+                    break
         final = round(timings["predicted_per_second"], 1) if timings.get("predicted_per_second") else None
         self._live("".join(reasoning), "".join(content), done=True, tps=final,
                    tokens=usage.get("completion_tokens") or pieces)
@@ -1656,7 +1669,7 @@ PLAN_SCHEMA = {
                        "path": {"type": "string"}, "instructions": {"type": "string"},
                        "files": {"type": "array", "items": {"type": "string"}},
                        "after": {"type": "array", "items": {"type": "string"}}},
-        "required": ["id", "kind", "instructions", "after"]}}},
+        "required": ["id", "kind", "path", "instructions", "after"]}}},
     "required": ["blocks"],
 }
 SYSTEM_PLAN = (
@@ -1666,6 +1679,60 @@ SYSTEM_PLAN = (
     "pongas (no ve la tarea ni los demás bloques): di exactamente qué escribir, con nombres, textos y selectores. "
     "`after`: ids de bloques anteriores de los que depende ([] si de ninguno): los tests dependen del código que "
     "comprueban. Usa solo rutas que existan en el MAPA o archivos nuevos que crees tú. Responde SOLO con el JSON.")
+
+
+_FILE_TOKEN = re.compile(r"[\w./-]+\.[A-Za-z][A-Za-z0-9]{0,4}\b")
+_VERB_PREFIX = re.compile(r"^(?:edit|editar|write|escribir|crear|create|nuevo|new|fix|arreglo|test)[-_]", re.I)
+
+
+def guess_path(b: dict, root: Path) -> str:
+    """La ruta de un bloque edit/write que vino sin `path`, sacada de su id, título o instrucciones: primero un
+    archivo que existe en el repo, si no, el primer nombre de archivo del id o el título (sin «edit-», «crear-»…)."""
+    found: list[str] = []
+    for field in (b.get("id"), b.get("title"), b.get("instructions")):
+        for tok in _FILE_TOKEN.findall(str(field or "")):
+            tok = tok.replace("\\", "/").removeprefix("./")
+            found += [tok, _VERB_PREFIX.sub("", tok)]
+    found = [f for f in dict.fromkeys(found) if f]
+    existing = [f for f in found if (root / f).is_file()]
+    if existing:
+        return existing[0]
+    head = [_VERB_PREFIX.sub("", t.removeprefix("./")) for f in (b.get("id"), b.get("title"))
+            for t in _FILE_TOKEN.findall(str(f or ""))]
+    return head[0] if head else ""
+
+
+def normalize_plan(blocks: list, root: Path) -> list:
+    """Arregla sin preguntar los fallos de forma del plan que tienen una sola lectura posible (el 08/10 gpt-oss
+    puso «atajos.js» como id y dejó `path` vacío, y el plan se tiró dos veces): ruta vacía → la del id o el título
+    si parecen un archivo; `edit` de un archivo que no existe → `write`; `after` hacia bloques que no hay o que van
+    después → fuera; ids repetidos → con sufijo."""
+    if not isinstance(blocks, list):
+        return blocks
+    out, seen = [], []
+    for i, b in enumerate(blocks, 1):
+        if not isinstance(b, dict):
+            out.append(b)
+            continue
+        b = dict(b)
+        bid = str(b.get("id") or "").strip() or str(i)
+        while bid in seen:
+            bid = f"{bid}-{i}"
+        b["id"] = bid
+        if b.get("kind") in ("edit", "write") and not str(b.get("path") or "").strip():
+            guess = guess_path(b, root)
+            if guess:
+                b["path"] = guess
+        path = str(b.get("path") or "").strip().replace("\\", "/")
+        path = path[2:] if path.startswith("./") else path  # solo «./»: «../» lo rechaza validate_plan
+        if path:
+            b["path"] = path
+        if b.get("kind") == "edit" and path and not (root / path).is_file():
+            b["kind"] = "write"
+        b["after"] = [str(a) for a in b.get("after") or [] if str(a) in seen]
+        seen.append(bid)
+        out.append(b)
+    return out
 
 
 def validate_plan(blocks: list, root: Path) -> list[str]:
@@ -1705,6 +1772,15 @@ def short_diff(old: str, new: str, path: str, limit: int = 60) -> dict:
     if len(lines) > limit:
         text += f"\n[… {len(lines) - limit} líneas más]"
     return {"text": text or "(sin cambios)", "added": added, "removed": removed}
+
+
+def looping(text: str, window: int = 160, times: int = 4) -> bool:
+    """¿El modelo se ha quedado repitiendo lo mismo? (gpt-oss, el 08/10: «We can't open file. But we can
+    approximate…» en bucle hasta el tope de tokens). Mira si el final se repite `times` veces en lo último escrito."""
+    if len(text) < window * times * 2:
+        return False
+    tail = text[-window:]
+    return text[-window * times * 6:].count(tail) >= times
 
 
 def check_failed(result: str) -> bool:

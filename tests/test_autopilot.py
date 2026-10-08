@@ -209,6 +209,18 @@ class AutopilotTests(unittest.TestCase):
         pilot.run()
         self.assertGreaterEqual(sum(1 for c in api.calls if c[1] == "/api/llama"), 10)
 
+    def test_continuous_mode_asks_for_new_patches_when_the_list_ends(self):
+        api = FakeApi([("review", 0.0), ("review", 0.0), ("review", 0.0)])
+        asked = []
+
+        def propose(done):
+            asked.append(list(done))
+            return ["parche nuevo uno", "parche nuevo dos"] if len(asked) == 1 else []
+        pilot, _ = self.make(api, ["primero"], propose=propose)
+        rs = pilot.run()
+        self.assertEqual([r.text for r in rs], ["primero", "parche nuevo uno", "parche nuevo dos"])
+        self.assertEqual(asked, [["primero"], ["primero", "parche nuevo uno", "parche nuevo dos"]])
+
     def test_unknown_agent(self):
         with self.assertRaises(ApiError):
             Autopilot(FakeApi([]), "poeta", "nadie", ["a"], state=Path("x"), report=Path("y"))

@@ -72,7 +72,8 @@ const waitingOf = (aid: number) => live.inbox.find((i) => i.task_id && live.task
 const isLocalEv = (e: { kind: string; text: string }) => ["delegate", "worker", "worker_thinking"].includes(e.kind)
   || (e.kind === "tool" && String(e.text).startsWith("mcp__local__"))
   || (e.kind === "progress" && String(e.text).startsWith("Modelo local:"));
-const delegates = (a?: Agent) => !!a && a.provider === "claude" && !!(a.config.delegate_local || a.config.coordinator);
+// el jefe local (modo 100 % local) reparte a los modelos locales igual que el coordinador Claude
+const delegates = (a?: Agent) => !!a && ((a.provider === "claude" && !!(a.config.delegate_local || a.config.coordinator)) || a.provider === "local_boss");
 const workerEvents = reactive<Record<number, TaskEvent[]>>({});
 // lo que el trabajador local está pensando/escribiendo AHORA (eventos `worker_live`, no se guardan)
 interface WorkerLive { tool?: string; task?: string; thinking: string; text: string; done: boolean; at: number; skills?: string[] }
@@ -613,6 +614,7 @@ function tools(a: Agent): { text: string; cls: string; icon: string }[] {
     if (c.web !== false) out.push({ text: "internet", cls: "pill--active", icon: "fa-globe" });
     return out;
   }
+  if (a.provider === "local_boss") return [{ text: "jefe 100 % local", cls: live.local.state === "ready" ? "pill--ok" : "", icon: "fa-user-tie" }];
   if (a.provider !== "claude") return [{ text: "sin herramientas (solo responde)", cls: "", icon: "fa-comment" }];
   out.push({ text: c.read_only ? "solo lectura" : "lee y edita", cls: "", icon: c.read_only ? "fa-eye" : "fa-pen" });
   if (c.delegate_local || c.coordinator) out.push({ text: c.coordinator ? "jefe del local" : "delega en local", cls: live.local.state === "ready" ? "pill--ok" : "", icon: c.coordinator ? "fa-user-tie" : "fa-plug" });

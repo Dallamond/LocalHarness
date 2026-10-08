@@ -129,8 +129,11 @@ class Autopilot:
                  budget: float = 5.0, task_minutes: float = 30, check: str = "node --test", state: Path,
                  report: Path, say: Callable[[str], None] = print, sleep: Callable[[float], None] = time.sleep,
                  clock: Callable[[], float] = time.monotonic, checker: Callable = run_check,
-                 reload: Callable[[], list[str]] | None = None):
+                 reload: Callable[[], list[str]] | None = None,
+                 propose: Callable[[list[str]], list[str]] | None = None):
         self.api, self.items, self.check, self.reload = api, items, check, reload
+        # modo continuo: al acabarse la lista, pide parches nuevos (los propone el modelo local) y sigue
+        self.propose = propose
         self.hours, self.budget, self.task_s = hours, budget, task_minutes * 60
         self.state_path, self.report_path, self.say, self.sleep, self.clock = state, report, say, sleep, clock
         self.checker = checker
@@ -351,6 +354,16 @@ class Autopilot:
                     except (OSError, ValueError):
                         pass
                 n += 1
+                if n > len(self.items) and self.propose and self.clock() < deadline:
+                    self.say(f"[{datetime.now():%H:%M}] Se acabó la lista: el modelo local propone parches nuevos")
+                    try:
+                        new = self.propose(list(self.items))
+                    except Exception as e:  # noqa: BLE001 — sin propuesta se para, como al acabarse la lista
+                        self.say(f"  no pudo: {e}")
+                        new = []
+                    for t in new:
+                        self.say(f"  + {t[:120]}")
+                    self.items = [*self.items, *new]
                 if n > len(self.items):
                     break
                 text = self.items[n - 1]

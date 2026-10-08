@@ -789,7 +789,7 @@ export function agentColor(a: Agent | undefined): string {
 }
 
 export const PROVIDER_TEXT: Record<string, string> = {
-  claude: "Suscripción", local: "Local · GPU", local_agent: "Local · agente", codex: "Codex", human: "Humano",
+  claude: "Suscripción", local: "Local · GPU", local_agent: "Local · agente", local_boss: "Local · jefe", codex: "Codex", human: "Humano",
 };
 
 /** Qué modelo usa de verdad: los locales, el que esté arrancado en llama-server. */

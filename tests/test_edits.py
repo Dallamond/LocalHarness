@@ -37,6 +37,40 @@ class EditsTests(unittest.TestCase):
         text = "<<<<<<< CHANGELOG.md\n- 041\n=======\n- 041\n- 042\n>>>>>>> CHANGELOG.md"
         self.assertEqual(parse_edits(text), [("- 041\n", "- 041\n- 042\n")])
 
+    def test_a_model_stuck_in_a_loop_is_cut(self):
+        from localharness.mcp_local import ToolError, looping
+        stuck = "Hay que mirar night.js. " + "We can't open file. But we can approximate. Let's open night.js. " * 80
+        self.assertTrue(looping(stuck))
+        self.assertFalse(looping("".join(f"<li>parche {i:03d}: algo distinto</li>\n" for i in range(300))))
+        with tempfile.TemporaryDirectory() as d:
+            s = Server({"LH_ROOT": d})
+            chunks = [b'data: {"choices":[{"delta":{"reasoning_content":"' + stuck[i:i + 50].encode() + b'"}}]}'
+                      for i in range(0, len(stuck), 50)]
+            seen = []
+
+            def lines():
+                for c in chunks:
+                    seen.append(c)
+                    yield c
+            import localharness.mcp_local as m
+            real = m.time.monotonic
+            t = [0.0]
+
+            def tick():  # cada trozo «tarda» 1 s: se comprueba en cada uno
+                t[0] += 1
+                return t[0]
+            m.time.monotonic = tick
+            try:
+                data = s.read_stream(lines())
+            finally:
+                m.time.monotonic = real
+            self.assertEqual(data["choices"][0]["finish_reason"], "loop")
+            self.assertLess(len(seen), len(chunks))  # dejó de leer: llama-server para al cerrar
+            s.transport = lambda body: data
+            with self.assertRaises(ToolError) as e:
+                s.complete("sys", "user")
+            self.assertIn("bucle", str(e.exception))
+
     def test_waits_while_the_model_is_loading(self):
         import localharness.mcp_local as m
         from localharness.mcp_local import ToolError

@@ -408,6 +408,8 @@ def cmd_autopilot(args) -> int:
                                     reload=lambda: autopilot.read_list(lst))
     except autopilot.ApiError as e:
         return _fail(str(e))
+    if args.continuo:
+        pilot.propose = _proposer(pilot.project["repo_path"], lst)
     hecho = len(pilot.results)
     print(f"Autopiloto: {len(items)} parches ({hecho} ya hechos) en «{pilot.project['name']}» con «{pilot.agent['name']}»"
           f" · máx. {args.hours} h · {args.budget} $ · {args.task_minutes} min por parche")
@@ -415,6 +417,28 @@ def cmd_autopilot(args) -> int:
     pilot.run()
     print(f"Terminado. Informe: {out / f'{stem}-informe.md'}")
     return 0
+
+
+def _proposer(repo: str, lst: Path):
+    """Modo continuo: los parches nuevos los propone el modelo local fuerte (boss.propose_patches) y se apuntan al
+    final de la lista, así se ven, se pueden corregir a mano y sobreviven a un reinicio."""
+    import json
+
+    from localharness import orchestrator
+    from localharness.boss import propose_patches
+    from localharness.mcp_local import Server
+    from localharness.store import Store
+
+    def propose(done: list[str]) -> list[str]:
+        endpoints = orchestrator.local_endpoints(Store(DEFAULT_DB))
+        server = Server({"LH_LOCAL_SERVERS": json.dumps(endpoints, ensure_ascii=False), "LH_ROOT": repo,
+                         "LH_LOCAL_URL": endpoints[0]["url"], "LH_LOCAL_KEY": endpoints[0]["key"]})
+        new = propose_patches(server, done)
+        if new:
+            with open(lst, "a", encoding="utf-8") as f:
+                f.write("\n" + "".join(f"- {t}\n" for t in new))
+        return new
+    return propose
 
 
 def cmd_serve(args) -> int:
@@ -618,6 +642,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--check", default="node --test", help="tests que deben pasar para integrar ('' = ninguno)")
     p.add_argument("--url", default="http://127.0.0.1:8095"); p.add_argument("--out")
     p.add_argument("--fresh", action="store_true", help="empezar de cero (si no, sigue donde se quedó)")
+    p.add_argument("--continuo", action="store_true",
+                   help="al acabarse la lista, el modelo local propone parches nuevos y sigue (hasta --hours)")
     p.set_defaults(fn=cmd_autopilot)
 
     sub.add_parser("tasks", help="lista tareas").set_defaults(fn=cmd_tasks)

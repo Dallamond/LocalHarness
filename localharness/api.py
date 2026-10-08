@@ -865,7 +865,7 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
             raise HTTPException(409, str(e)) from None
 
     def bench_path(request: Request) -> Path:
-        return request.app.state.llama.principal().log_path.with_name("llama-bench.json")
+        return request.app.state.llama.log_path.with_name("llama-bench.json")  # junto a los logs (data/)
 
     @app.get("/api/llama/bench")
     async def llama_bench_get(request: Request) -> dict:
