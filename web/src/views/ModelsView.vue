@@ -94,7 +94,8 @@ const STATE: Record<string, { text: string; chip: "ok" | "warn" | "crit" | "pend
   failed: { text: "se ha caído", chip: "crit" },
   external: { text: "en marcha (lanzado fuera)", chip: "ok" },
 };
-const speed = computed(() => info.value?.speed ?? live.lastSpeed);
+// /api/llama da `at` en segundos (time.time()) y `ago` quiere milisegundos: salía «hace 20714 días»
+const speed = computed(() => (info.value?.speed ? { ...info.value.speed, at: info.value.speed.at * 1000 } : live.lastSpeed));
 
 // --- arranque con ajustes (diálogo) y configuración propia de cada modelo
 const dialogFor = ref<LocalModel | null>(null);

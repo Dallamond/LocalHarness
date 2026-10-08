@@ -44,11 +44,12 @@ class McpServerTests(unittest.TestCase):
             self.assertEqual(init["result"]["protocolVersion"], "2025-03-26")  # se adapta al cliente
             self.assertIsNone(s.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}))
             names = [t["name"] for t in s.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]]
-            self.assertEqual(names, ["local_ask", "local_write_file", "local_execute_plan", "local_agent", "run_checks",
-                                     "local_research"])
+            self.assertEqual(names, ["local_map", "local_ask", "local_edit_file", "local_write_file",
+                                     "local_execute_plan", "local_agent", "run_checks", "local_research"])
             ro = server(tmp, write=False).handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
             # Director / jefe: pensar e investigar, nunca escribir
-            self.assertEqual([t["name"] for t in ro["result"]["tools"]], ["local_ask", "run_checks", "local_research"])
+            self.assertEqual([t["name"] for t in ro["result"]["tools"]],
+                             ["local_map", "local_ask", "run_checks", "local_research"])
             self.assertIn("error", s.handle({"jsonrpc": "2.0", "id": 3, "method": "otra/cosa"}))
 
     def test_ask_reads_files_itself(self):
@@ -116,8 +117,8 @@ class McpServerTests(unittest.TestCase):
                                                         "local_execute_plan/ask", "local_execute_plan"])
             self.assertEqual(log[-1]["task"], "plan: 3 de 3 bloques")
 
-    def plan_with_wrong_test(self, tmp: str, fixed_test: str) -> tuple[str, list]:
-        """calc.py bien y un test que se equivoca: el plan lo intenta arreglar solo."""
+    def plan_with_wrong_test(self, tmp: str, fix: str) -> tuple[str, list]:
+        """calc.py bien y un test que se equivoca: el plan lo intenta arreglar solo, cambiando solo el trozo."""
         good = "```python\ndef suma(a, b):\n    return a + b\n```"
         bad = ("```python\nimport unittest\nfrom calc import suma\n\n\nclass T(unittest.TestCase):\n"
                "    def test_suma(self):\n        self.assertEqual(suma(2, 3), 6)\n```")
@@ -129,8 +130,10 @@ class McpServerTests(unittest.TestCase):
             if user.startswith("ARCHIVO A ESCRIBIR: calc.py"):
                 return reply(good)
             if user.startswith("ARCHIVO A ESCRIBIR: test_calc.py"):
-                return reply(fixed_test if "CORRECCIÓN" in user else bad)
-            return reply("test_calc.py")  # a la pregunta de qué archivo corregir
+                return reply(bad)
+            if user.startswith("ARCHIVO A CAMBIAR: test_calc.py"):
+                return reply(fix)
+            return reply("¿?")
         s = Server({"LH_ROOT": tmp, "LH_LOG": str(Path(tmp) / "log.jsonl")}, transport=fake)
         r = call(s, "local_execute_plan", {"blocks": [
             {"id": "t", "kind": "write", "path": "test_calc.py", "instructions": "test de suma en calc.py",
@@ -141,29 +144,49 @@ class McpServerTests(unittest.TestCase):
 
     def test_execute_plan_test_waits_for_its_code_and_fixes_itself(self):
         with tempfile.TemporaryDirectory() as tmp:
-            text, seen = self.plan_with_wrong_test(tmp, "```python\nimport unittest\nfrom calc import suma\n\n\n"
-                                                        "class T(unittest.TestCase):\n    def test_suma(self):\n"
-                                                        "        self.assertEqual(suma(2, 3), 5)\n```")
+            text, seen = self.plan_with_wrong_test(tmp, (
+                "<<<<<<< BUSCAR\n        self.assertEqual(suma(2, 3), 6)\n=======\n"
+                "        self.assertEqual(suma(2, 3), 5)\n>>>>>>> REEMPLAZAR"))
             first_test = next(u for u in seen if u.startswith("ARCHIVO A ESCRIBIR: test_calc.py"))
             self.assertIn("return a + b", first_test)        # el test se escribió viendo calc.py ya escrito
             self.assertIn("test_calc.py → calc.py", text)
-            self.assertIn("Ronda 1: reescribió `test_calc.py`", text)
+            self.assertIn("Ronda 1: corrigió `test_calc.py`", text)
             self.assertIn("Ahora la comprobación pasa", text)
             self.assertIn("código de salida 0", text)
+            fix = next(u for u in seen if u.startswith("ARCHIVO A CAMBIAR: test_calc.py"))
+            self.assertIn("CORRECCIÓN", fix)
+            self.assertIn("5 != 6", fix)  # con el error delante
             log = read_log(Path(tmp) / "log.jsonl")
-            self.assertEqual([e["block"] for e in log if str(e.get("block", "")).startswith("arreglo")],
-                             ["arreglo1-elige", "arreglo1"])
+            # sin la pregunta previa de «qué archivo»: el error ya lo nombra
+            self.assertEqual([e["block"] for e in log if str(e.get("block", "")).startswith("arreglo")], ["arreglo1"])
             self.assertTrue(log[-1]["check_ok"])
 
-    def test_execute_plan_auto_fix_gives_up_after_two_rounds(self):
+    def test_execute_plan_auto_fix_is_one_round(self):
         with tempfile.TemporaryDirectory() as tmp:
-            text, _ = self.plan_with_wrong_test(tmp, "```python\nimport unittest\nfrom calc import suma\n\n\n"
-                                                     "class T(unittest.TestCase):\n    def test_suma(self):\n"
-                                                     "        self.assertEqual(suma(2, 2), 5)\n```")
-            self.assertIn("Ronda 2", text)
-            self.assertNotIn("Ronda 3", text)
+            text, _ = self.plan_with_wrong_test(tmp, (
+                "<<<<<<< BUSCAR\n        self.assertEqual(suma(2, 3), 6)\n=======\n"
+                "        self.assertEqual(suma(2, 2), 5)\n>>>>>>> REEMPLAZAR"))
+            self.assertIn("Ronda 1", text)
+            self.assertNotIn("Ronda 2", text)
             self.assertIn("Sigue fallando", text)
             self.assertFalse(read_log(Path(tmp) / "log.jsonl")[-1]["check_ok"])
+
+    def test_auto_fix_skips_when_the_error_is_in_another_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "test_otro.py").write_text("import unittest\n\n\nclass T(unittest.TestCase):\n"
+                                                    "    def test_x(self):\n        self.fail('falta en el mapa')\n")
+            seen = []
+
+            def fake(body):
+                seen.append(body["messages"][1]["content"])
+                return reply("```python\nX = 1\n```")
+            s = Server({"LH_ROOT": tmp, "LH_LOG": str(Path(tmp) / "log.jsonl")}, transport=fake)
+            r = call(s, "local_execute_plan", {"blocks": [
+                {"id": "a", "kind": "write", "path": "a.py", "instructions": "X = 1", "after": []}],
+                "check": "python -m unittest test_otro"})
+            text = r["result"]["content"][0]["text"]
+            self.assertIn("Sin arreglo automático", text)
+            self.assertEqual(len(seen), 1)  # ni una llamada de más al modelo
 
     def test_tests_after_code_never_makes_a_cycle(self):
         from localharness.mcp_local import tests_after_code
@@ -417,7 +440,7 @@ class EndToEndTests(unittest.IsolatedAsyncioTestCase):
                                          worktree_root=str(Path(tmp) / "wt"))
                 self.assertEqual(res["status"], "review")
                 self.assertIn("delegado.txt", res["diff"]); self.assertIn("hola desde el modelo local", res["diff"])
-                self.assertIn("local_ask,local_write_file", res["final"])
+                self.assertIn("local_ask,local_edit_file,local_write_file", res["final"])
                 kinds = [e["kind"] for e in store.list_events(t["id"])]
                 self.assertIn("delegate", kinds); self.assertIn("delegate_summary", kinds)
                 summary = next(e for e in store.list_events(t["id"]) if e["kind"] == "delegate_summary")

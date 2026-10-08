@@ -747,7 +747,8 @@ export function parseTs(s: string | null | undefined): number {
 }
 
 export function ago(ms: number, now = Date.now()): string {
-  if (Number.isNaN(ms)) return "";
+  // sin fecha (0 o vacía) no se pinta nada: salía «hace 20714 días» (desde 1970)
+  if (Number.isNaN(ms) || ms <= 0) return "";
   const s = Math.max(0, Math.round((now - ms) / 1000));
   if (s < 45) return "ahora mismo";
   const m = Math.round(s / 60);

@@ -6,6 +6,10 @@ Claude lo recibe con `--mcp-config` cuando su agente tiene «Puede delegar en el
   los pasa a Qwen: Claude no gasta tokens leyéndolos, solo recibe la conclusión.
 - `local_write_file`: Qwen escribe un archivo entero (crear o reescribir) en el worktree. Claude recibe un resumen
   y revisa lo que quiera. Solo si la tarea puede escribir (LH_WRITE=1).
+- `local_edit_file`: Qwen cambia SOLO trozos de un archivo existente (bloques buscar/reemplazar, ver edits.py):
+  mucho más rápido y seguro que reescribirlo entero. Solo si LH_WRITE=1.
+- `local_map`: el esquema del repo (archivos con sus funciones, selectores, ids…; repomap.py), sin modelo: así
+  Claude planifica sin leer archivos enteros.
 - `local_execute_plan`: Claude manda el PLAN entero (bloques: archivos a escribir y preguntas) y el modelo local
   los hace todos, uno tras otro; si se pide, este servidor ejecuta después una orden de comprobación (tests) y
   devuelve un informe por bloque. Es la herramienta del modo «coordinador» (config `coordinator`): Claude
@@ -90,7 +94,8 @@ WRITE = {
         "Encarga a un modelo local GRATIS escribir un archivo COMPLETO (nuevo o reescrito) según tus instrucciones. "
         "Lo escribe él en disco y tú recibes un resumen: ahorra los tokens de generar el código. Da instrucciones "
         "precisas (qué debe contener, funciones y firmas, estilo, casos límite). Revisa después lo importante con "
-        "Read y corrige con Edit. Si el archivo existe, el modelo lo ve y lo reescribe entero."),
+        "Read y corrige con Edit. Si el archivo existe, el modelo lo ve y lo reescribe entero: para cambiar una "
+        "parte de un archivo que ya existe usa `local_edit_file`, que es mucho más rápido y no pierde líneas."),
     "inputSchema": {
         "type": "object",
         "properties": {
@@ -103,14 +108,47 @@ WRITE = {
     },
 }
 
+EDIT = {
+    "name": "local_edit_file",
+    "description": (
+        "Encarga a un modelo local GRATIS cambiar SOLO una parte de un archivo que ya existe (añadir una entrada, "
+        "cambiar una función, una regla CSS…): devuelve únicamente los trozos que cambian y este servidor los aplica. "
+        "Mucho más rápido que reescribirlo y no se come el resto del archivo. Di exactamente qué cambiar y dónde."),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "Archivo a cambiar (relativo al repo; tiene que existir)"},
+            "instructions": {"type": "string", "description": "Qué cambiar y dónde, con el texto nuevo si lo sabes"},
+            "context_files": {"type": "array", "items": {"type": "string"},
+                              "description": "Otros archivos que debe leer para hacerlo bien"},
+        },
+        "required": ["path", "instructions"],
+    },
+}
+MAP = {
+    "name": "local_map",
+    "description": (
+        "Esquema del repositorio sin gastar cuota ni modelo: cada archivo con sus funciones/clases, selectores CSS, "
+        "ids y títulos HTML o exports JS, y su tamaño. Úsalo ANTES de leer archivos para planificar: muchas veces "
+        "basta y te ahorras los Read. `paths` limita a unas carpetas o archivos."),
+    "inputSchema": {
+        "type": "object",
+        "properties": {"paths": {"type": "array", "items": {"type": "string"},
+                                 "description": "Carpetas o archivos (por defecto, todo el repo)"}},
+    },
+    "annotations": {"readOnlyHint": True},
+}
+
 BLOCK = {
     "type": "object",
     "properties": {
         "id": {"type": "string", "description": "Identificador corto del bloque (p. ej. «1», «calc»)"},
         "title": {"type": "string", "description": "Qué es el bloque, en pocas palabras"},
-        "kind": {"type": "string", "enum": ["write", "ask"],
-                 "description": "write = escribir/reescribir el archivo `path`; ask = pregunta o análisis en texto"},
-        "path": {"type": "string", "description": "Solo write: archivo a escribir (relativo al repo)"},
+        "kind": {"type": "string", "enum": ["edit", "write", "ask"],
+                 "description": "edit = cambiar SOLO una parte del archivo `path`, que ya existe (lo normal para "
+                                "añadir o retocar); write = crear `path` o reescribirlo entero; ask = pregunta o "
+                                "análisis en texto"},
+        "path": {"type": "string", "description": "Solo edit/write: archivo (relativo al repo)"},
         "instructions": {"type": "string",
                          "description": "Instrucciones autocontenidas: qué hacer, firmas, casos límite, estilo"},
         "files": {"type": "array", "items": {"type": "string"},
@@ -125,14 +163,16 @@ BLOCK = {
 PLAN = {
     "name": "local_execute_plan",
     "description": (
-        "Encarga a un modelo local GRATIS un PLAN ENTERO de una vez: una lista de bloques (archivos a escribir o "
-        "reescribir y preguntas/análisis), cada uno leyendo él los archivos que le indiques. Pon en cada bloque "
+        "Encarga a un modelo local GRATIS un PLAN ENTERO de una vez: una lista de bloques (archivos a cambiar, crear "
+        "o reescribir y preguntas/análisis), cada uno leyendo él los archivos que le indiques. Para un archivo que ya "
+        "existe usa `kind: edit` (solo los trozos que cambian; un `write` sobre un archivo grande se hace solo como "
+        "`edit`). Pon en cada bloque "
         "`after` (de qué bloques anteriores depende; [] si de ninguno) y los independientes se harán a la vez, "
         "repartidos entre los modelos locales: mucho más rápido. Sin `after`, van en orden. Opcionalmente ejecuta "
         "al final una orden de comprobación (tests) y te devuelve su salida. Cada bloque va al modelo que esté "
         "libre (`server` solo desempata). Un bloque de tests espera a los archivos que nombre en sus instrucciones "
-        "o en `files`, y los lee: nómbralos. Si la comprobación falla, el modelo local intenta arreglarlo solo "
-        "(hasta 2 rondas) antes de devolvértelo. Recibes un informe por bloque: léelo, comprueba lo crítico y, si "
+        "o en `files`, y los lee: nómbralos. Si la comprobación falla y el error señala un archivo del plan, el modelo "
+        "local intenta arreglarlo solo (una ronda) antes de devolvértelo. Recibes un informe por bloque: léelo, comprueba lo crítico y, si "
         "aún falla, vuelve a llamarla solo con el bloque culpable e instrucciones exactas."),
     "inputSchema": {
         "type": "object",
@@ -170,16 +210,17 @@ AGENT = {
         "Encarga una TAREA ENTERA de programación a un agente local GRATIS que trabaja solo en este repositorio: "
         "lee los archivos, los modifica y ejecuta los tests. Dale una tarea concreta y autocontenida: qué cambiar, "
         "en qué archivos, criterios de aceptación y qué orden de tests ejecutar. Te devuelve su resumen y los "
-        "archivos que cambió: revísalos tú (Read) y comprueba con `run_checks`. Si algo está mal, vuelve a "
-        "encargárselo diciendo exactamente qué corregir. NO lo uses para arreglar un test o archivo que falla: "
-        "se atasca releyendo; para eso, un bloque de `local_execute_plan` con la salida del error."),
+        "archivos que cambió: revísalos tú (Read) y comprueba con `run_checks`. ÚSALO POCO: el 08/10 se atascó "
+        "releyendo en la mayoría de encargos (93 min perdidos). NO lo uses para arreglar un test o archivo que "
+        "falla ni para añadir entradas: para eso, `local_edit_file` o un bloque `edit` con la salida del error. Se "
+        "para solo si pasa varios pasos sin escribir nada."),
     "inputSchema": {
         "type": "object",
         "properties": {
             "task": {"type": "string", "description": "La tarea completa, con criterios de aceptación"},
             "files": {"type": "array", "items": {"type": "string"},
                       "description": "Archivos por los que debe empezar (rutas relativas)"},
-            "max_turns": {"type": "integer", "description": "Tope de pasos del agente (por defecto 25)"},
+            "max_turns": {"type": "integer", "description": "Tope de pasos del agente (por defecto 15, máx. 30)"},
         },
         "required": ["task"],
     },
@@ -199,7 +240,8 @@ CHECKS = {
 
 # herramientas del agente local (local_agent) que Claude o tú podéis quitarle o darle; las de control van siempre
 WORKER_TOOLS = {"leer_archivo": "leer archivos", "listar": "listar carpetas", "buscar_texto": "buscar en el código",
-                "escribir_archivo": "escribir archivos", "ejecutar": "ejecutar tests",
+                "editar_archivo": "cambiar trozos de archivos", "escribir_archivo": "escribir archivos",
+                "ejecutar": "ejecutar tests",
                 "buscar_web": "buscar en internet", "leer_url": "leer páginas web"}
 PREPARE = {
     "name": "local_prepare",
@@ -234,7 +276,13 @@ SEARCH_URL = "https://html.duckduckgo.com/html/"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) LocalHarness/0.1"
 MAX_PAGE_CHARS = 8000
 MAX_BLOCKS = 20
-AUTO_FIX_ROUNDS = 2  # si la comprobación del plan falla, cuántas veces lo intenta arreglar el modelo local solo
+# si la comprobación del plan falla, cuántas veces lo intenta arreglar el modelo local solo. Eran 2: el 08/10
+# (parches 10-27) saltó 27 veces, gastó 77 min de GPU y arregló UNA: casi siempre el fallo estaba en otro archivo
+AUTO_FIX_ROUNDS = 1
+EDIT_OVER_CHARS = 6000  # un bloque `write` sobre un archivo existente más grande que esto se hace como `edit`
+EDIT_RETRIES = 1  # si los trozos no encajan, se le devuelve el error y lo intenta otra vez
+WRITES = ("write", "edit")  # bloques del plan que cambian archivos
+AGENT_IDLE_TURNS = 8  # `local_agent` se para si pasa más pasos seguidos que esto sin escribir nada
 # órdenes que `local_execute_plan` puede ejecutar como comprobación (sin shell; prefijos, como en local_agent)
 CHECK_COMMANDS = ["python -m unittest", "python -m pytest", "pytest", "npm test", "npm run test", "npm run lint",
                   "ruff check", "node --test"]
@@ -250,10 +298,12 @@ JUNK_DIRS = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "node
 LIGHT = ("rapido", "general", "fuerte")
 HEAVY = ("fuerte", "general", "rapido")
 TOOL_WEIGHT = {"local_ask": LIGHT, "local_research": LIGHT, "local_write_file": HEAVY, "local_agent": HEAVY,
-               "local_execute_plan/ask": LIGHT, "local_execute_plan/write": HEAVY}
+               "local_edit_file": HEAVY, "local_execute_plan/ask": LIGHT, "local_execute_plan/write": HEAVY,
+               "local_execute_plan/edit": HEAVY}
 ROLE_TEXT = {"fuerte": "escribir código y tareas enteras", "rapido": "preguntas, resúmenes e investigar",
              "general": "de todo"}
-SERVER_TOOLS = ("local_ask", "local_write_file", "local_execute_plan", "local_research", "local_agent")
+SERVER_TOOLS = ("local_ask", "local_write_file", "local_edit_file", "local_execute_plan", "local_research",
+                "local_agent")
 
 
 def thinking_body(level: str | None) -> dict:
@@ -310,6 +360,7 @@ class Server:
         self._default = self.servers[0]
         self._inflight = {srv["id"]: 0 for srv in self.servers}  # encargos en curso de cada modelo (reparto por cola)
         self._models: dict[str, str | None] = {}
+        self._ctx: dict[str, int | None] = {}  # contexto por ranura de cada servidor (/props)
         self.root = Path(env.get("LH_ROOT") or os.getcwd()).resolve()
         self.log = Path(env["LH_LOG"]) if env.get("LH_LOG") else None
         self.write = env.get("LH_WRITE", "1") == "1"
@@ -321,7 +372,7 @@ class Server:
             self.commands = json.loads(env["LH_COMMANDS"]) if env.get("LH_COMMANDS") else None
         except ValueError:
             self.commands = None
-        self.agent_turns = int(env.get("LH_AGENT_TURNS") or 25)
+        self.agent_turns = int(env.get("LH_AGENT_TURNS") or 15)
         self.agent_timeout = float(env.get("LH_AGENT_TIMEOUT") or 1200)
         self.worker_path = Path(env["LH_WORKER"]) if env.get("LH_WORKER") else None
         self.skills_path = Path(env["LH_SKILLS"]) if env.get("LH_SKILLS") else None
@@ -332,7 +383,7 @@ class Server:
     # --- protocolo
     def tools(self) -> list[dict]:
         prepare = [self.prepare_tool()] if self.worker_path else []
-        tools = (prepare + [ASK] + ([WRITE, PLAN, AGENT] if self.write else [])
+        tools = (prepare + [MAP, ASK] + ([EDIT, WRITE, PLAN, AGENT] if self.write else [])
                  + ([CHECKS] if self.commands != [] else []) + ([RESEARCH] if self.web else []))
         return [self.with_server(t) for t in tools] if len(self.servers) > 1 else tools
 
@@ -463,6 +514,15 @@ class Server:
                 entry["path"] = str(args.get("path", ""))
                 text, stats = self.write_file(str(args.get("path") or ""), str(args.get("instructions") or ""),
                                               args.get("context_files") or [])
+            elif name == "local_edit_file" and self.write:
+                entry["path"] = str(args.get("path", ""))
+                text, stats = self.edit_file(str(args.get("path") or ""), str(args.get("instructions") or ""),
+                                             args.get("context_files") or [])
+            elif name == "local_map":
+                from localharness.repomap import repo_map
+                entry["task"] = ", ".join(str(x) for x in args.get("paths") or []) or "todo el repo"
+                text = repo_map(self.root, [str(x) for x in args.get("paths") or []])
+                stats = {"chars": len(text)}
             elif name == "local_execute_plan" and self.write:
                 text, stats = self.execute_plan(args.get("blocks"), str(args.get("check") or ""))
                 entry["task"] = f"plan: {stats['ok']} de {stats['blocks']} bloques"
@@ -569,7 +629,7 @@ class Server:
         ctx, read = self.read_files([f for f in context_files if f != path])
         user = f"ARCHIVO A ESCRIBIR: {path}\n\nINSTRUCCIONES:\n{instructions}"
         if old is not None:
-            user += f"\n\nCONTENIDO ACTUAL (reescríbelo entero):\n```\n{old[: self.max_input]}\n```"
+            user += f"\n\nCONTENIDO ACTUAL (reescríbelo entero):\n```\n{old[: self.input_budget()]}\n```"
         if ctx:
             user += f"\n\nARCHIVOS DE CONTEXTO:\n{ctx}"
         raw, stats = self.complete(SYSTEM_WRITE, user)
@@ -585,6 +645,47 @@ class Server:
         return (f"{verb} {path} ({lines} líneas). Lo escribió el modelo local: revisa lo importante.\n"
                 f"Primeras líneas:\n```\n{preview}\n```"), {**stats, "files": read, "lines": lines}
 
+    def edit_file(self, path: str, instructions: str, context_files: list) -> tuple[str, dict]:
+        """El modelo devuelve solo los trozos que cambian (edits.py) y se aplican aquí. Si no encajan, se le
+        devuelve el error con las líneas más parecidas y lo intenta otra vez (EDIT_RETRIES)."""
+        # aquí y no arriba: la CLI de Claude lanza este archivo por ruta y el paquete entra en el path en main()
+        from localharness.edits import SYSTEM_EDIT, EditError, apply_edits, parse_edits
+        if not instructions.strip():
+            raise ToolError("faltan `instructions`")
+        target = self.safe(path)
+        if not target.is_file():
+            raise ToolError(f"{path} no existe: para crearlo usa `local_write_file` (o un bloque `write`)")
+        old = target.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
+        ctx, read = self.read_files([f for f in context_files if f != path])
+        budget = self.input_budget()
+        if len(old) > budget:
+            raise ToolError(f"{path} es demasiado grande para el contexto del modelo local ({len(old)} caracteres); "
+                            "pártelo o hazlo tú")
+        user = (f"ARCHIVO A CAMBIAR: {path}\n\nINSTRUCCIONES:\n{instructions}\n\nCONTENIDO ACTUAL:\n```\n{old}\n```")
+        if ctx:
+            user += f"\n\nARCHIVOS DE CONTEXTO:\n{ctx}"
+        stats: dict = {}
+        tokens = 0
+        for attempt in range(EDIT_RETRIES + 1):
+            raw, stats = self.complete(SYSTEM_EDIT, user)
+            tokens += int(stats.get("completion_tokens") or 0)
+            try:
+                new, n = apply_edits(old, parse_edits(raw))
+                break
+            except EditError as e:
+                if attempt == EDIT_RETRIES:
+                    raise ToolError(f"los cambios del modelo local no encajan en {path}: {e}") from None
+                user += (f"\n\nTU RESPUESTA ANTERIOR NO SE PUDO APLICAR: {e}\nRepite los bloques copiando BUSCAR "
+                         "exactamente del CONTENIDO ACTUAL.")
+        if not new.strip():
+            raise ToolError("el cambio dejaba el archivo vacío; no se aplicó")
+        with open(target, "w", encoding="utf-8", newline="\n") as f:
+            f.write(new if new.endswith("\n") else new + "\n")
+        diff = short_diff(old, new, path)
+        return (f"Cambiado {path}: {n} trozo(s), {diff['added']} líneas añadidas y {diff['removed']} quitadas. Lo hizo "
+                f"el modelo local; el cambio:\n```diff\n{diff['text']}\n```"), {
+                    **stats, "completion_tokens": tokens, "files": read, "edits": n, "attempts": attempt + 1}
+
     def execute_plan(self, blocks, check: str) -> tuple[str, dict]:
         """Hace los bloques con los modelos locales. Si algún bloque trae `after`, se respetan esas dependencias y
         los independientes van a la vez (cada uno a su servidor por su tipo, en su hilo); si no, en orden como
@@ -599,7 +700,8 @@ class Server:
             b = b if isinstance(b, dict) else {"instructions": str(b)}
             path = str(b.get("path") or "")
             items.append({"b": b, "id": str(b.get("id") or i), "path": path,
-                          "kind": b.get("kind") if b.get("kind") in ("write", "ask") else ("write" if path else "ask"),
+                          "kind": (b.get("kind") if b.get("kind") in WRITES + ("ask",)
+                                   else ("write" if path else "ask")),
                           "title": str(b.get("title") or path or str(b.get("instructions") or "")[:60]),
                           "files": [f for f in b.get("files") or [] if isinstance(f, str)]})
         ids = [it["id"] for it in items]
@@ -634,8 +736,23 @@ class Server:
                 claimed = self.order[0]["id"]
                 self.use(self.order[0])
                 self.current = {"tool": entry["tool"], "task": it["title"][:300], "server": self.server_id}
-                if it["kind"] == "write":
-                    text, stats = self.write_file(it["path"], str(it["b"].get("instructions") or ""), it["files"])
+                how = self.how_to_write(it)
+                if how != it["kind"]:
+                    entry["as"] = how
+                instructions = str(it["b"].get("instructions") or "")
+                if how == "edit":
+                    try:
+                        text, stats = self.edit_file(it["path"], instructions, it["files"])
+                    except NoModel:
+                        raise
+                    except ToolError as e:
+                        if it["kind"] == "edit":
+                            raise
+                        # era un `write` que se intentó como edición: se hace como lo pidió Claude
+                        entry["as"] = f"write (la edición falló: {str(e)[:120]})"
+                        text, stats = self.write_file(it["path"], instructions, it["files"])
+                elif how == "write":
+                    text, stats = self.write_file(it["path"], instructions, it["files"])
                 else:
                     text, stats = self.ask(str(it["b"].get("instructions") or ""), it["files"])
                 entry.update(stats, ok=True)
@@ -681,7 +798,7 @@ class Server:
                 for fut in done:
                     it = running.pop(fut)
                     results[it["id"]] = fut.result()
-                    wrote += it["kind"] == "write" and results[it["id"]][0]
+                    wrote += it["kind"] in WRITES and results[it["id"]][0]
         if stop.is_set():
             raise NoModel(stop_msg[0])
 
@@ -700,12 +817,14 @@ class Server:
             while wrote and check_failed(result) and len(fixes) < AUTO_FIX_ROUNDS and not stop.is_set():
                 fixed = self.auto_fix(check, result, items, results, run, len(fixes) + 1)
                 if not fixed:
+                    lines.append("(Sin arreglo automático: el error no señala ningún archivo de este plan; mira tú "
+                                 "qué otro archivo hay que tocar.)")
                     break
                 fixes.append(fixed)
                 result = self.run_check(check)
             if fixes:
                 lines.append("## Arreglo automático (modelo local, sin ti)\n" + "\n".join(
-                    f"- Ronda {i}: reescribió `{path}`" + ("" if good else " (falló al escribirlo)")
+                    f"- Ronda {i}: corrigió `{path}`" + ("" if good else " (no pudo cambiarlo)")
                     for i, (path, good) in enumerate(fixes, 1))
                     + ("\nAhora la comprobación pasa." if not check_failed(result) else
                        "\nSigue fallando: reencarga tú solo el bloque culpable con instrucciones exactas."))
@@ -718,40 +837,26 @@ class Server:
         return head + "\n\n" + "\n\n".join(lines), stats
 
     def auto_fix(self, check: str, result: str, items: list, results: dict, run, n: int) -> tuple[str, bool] | None:
-        """Una ronda de arreglo sin Claude: el modelo local elige qué archivo del plan corregir (casi siempre el test,
-        que adivinó el marcado) y se reescribe ese bloque con la salida de la comprobación delante. Es lo que Claude
-        hacía a mano el 08/10 en 5 de 7 parches, y le costaba un turno cada vez."""
+        """Una ronda de arreglo sin Claude, SOLO si la salida de la comprobación nombra un archivo que escribió este
+        plan: se corrige ese archivo (como edición) con el error delante; si nombra varios, primero el test. El 08/10
+        (parches 10-27) el arreglo a ciegas, con una pregunta previa de «qué archivo», se probó 27 veces y acertó 1:
+        el fallo solía estar en un archivo que el plan no tocaba (mapa, antología, otro test), y eso solo lo ve
+        Claude."""
         out = result[-2500:]
-        written = [it for it in items if it["kind"] == "write" and it["path"] and results.get(it["id"], (False,))[0]]
-        if not written:
-            return None
+        written = [it for it in items if it["kind"] in WRITES and it["path"] and results.get(it["id"], (False,))[0]]
         named = [it for it in written if it["path"] in out or Path(it["path"]).name in out]
-        ctx = list(dict.fromkeys(f for it in named for f in [it["path"], *it["files"]]))[:5]
-        paths = [it["path"] for it in written]
-        pick = {"b": {"instructions": (
-                    f"Tras escribir estos archivos, `{check}` falla así:\n```\n{out}\n```\nArchivos escritos: "
-                    f"{', '.join(paths)}.\n¿Cuál hay que corregir para que pase? Si el archivo comprobado hace lo "
-                    "pedido y el test es demasiado estricto o se equivoca (selector, etiqueta, import, regex), "
-                    "corrige el TEST; si el código no hace lo pedido, corrige el código. Responde SOLO con la ruta "
-                    "de UN archivo de la lista.")},
-                "id": f"arreglo{n}-elige", "path": "", "kind": "ask", "files": ctx,
-                "title": f"arreglo {n}: qué archivo corregir"}
-        good, answer = run(pick)
-        choice = next((p for p in sorted(paths, key=len, reverse=True) if good and p in answer), None)
-        if not choice:
-            tests = [it["path"] for it in named if is_test_path(it["path"])]
-            choice = (tests or [it["path"] for it in named] or [None])[0]
-        if not choice:
+        if not named:
             return None
-        orig = next(it for it in written if it["path"] == choice)
-        others = [f for f in dict.fromkeys([*orig["files"], *(it["path"] for it in named)]) if f != choice]
+        orig = next((it for it in named if is_test_path(it["path"])), named[0])
+        choice = orig["path"]
+        others = [f for f in dict.fromkeys([*orig["files"], *(it["path"] for it in written)]) if f != choice]
         fix = {"b": {"instructions": (
                    f"{orig['b'].get('instructions') or ''}\n\nCORRECCIÓN: con el archivo ya escrito, `{check}` falla "
-                   f"así:\n```\n{out}\n```\nCorrígelo para que pase. Si es un test, que compruebe lo que pide el "
+                   f"así:\n```\n{out}\n```\nCambia lo justo para que pase. Si es un test, que compruebe lo que pide el "
                    "encargo mirando el contenido REAL de los archivos de contexto (no inventes etiquetas ni clases, "
-                   "y no lo relajes hasta no comprobar nada)."),
+                   "usa node:test y node:assert, y no lo relajes hasta no comprobar nada)."),
                    "server": orig["b"].get("server")},
-               "id": f"arreglo{n}", "path": choice, "kind": "write", "files": others[:5],
+               "id": f"arreglo{n}", "path": choice, "kind": "edit", "files": others[:5],
                "title": f"arreglo {n}: {choice}"}
         good, _ = run(fix)
         return choice, good
@@ -822,7 +927,7 @@ class Server:
         if not task.strip():
             raise ToolError("falta `task`")
         try:
-            turns = max(3, min(60, int(max_turns or self.agent_turns)))
+            turns = max(3, min(30, int(max_turns or self.agent_turns)))
         except (TypeError, ValueError):
             turns = self.agent_turns
         start = [f for f in files if isinstance(f, str)]
@@ -836,7 +941,7 @@ class Server:
         adapter = LocalAgentAdapter(base_url=self.url, api_key=self.key or None, transport=self._httpx(),
                                     http_get=self.http_get, web=self.web,
                                     commands=CHECK_COMMANDS if self.commands is None else self.commands,
-                                    only_tools=self.worker().get("tools"))
+                                    only_tools=self.worker().get("tools"), max_idle_turns=AGENT_IDLE_TURNS)
         seen: dict = {"tools": 0, "errors": [], "usage": {}, "model": None, "thinking": []}
 
         def on_event(ev: Event) -> None:
@@ -945,7 +1050,7 @@ class Server:
                 parts.append(f"--- {f} --- (no existe)")
                 continue
             text = p.read_text(encoding="utf-8", errors="replace")
-            room = self.max_input - used
+            room = self.input_budget() - used
             if room <= 0:
                 parts.append(f"--- {f} --- (omitido: ya no cabe más contexto)")
                 continue
@@ -955,11 +1060,60 @@ class Server:
             read.append(f)
         return "\n\n".join(parts), read
 
-    def complete(self, system: str, user: str) -> tuple[str, dict]:
+    def how_to_write(self, it: dict) -> str:
+        """Cómo se hace un bloque del plan: `edit` si lo pidió Claude y el archivo existe, o si pidió `write` sobre un
+        archivo existente grande (reescribirlo entero era lo más lento y lo que perdía líneas); si no, como venga."""
+        if it["kind"] not in WRITES or not it["path"]:
+            return "ask"
+        try:
+            target = self.safe(it["path"])
+        except ToolError:
+            return it["kind"]  # que falle donde siempre, con su mensaje
+        if not target.is_file():
+            return "write"
+        if it["kind"] == "edit" or target.stat().st_size > EDIT_OVER_CHARS:
+            return "edit"
+        return "write"
+
+    def input_budget(self) -> int:
+        """Cuántos caracteres de archivos caben en un encargo al modelo en curso: su contexto real (`/props` →
+        `n_ctx`, por ranura) menos la respuesta y el prompt de sistema, a ~3 caracteres por token. LH_MAX_INPUT_CHARS
+        es el tope. Antes era un número fijo: con 16k de contexto se pasaba y con 64k se quedaba corto."""
+        ctx = self.context_of(next((s for s in self.servers if s["id"] == self.server_id), self.servers[0]))
+        if not ctx:
+            return self.max_input
+        room = (ctx - min(self.max_tokens, ctx // 2) - 1500) * 3
+        return max(8000, min(self.max_input, room))
+
+    def context_of(self, srv: dict) -> int | None:
+        """Tamaño de contexto por ranura del llama-server (se pregunta una vez; None si no contesta o en pruebas)."""
+        if self.transport:
+            return srv.get("n_ctx")
+        if srv["id"] not in self._ctx:
+            req = urllib.request.Request(srv["url"] + "/props")
+            if srv.get("key"):
+                req.add_header("Authorization", f"Bearer {srv['key']}")
+            try:
+                with urllib.request.urlopen(req, timeout=2) as r:
+                    props = json.loads(r.read())
+                self._ctx[srv["id"]] = int((props.get("default_generation_settings") or {}).get("n_ctx")
+                                           or props.get("n_ctx") or 0) or None
+            except (OSError, ValueError, TypeError):
+                self._ctx[srv["id"]] = None
+        return self._ctx[srv["id"]]
+
+    def complete(self, system: str, user: str, schema: dict | None = None) -> tuple[str, dict]:
+        """Un encargo al modelo. `schema`: JSON Schema que la respuesta TIENE que cumplir (llama-server lo impone con
+        una gramática: se acaban los planes y JSON mal formados)."""
         skills = self.worker().get("skills") or []
         system += self.skills_text()
+        # cache_prompt: los bloques de un plan comparten prompt de sistema y archivos; llama-server reutiliza lo ya
+        # procesado en la ranura en vez de leerlo otra vez
         body = {"messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                "temperature": 0.2, "max_tokens": self.max_tokens}
+                "temperature": 0.2, "max_tokens": self.max_tokens, "cache_prompt": True}
+        if schema:
+            body["response_format"] = {"type": "json_schema", "json_schema": {"name": "respuesta", "strict": True,
+                                                                              "schema": schema}}
         t0 = time.monotonic()
         data = self._post_any(body)
         choice = (data.get("choices") or [{}])[0]
@@ -1166,6 +1320,19 @@ def page_text(raw: str) -> str:
     return "\n".join(ln for ln in lines if ln)
 
 
+def short_diff(old: str, new: str, path: str, limit: int = 60) -> dict:
+    """El cambio en formato diff (recortado) y cuántas líneas entran y salen: Claude lo revisa sin hacer Read."""
+    import difflib
+    lines = list(difflib.unified_diff(old.splitlines(), new.splitlines(), f"a/{path}", f"b/{path}", n=1,
+                                      lineterm=""))[2:]
+    added = sum(1 for ln in lines if ln.startswith("+"))
+    removed = sum(1 for ln in lines if ln.startswith("-"))
+    text = "\n".join(ln[:200] for ln in lines[:limit])
+    if len(lines) > limit:
+        text += f"\n[… {len(lines) - limit} líneas más]"
+    return {"text": text or "(sin cambios)", "added": added, "removed": removed}
+
+
 def check_failed(result: str) -> bool:
     """La comprobación se ejecutó y no salió con 0 (si ni se ejecutó, no hay nada que arreglar aquí)."""
     first = result.split("\n", 1)[0]
@@ -1183,7 +1350,7 @@ def tests_after_code(items: list[dict]) -> list[tuple[str, list[str]]]:
     """En un plan en paralelo, cada bloque que escribe un test espera a los bloques que escriben los archivos que
     nombra (en sus instrucciones o en `files`) y los lee. Si no, adivina el marcado: el 08/10 fallaron así 5 de 7
     primeras rondas (buscaba un div y era un button, un span y era un p…). No se toca si crearía un ciclo."""
-    code = [it for it in items if it["kind"] == "write" and it["path"] and not is_test_path(it["path"])]
+    code = [it for it in items if it["kind"] in WRITES and it["path"] and not is_test_path(it["path"])]
     by_id = {it["id"]: it for it in items}
 
     def needs(it: dict, target: str, seen: set) -> bool:  # ¿`it` depende (aunque sea de lejos) de `target`?
@@ -1197,7 +1364,7 @@ def tests_after_code(items: list[dict]) -> list[tuple[str, list[str]]]:
         return False
     out = []
     for t in items:
-        if t["kind"] != "write" or not is_test_path(t["path"]):
+        if t["kind"] not in WRITES or not is_test_path(t["path"]):
             continue
         text = str(t["b"].get("instructions") or "") + " " + " ".join(t["files"])
         deps = [c for c in code if (c["path"] in text or Path(c["path"]).name in text)

@@ -32,6 +32,12 @@ OPEN = ("running", "pending")
 NOTE = ("\n\n(AUTOPILOTO: nadie va a contestar hasta dentro de horas. No hagas preguntas ni pidas permiso: decide tú, "
         "termina el parche y deja los tests pasando. Sigue ENCARGO.md. Termina con un informe corto: qué hizo cada "
         "modelo local, qué falló o repetiste y qué queda pendiente.)")
+GRACE_S = 300  # margen sobre el tope de LocalHarness antes de que el autopiloto cancele él
+CLOSE_MIN = 10  # minutos para cerrar un parche al que se le acabó el tiempo
+CLOSE_MSG = ("Se te acabó el tiempo de este parche. NO empieces nada nuevo: en como mucho {minutes} minutos deja "
+             "pasando `{check}` con lo que ya está hecho (si una parte no llega, quítala o recórtala con un `edit` en "
+             "vez de terminarla), añade la línea del CHANGELOG si falta y termina con el informe. Lo que no dé tiempo, "
+             "a «Pendiente».")
 
 
 class ApiError(RuntimeError):
@@ -114,6 +120,7 @@ class Result:
     retried: bool = False
     final: str = ""
     models: dict = field(default_factory=dict)  # servidor → {encargos, fallidos, tokens, segundos, modelo}
+    rescued: bool = False  # se le acabó el tiempo y se le pidió que cerrara con lo que tenía
 
 
 class Autopilot:
@@ -164,14 +171,17 @@ class Autopilot:
                 self.say(f"  no pude: {e}")
 
     # --- una tarea hasta que acaba (o se pasa de tiempo)
-    def wait(self, tid: int) -> dict:
+    def wait(self, tid: int, limit: float | None = None) -> dict:
+        """Hasta que la tarea acaba. El tope es algo mayor que el de LocalHarness (Ajustes → minutos por tarea) para
+        que pare él primero: así la tarea queda en «timeout» con su sesión y se puede pedir que cierre."""
         t0 = self.clock()
+        limit = limit or self.task_s + GRACE_S
         while True:
             t = self.api("GET", f"/api/tasks/{tid}")
             if t["status"] not in OPEN:
                 return t
-            if self.clock() - t0 > self.task_s:
-                self.say(f"  #{tid} lleva más de {self.task_s / 60:.0f} min: la paro")
+            if self.clock() - t0 > limit:
+                self.say(f"  #{tid} lleva más de {limit / 60:.0f} min: la paro")
                 try:
                     self.api("POST", f"/api/tasks/{tid}/cancel")
                 except ApiError:
@@ -240,7 +250,18 @@ class Autopilot:
         tid = t["id"]
         r.task_ids.append(tid)
         t = self.wait(tid)
-        if t.get("timed_out"):
+        if t.get("timed_out") or t["status"] == "timeout":
+            # el 08/10 se tiraron así 3 parches de 18 con 20-27 encargos hechos cada uno: mejor que cierre
+            self.say(f"  se le acabó el tiempo: le pido que cierre en {CLOSE_MIN} min con lo que tenga")
+            r.rescued = True
+            try:
+                self.api("POST", f"/api/tasks/{tid}/reply", {"message": CLOSE_MSG.format(minutes=CLOSE_MIN,
+                                                                                         check=self.check)})
+                self.sleep(5)
+                t = self.wait(tid, CLOSE_MIN * 60 + GRACE_S)
+            except ApiError as e:
+                self.say(f"  no pude: {e}")
+        if t.get("timed_out") or t["status"] == "timeout":
             r.outcome = "tiempo agotado"
         elif t["status"] == "review":
             ok, out = self.checker(self.check, t["worktree"]) if self.check else (True, "")
@@ -345,7 +366,8 @@ class Autopilot:
                  f"tiempo: {total_s / 3600:.1f} h", "",
                  "| Parche | Resultado | Min | Coste | Tareas | Reintento |", "|---|---|---|---|---|---|"]
         for r in rs:
-            lines.append(f"| {r.n:03d} {r.text[:60]} | {r.outcome} | {r.seconds / 60:.1f} | {r.cost:.3f} $ | "
+            closed = " (cerrado al límite)" if r.rescued else ""
+            lines.append(f"| {r.n:03d} {r.text[:60]} | {r.outcome}{closed} | {r.seconds / 60:.1f} | {r.cost:.3f} $ | "
                          f"{', '.join(f'#{t}' for t in r.task_ids)} | {'sí' if r.retried else ''} |")
         per: dict = {}
         for r in rs:

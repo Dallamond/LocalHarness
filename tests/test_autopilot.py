@@ -51,7 +51,7 @@ class FakeApi:
         if path.endswith("/reject"):
             self.tasks[tid]["status"] = "rejected"
         if path.endswith("/reply"):
-            self.tasks[tid]["status"] = "review"
+            self.tasks[tid]["status"] = "running" if self.tasks[tid].get("_hang") else "review"
         if tid:
             return self.tasks[tid]
         raise ApiError(path)
@@ -134,7 +134,18 @@ class AutopilotTests(unittest.TestCase):
         pilot, _ = self.make(api, ["a", "b", "c", "d"], task_minutes=1)
         rs = pilot.run()
         self.assertEqual([r.outcome for r in rs], ["tiempo agotado"] * 3)  # el 4º no llega a empezar
-        self.assertEqual(sum(1 for c in api.calls if c[1].endswith("/cancel")), 3)
+        self.assertTrue(all(r.rescued for r in rs))  # a cada una se le pidió cerrar antes de darla por perdida
+        self.assertEqual(sum(1 for c in api.calls if c[1].endswith("/cancel")), 6)
+
+    def test_task_out_of_time_is_asked_to_close_instead_of_lost(self):
+        api = FakeApi([("timeout", 0.0)])
+        pilot, _ = self.make(api, ["buscador global"])
+        r = pilot.run()[0]
+        self.assertEqual(r.outcome, "integrado")
+        self.assertTrue(r.rescued)
+        reply = next(c for c in api.calls if c[1].endswith("/reply"))
+        self.assertIn("NO empieces nada nuevo", reply[2]["message"])
+        self.assertIn("node --test", reply[2]["message"])
 
     def test_budget_and_resume(self):
         api = FakeApi([("review", 3.0), ("review", 3.0)])

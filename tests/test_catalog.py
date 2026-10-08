@@ -54,7 +54,7 @@ class McpCatalogTests(unittest.TestCase):
             try:
                 cfg = json.loads(Path(m["config"]).read_text(encoding="utf-8"))["mcpServers"]
                 self.assertEqual(sorted(cfg), ["local", "memory"])
-                self.assertEqual(m["tools"], ["mcp__local__local_prepare", "mcp__local__local_ask",
+                self.assertEqual(m["tools"], ["mcp__local__local_prepare", "mcp__local__local_map", "mcp__local__local_ask",
                                               "mcp__local__run_checks", "mcp__local__local_research",
                                               "mcp__memory"])  # solo lectura: sin write_file ni local_agent
             finally:

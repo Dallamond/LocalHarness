@@ -25,10 +25,11 @@ EPHEMERAL = ("speed", "thinking_live", "worker_live")  # en vivo para la GUI, no
 DELEGATE_TOOLS = {"local_ask": "mcp__local__local_ask", "local_write_file": "mcp__local__local_write_file",
                   "local_execute_plan": "mcp__local__local_execute_plan",
                   "local_agent": "mcp__local__local_agent", "run_checks": "mcp__local__run_checks",
-                  "local_research": "mcp__local__local_research", "local_prepare": "mcp__local__local_prepare"}
+                  "local_research": "mcp__local__local_research", "local_prepare": "mcp__local__local_prepare",
+                  "local_edit_file": "mcp__local__local_edit_file", "local_map": "mcp__local__local_map"}
 PLAN_TOOL = "local_execute_plan"
 PREPARE_TOOL = "local_prepare"
-NOT_ENCARGOS = (PLAN_TOOL, PREPARE_TOOL)  # no cuentan como encargos en el resumen (no generan nada)
+NOT_ENCARGOS = (PLAN_TOOL, PREPARE_TOOL, "local_map")  # no cuentan como encargos en el resumen (no generan nada)
 # trabajador local de las tareas en marcha: task_id -> datos de su delegación (la GUI cambia sus skills al vuelo)
 ACTIVE_WORKERS: dict[int, dict] = {}
 
@@ -41,21 +42,24 @@ encargas, revisas y presentas. No tienes Edit, Write ni Bash: no puedes escribir
 que haya que generar (código, tests, documentación, correcciones) lo genera el modelo local. Sigue este ciclo:
 0. EQUIPA al trabajador local ANTES de encargar: `local_prepare` con las skills (de su lista) y herramientas que
    necesita para esta tarea, y el motivo. Pocas y relevantes: es un modelo pequeño y cada skill ocupa contexto.
-1. ENTIENDE la petición entera y sepárala en bloques. Explora lo justo: Glob para la estructura; para entender
-   código o buscar fallos NO leas tú los archivos: `local_ask` con sus rutas en `files` (puedes pedirle de una vez
-   «lista los fallos de estos archivos con archivo, línea y corrección»).
+1. ENTIENDE la petición entera y sepárala en bloques. Explora lo justo: `local_map` te da en una llamada cada
+   archivo con sus funciones, selectores, ids y títulos (gratis): empieza por ahí en vez de Glob y Read. Para
+   entender código o buscar fallos NO leas tú los archivos: `local_ask` con sus rutas en `files` (puedes pedirle de
+   una vez «lista los fallos de estos archivos con archivo, línea y corrección»). Read solo de líneas concretas.
 2. PLANIFICA en tu respuesta (bloques numerados: archivo, qué cambia y por qué) ANTES de encargar. El modelo local no
    ve esta conversación: cada encargo lleva instrucciones autocontenidas (qué exactamente, firmas, casos límite,
    estilo, qué archivos leer).
 3. ENCARGA:
-   - `local_execute_plan` con TODOS los bloques en una llamada cuando sabes qué escribir en cada archivo (cada
-     bloque `write` reescribe el archivo ENTERO: pide que conserve lo que no cambia) y `check` = la orden de tests.
-     Pon `after` en cada bloque (de qué bloques anteriores depende; [] si de ninguno): los independientes se hacen
-     a la vez y el plan tarda mucho menos;
-   - `local_agent` cuando el trabajo necesita explorar, editar varias cosas e iterar con los tests: una tarea
-     concreta con criterios de aceptación; él lee, escribe y ejecuta los tests solo y te dice qué archivos cambió.
-4. REVISA siempre: lee el informe, haz Read de las partes clave y pasa los tests con `run_checks` (no gasta cuota).
-   Si algo falla, vuelve a encargar SOLO lo que falló con instrucciones corregidas (como mucho 2 rondas más).
+   - `local_execute_plan` con TODOS los bloques en una llamada y `check` = la orden de tests. Para un archivo que
+     YA EXISTE usa `kind: edit` (el modelo devuelve solo los trozos que cambian: mucho más rápido y no pierde
+     líneas); `write` solo para archivos nuevos o que cambian enteros. Pon `after` en cada bloque (de qué bloques
+     anteriores depende; [] si de ninguno): los independientes se hacen a la vez y el plan tarda mucho menos;
+   - un retoque suelto en un archivo existente: `local_edit_file`;
+   - `local_agent` casi nunca: solo si hay que explorar algo que no sabes planificar. Se atasca releyendo; NUNCA
+     para arreglar un fallo ni para añadir entradas a una lista.
+4. REVISA siempre: el informe trae el diff de cada `edit`, así que muchas veces no hace falta Read. Pasa los tests
+   con `run_checks` (no gasta cuota). Si algo falla, vuelve a encargar SOLO lo que falló, como `edit` del archivo
+   culpable con el error y la corrección exacta (como mucho 2 rondas más).
 5. PRESENTA: el plan, qué hizo el modelo local en cada parte, el resultado de los tests y lo pendiente o dudoso.
    Sé honesto: si algo no quedó bien, dilo.
 Investigar en internet: `local_research`. Si el modelo local deja de responder, para y díselo al usuario."""
@@ -67,9 +71,10 @@ Tienes un modelo local que corre gratis en el PC del usuario; tu cuota es cara. 
 1. NO leas archivos tú para entenderlos, resumirlos o buscar fallos: `local_ask` con sus rutas en `files`.
    Haz Read tú solo de las líneas concretas que vayas a editar o verificar.
 2. Preguntas, explicaciones, comparar opciones, redactar texto o documentación: `local_ask`.
-3. Programación de más de unas pocas líneas: encárgala. `local_agent` para una tarea que necesite explorar e
-   iterar con los tests (lo hace él solo); `local_write_file` para un archivo nuevo bien especificado;
-   `local_execute_plan` para varios archivos a la vez (todos los bloques en una llamada y `check` = los tests).
+3. Programación de más de unas pocas líneas: encárgala. `local_edit_file` para cambiar una parte de un archivo que
+   ya existe; `local_write_file` para un archivo nuevo bien especificado; `local_execute_plan` para varios archivos
+   a la vez (todos los bloques en una llamada, `kind: edit` en los que ya existen y `check` = los tests);
+   `local_agent` solo para una tarea que necesite explorar e iterar con los tests.
    Tú revisas el resultado (Read) y corriges con Edit lo pequeño.
 4. Comprobar tests sin gastar: `run_checks`. Internet (documentación, errores, versiones): `local_research`.
 5. Empieza SIEMPRE por un encargo al modelo local, salvo que la tarea sea de 1–2 líneas.
@@ -426,9 +431,9 @@ def _mcp_setup(store: Store, root: Path, cfg: dict, write: bool, coordinator: bo
         (d / "worker.json").write_text(json.dumps({"skills": start, "tools": None, "by": "agente" if start else "",
                                                    "reason": ""}, ensure_ascii=False), encoding="utf-8")
         env.update(LH_WORKER=str(d / "worker.json"), LH_SKILLS=str(d / "skills.json"), LH_LIVE=str(d / "live.json"))
-        tools = ([DELEGATE_TOOLS[PREPARE_TOOL], DELEGATE_TOOLS["local_ask"]]
-                 + ([DELEGATE_TOOLS["local_write_file"], DELEGATE_TOOLS[PLAN_TOOL], DELEGATE_TOOLS["local_agent"]]
-                    if write else [])
+        tools = ([DELEGATE_TOOLS[PREPARE_TOOL], DELEGATE_TOOLS["local_map"], DELEGATE_TOOLS["local_ask"]]
+                 + ([DELEGATE_TOOLS["local_edit_file"], DELEGATE_TOOLS["local_write_file"], DELEGATE_TOOLS[PLAN_TOOL],
+                     DELEGATE_TOOLS["local_agent"]] if write else [])
                  + ([DELEGATE_TOOLS["run_checks"]] if cfg.get("commands") != [] else [])
                  + [DELEGATE_TOOLS["local_research"]] + tools)
     path = d / "mcp.json"

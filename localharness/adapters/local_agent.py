@@ -17,7 +17,9 @@ Fiabilidad con modelos de 7–14B:
 - `tool_mode: native` (por defecto) usa `tools` de la API; `json` no manda `tools` y obliga a responder con un
   JSON {"herramienta", "argumentos"} (`response_format`) para modelos sin plantilla de herramientas.
 - Llamadas mal formadas: se le devuelve el error y reintenta. Sin herramienta: se le recuerda una vez.
-- La misma llamada 3 veces seguidas = bucle: se para.
+- La misma llamada 3 veces seguidas, o 3 veces en total = bucle: se para. Con `max_idle_turns`, también si pasa
+  ese número de pasos seguidos sin escribir nada (el 08/10 se atascaba releyendo: 93 min en 29 encargos).
+- `editar_archivo` cambia solo un trozo (buscar/reemplazar, edits.py) en vez de reescribir el archivo entero.
 - Salidas de herramientas recortadas y, si la conversación crece, los resultados viejos se resumen.
 
 Configuración (`config` del agente): las de `local` (base_url, temperature, max_tokens) más `max_turns`
@@ -38,10 +40,12 @@ from pathlib import Path
 from localharness.adapters.base import RunSpec
 from localharness.adapters.local import LocalAdapter, _out, _short, thinking_body
 from localharness.binaries import resolve
+from localharness.edits import EditError, apply_edits
 from localharness.events import Event
 from localharness.mcp_local import SEARCH_URL, _http_get, page_text, parse_ddg
 
 MAX_SAME_CALL = 3
+WRITE_TOOLS = ("escribir_archivo", "editar_archivo")
 MAX_DIRECTOR_QUESTIONS = 3
 # prefijos de orden permitidos para `ejecutar` (tests y linters); se amplían por agente con `commands`
 DEFAULT_COMMANDS = ["python -m unittest", "python -m pytest", "pytest", "npm test", "npm run test", "npm run lint",
@@ -64,8 +68,12 @@ TOOLS = {
                   {"carpeta": S}, []),
     "buscar_texto": _fn("buscar_texto", "Busca un texto en los archivos del repositorio; devuelve ruta:línea.",
                         {"texto": S, "carpeta": S}, ["texto"]),
-    "escribir_archivo": _fn("escribir_archivo", "Crea o reescribe ENTERO un archivo del repositorio.",
-                            {"ruta": S, "contenido": S}, ["ruta", "contenido"]),
+    "editar_archivo": _fn("editar_archivo", "Cambia SOLO un trozo de un archivo que ya existe: `buscar` son líneas "
+                                            "copiadas exactamente del archivo (las justas para que sean únicas) y "
+                                            "`reemplazar` cómo tienen que quedar. Úsalo en vez de reescribir.",
+                          {"ruta": S, "buscar": S, "reemplazar": S}, ["ruta", "buscar", "reemplazar"]),
+    "escribir_archivo": _fn("escribir_archivo", "Crea un archivo o lo reescribe ENTERO (para cambiar una parte, "
+                                                "`editar_archivo`).", {"ruta": S, "contenido": S}, ["ruta", "contenido"]),
     "ejecutar": _fn("ejecutar", "Ejecuta una orden de la lista blanca (tests, linter) en la raíz del repositorio "
                                 "y devuelve su salida y el código de salida.", {"comando": S}, ["comando"]),
     "buscar_web": _fn("buscar_web", "Busca en internet. Devuelve títulos, URL y resúmenes.", {"consulta": S},
@@ -104,7 +112,7 @@ class LocalAgentAdapter(LocalAdapter):
                  max_tokens: int = 4096, api_key: str | None = None, transport=None, http_get=None,
                  tool_mode: str = "native", max_tool_chars: int = 6000, max_context_chars: int = 60_000,
                  web: bool = True, commands: list[str] | None = None, command_timeout_s: float = 120,
-                 only_tools: list[str] | None = None, **_):
+                 only_tools: list[str] | None = None, max_idle_turns: int | None = None, **_):
         super().__init__(binary, base_url, temperature, max_tokens, 0, api_key, transport)
         self.tool_mode = tool_mode if tool_mode in ("native", "json") else "native"
         self.max_tool_chars, self.max_context_chars, self.web = max_tool_chars, max_context_chars, web
@@ -114,11 +122,13 @@ class LocalAgentAdapter(LocalAdapter):
         self.command_timeout_s = command_timeout_s
         # trabajador local de un coordinador: solo estas herramientas de trabajo (las de control van siempre)
         self.only_tools = only_tools
+        self.max_idle_turns = max_idle_turns  # pasos seguidos sin escribir antes de pararlo (None = sin tope)
 
     def tool_names(self, read_only: bool, director: bool = False) -> list[str]:
         names = list(TOOLS)
         if read_only:
             names.remove("escribir_archivo")
+            names.remove("editar_archivo")
         if not self.commands:
             names.remove("ejecutar")
         if not director:
@@ -127,7 +137,8 @@ class LocalAgentAdapter(LocalAdapter):
             names = [n for n in names if n not in ("buscar_web", "leer_url")]
         if self.only_tools is not None:
             keep = ("avisar_progreso", "terminar", "preguntar_director")
-            names = [n for n in names if n in keep or n in self.only_tools]
+            allowed = set(self.only_tools) | ({"editar_archivo"} if "escribir_archivo" in self.only_tools else set())
+            names = [n for n in names if n in keep or n in allowed]
         return names
 
     def body(self, messages: list[dict], names: list[str]) -> dict:
@@ -165,6 +176,8 @@ class LocalAgentAdapter(LocalAdapter):
         max_turns = spec.max_turns or 25
         totals = {"prompt_tokens": 0, "completion_tokens": 0}
         last_calls: list[str] = []
+        seen_calls: dict[str, int] = {}
+        idle = 0  # pasos seguidos sin escribir
         bad, turns, model, tps = 0, 0, spec.model, None
         director = {"asked": 0, "cost": 0.0}
         async with httpx.AsyncClient(transport=self.transport, headers=self.headers) as client:
@@ -231,10 +244,16 @@ class LocalAgentAdapter(LocalAdapter):
                     return finish("failed", None)
                 bad = 0
                 messages.append(self.assistant_message(msg, calls))
+                idle = 0 if any(c["name"] in WRITE_TOOLS for c in calls) else idle + 1
+                if self.max_idle_turns and idle > self.max_idle_turns:
+                    on_event(Event("error", text=f"El agente lleva {idle} pasos sin escribir nada: parado"))
+                    return finish("failed", None)
                 for call in calls:
                     key = f"{call['name']}:{json.dumps(call['args'], sort_keys=True, ensure_ascii=False)}"
                     last_calls = (last_calls + [key])[-MAX_SAME_CALL:]
-                    if len(last_calls) == MAX_SAME_CALL and len(set(last_calls)) == 1:
+                    seen_calls[key] = seen_calls.get(key, 0) + 1
+                    looping = len(last_calls) == MAX_SAME_CALL and len(set(last_calls)) == 1
+                    if call["name"] != "terminar" and (looping or seen_calls[key] >= MAX_SAME_CALL):
                         on_event(Event("error", text=f"El agente repite la misma llamada ({call['name']}): parado"))
                         return finish("failed", None)
                     if call["name"] == "terminar":
@@ -384,6 +403,18 @@ class LocalAgentAdapter(LocalAdapter):
             with open(p, "w", encoding="utf-8", newline="\n") as f:
                 f.write(content if content.endswith("\n") else content + "\n")
             return f"{'Reescrito' if existed else 'Creado'} {a.get('ruta')} ({content.count(chr(10)) + 1} líneas)"
+        if name == "editar_archivo":
+            p = safe(root, a.get("ruta"))
+            if not p.is_file():
+                raise ToolFail(f"no existe {a.get('ruta')}: para crearlo usa `escribir_archivo`")
+            old = p.read_text(encoding="utf-8", errors="replace")
+            try:
+                new, _ = apply_edits(old, [(str(a.get("buscar") or ""), str(a.get("reemplazar") or ""))])
+            except EditError as e:
+                raise ToolFail(str(e)) from None
+            with open(p, "w", encoding="utf-8", newline="\n") as f:
+                f.write(new if new.endswith("\n") else new + "\n")
+            return f"Cambiado {a.get('ruta')}: {new.count(chr(10)) - old.count(chr(10)):+d} líneas"
         if name == "buscar_web":
             q = str(a.get("consulta") or "").strip()
             if not q:
