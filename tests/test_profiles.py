@@ -154,7 +154,11 @@ class SwapTests(unittest.TestCase):
         self.assertEqual(extra[extra.index("-dev") + 1], "CUDA0,CUDA1")
         self.assertEqual(pool.get("rapido").state, "off")
         from localharness.orchestrator import local_endpoints
-        self.assertEqual([e["id"] for e in local_endpoints(self.store)], ["principal"])  # el MCP solo ve uno
+        from unittest import mock
+        with mock.patch("localharness.orchestrator.llama_up", return_value=False):
+            self.assertEqual([e["id"] for e in local_endpoints(self.store)], ["principal"])  # el MCP solo ve uno
+        with mock.patch("localharness.orchestrator.llama_up", return_value=True):  # el pequeño sigue arrancado al lado
+            self.assertEqual([e["id"] for e in local_endpoints(self.store)], ["principal", "rapido"])
         r = local_servers.set_topology(self.store, pool, "separado")
         self.assertEqual(r["started"], ["Fuerte", "Rápido"])
         self.assertEqual(pool.get("rapido").model, str(self.b))

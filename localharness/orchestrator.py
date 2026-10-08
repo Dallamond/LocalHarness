@@ -340,14 +340,18 @@ def local_endpoints(store: Store, only: list[str] | None = None) -> list[dict]:
     for srv in settings.local_servers(store):
         if only and srv["id"] not in only:
             continue
-        if joined and srv["id"] != llama.PRINCIPAL:
-            continue  # GPU unidas: solo hay un llama-server (el principal, con las dos)
         url = settings.server_url(srv)
         if srv["id"] == llama.PRINCIPAL:
             url = settings.load(store)["local_base_url"] or url
-        out.append({"id": srv["id"], "name": srv["name"], "role": "general" if joined else srv["role"],
+        elif joined and not llama_up(url):
+            # GPU unidas: normalmente solo queda el principal (con las dos). Pero si al lado sigue un modelo pequeño
+            # (el 08/10, Qwen3.5-4B en la 1060 junto a gpt-oss), también trabaja: antes pasó 20 parches parado
+            continue
+        out.append({"id": srv["id"], "name": srv["name"], "role": srv["role"],
                     "device": srv["device"], "thinking": srv.get("thinking") or "normal", "url": url,
                     "key": llama.key_for_url(url) or ""})
+    if joined and len(out) == 1:
+        out[0]["role"] = "general"  # solo uno: lo hace todo
     return out
 
 
