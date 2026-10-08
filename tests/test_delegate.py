@@ -116,6 +116,67 @@ class McpServerTests(unittest.TestCase):
                                                         "local_execute_plan/ask", "local_execute_plan"])
             self.assertEqual(log[-1]["task"], "plan: 3 de 3 bloques")
 
+    def plan_with_wrong_test(self, tmp: str, fixed_test: str) -> tuple[str, list]:
+        """calc.py bien y un test que se equivoca: el plan lo intenta arreglar solo."""
+        good = "```python\ndef suma(a, b):\n    return a + b\n```"
+        bad = ("```python\nimport unittest\nfrom calc import suma\n\n\nclass T(unittest.TestCase):\n"
+               "    def test_suma(self):\n        self.assertEqual(suma(2, 3), 6)\n```")
+        seen = []
+
+        def fake(body):
+            user = body["messages"][1]["content"]
+            seen.append(user)
+            if user.startswith("ARCHIVO A ESCRIBIR: calc.py"):
+                return reply(good)
+            if user.startswith("ARCHIVO A ESCRIBIR: test_calc.py"):
+                return reply(fixed_test if "CORRECCIÓN" in user else bad)
+            return reply("test_calc.py")  # a la pregunta de qué archivo corregir
+        s = Server({"LH_ROOT": tmp, "LH_LOG": str(Path(tmp) / "log.jsonl")}, transport=fake)
+        r = call(s, "local_execute_plan", {"blocks": [
+            {"id": "t", "kind": "write", "path": "test_calc.py", "instructions": "test de suma en calc.py",
+             "after": []},
+            {"id": "c", "kind": "write", "path": "calc.py", "instructions": "suma", "after": []}],
+            "check": "python -m unittest test_calc"})
+        return r["result"]["content"][0]["text"], seen
+
+    def test_execute_plan_test_waits_for_its_code_and_fixes_itself(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            text, seen = self.plan_with_wrong_test(tmp, "```python\nimport unittest\nfrom calc import suma\n\n\n"
+                                                        "class T(unittest.TestCase):\n    def test_suma(self):\n"
+                                                        "        self.assertEqual(suma(2, 3), 5)\n```")
+            first_test = next(u for u in seen if u.startswith("ARCHIVO A ESCRIBIR: test_calc.py"))
+            self.assertIn("return a + b", first_test)        # el test se escribió viendo calc.py ya escrito
+            self.assertIn("test_calc.py → calc.py", text)
+            self.assertIn("Ronda 1: reescribió `test_calc.py`", text)
+            self.assertIn("Ahora la comprobación pasa", text)
+            self.assertIn("código de salida 0", text)
+            log = read_log(Path(tmp) / "log.jsonl")
+            self.assertEqual([e["block"] for e in log if str(e.get("block", "")).startswith("arreglo")],
+                             ["arreglo1-elige", "arreglo1"])
+            self.assertTrue(log[-1]["check_ok"])
+
+    def test_execute_plan_auto_fix_gives_up_after_two_rounds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            text, _ = self.plan_with_wrong_test(tmp, "```python\nimport unittest\nfrom calc import suma\n\n\n"
+                                                     "class T(unittest.TestCase):\n    def test_suma(self):\n"
+                                                     "        self.assertEqual(suma(2, 2), 5)\n```")
+            self.assertIn("Ronda 2", text)
+            self.assertNotIn("Ronda 3", text)
+            self.assertIn("Sigue fallando", text)
+            self.assertFalse(read_log(Path(tmp) / "log.jsonl")[-1]["check_ok"])
+
+    def test_tests_after_code_never_makes_a_cycle(self):
+        from localharness.mcp_local import tests_after_code
+        items = [{"id": "t", "kind": "write", "path": "tests/a.test.mjs", "b": {"instructions": "mira a.js"},
+                  "files": [], "after": []},
+                 {"id": "a", "kind": "write", "path": "a.js", "b": {}, "files": [], "after": ["t"]},
+                 {"id": "h", "kind": "write", "path": "web/index.html", "b": {}, "files": [], "after": []},
+                 {"id": "u", "kind": "write", "path": "tests/b.test.mjs", "b": {"instructions": "x"},
+                  "files": ["index.html"], "after": []}]
+        self.assertEqual(tests_after_code(items), [("tests/b.test.mjs", ["web/index.html"])])
+        self.assertEqual(items[0]["after"], [])  # a.js ya depende del test: esperarlo sería un ciclo
+        self.assertEqual(items[3]["after"], ["h"])
+
     def test_execute_plan_failures(self):
         with tempfile.TemporaryDirectory() as tmp:
             s = server(tmp, "```\nx\n```")

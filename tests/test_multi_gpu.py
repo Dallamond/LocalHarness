@@ -287,12 +287,21 @@ class RoutingTests(unittest.TestCase):
             ends = {e["block"]: e["at"] + e["seconds"] for e in log if e.get("block")}
             starts = {e["block"]: e["at"] for e in log if e.get("block")}
             self.assertGreaterEqual(starts["d"], max(ends["a"], ends["b"]) - 0.05)  # d esperó a a y b
-            self.assertEqual({e["block"]: e["server"] for e in log if e.get("block")},
-                             {"a": "principal", "b": "principal", "c": "rapido", "d": "rapido"})
+            by = {e["block"]: e["server"] for e in log if e.get("block")}
+            self.assertNotEqual(by["a"], by["b"])  # los dos write a la vez: uno a cada modelo, no en cola en el fuerte
         finally:
             for h in slow:
                 h.shutdown()
                 h.server_close()
+
+    def test_busy_model_hands_the_job_to_the_free_one(self):
+        """Aunque Claude pida el rápido para todo, con el rápido ocupado el bloque va al fuerte libre."""
+        s = self.server(self.endpoints())
+        self.assertEqual(s.claim("local_execute_plan/write", "rapido")[0]["id"], "rapido")
+        self.assertEqual(s.claim("local_execute_plan/write", "rapido")[0]["id"], "principal")
+        s.release("rapido")
+        s.release("principal")
+        self.assertEqual(s.claim("local_ask")[0]["id"], "rapido")  # libres los dos: manda el papel
 
     def test_plan_dependencies_of_a_failed_block_are_skipped(self):
         s = self.server(self.endpoints())

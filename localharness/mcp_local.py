@@ -129,8 +129,11 @@ PLAN = {
         "reescribir y preguntas/análisis), cada uno leyendo él los archivos que le indiques. Pon en cada bloque "
         "`after` (de qué bloques anteriores depende; [] si de ninguno) y los independientes se harán a la vez, "
         "repartidos entre los modelos locales: mucho más rápido. Sin `after`, van en orden. Opcionalmente ejecuta "
-        "al final una orden de comprobación (tests) y te devuelve su salida. Recibes un informe por bloque: léelo, "
-        "comprueba lo crítico y vuelve a llamarla solo con los bloques que fallaron."),
+        "al final una orden de comprobación (tests) y te devuelve su salida. Cada bloque va al modelo que esté "
+        "libre (`server` solo desempata). Un bloque de tests espera a los archivos que nombre en sus instrucciones "
+        "o en `files`, y los lee: nómbralos. Si la comprobación falla, el modelo local intenta arreglarlo solo "
+        "(hasta 2 rondas) antes de devolvértelo. Recibes un informe por bloque: léelo, comprueba lo crítico y, si "
+        "aún falla, vuelve a llamarla solo con el bloque culpable e instrucciones exactas."),
     "inputSchema": {
         "type": "object",
         "properties": {
@@ -168,7 +171,8 @@ AGENT = {
         "lee los archivos, los modifica y ejecuta los tests. Dale una tarea concreta y autocontenida: qué cambiar, "
         "en qué archivos, criterios de aceptación y qué orden de tests ejecutar. Te devuelve su resumen y los "
         "archivos que cambió: revísalos tú (Read) y comprueba con `run_checks`. Si algo está mal, vuelve a "
-        "encargárselo diciendo exactamente qué corregir."),
+        "encargárselo diciendo exactamente qué corregir. NO lo uses para arreglar un test o archivo que falla: "
+        "se atasca releyendo; para eso, un bloque de `local_execute_plan` con la salida del error."),
     "inputSchema": {
         "type": "object",
         "properties": {
@@ -230,6 +234,7 @@ SEARCH_URL = "https://html.duckduckgo.com/html/"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) LocalHarness/0.1"
 MAX_PAGE_CHARS = 8000
 MAX_BLOCKS = 20
+AUTO_FIX_ROUNDS = 2  # si la comprobación del plan falla, cuántas veces lo intenta arreglar el modelo local solo
 # órdenes que `local_execute_plan` puede ejecutar como comprobación (sin shell; prefijos, como en local_agent)
 CHECK_COMMANDS = ["python -m unittest", "python -m pytest", "pytest", "npm test", "npm run test", "npm run lint",
                   "ruff check", "node --test"]
@@ -303,6 +308,7 @@ class Server:
         self.servers = [{**srv, "url": str(srv["url"]).rstrip("/").removesuffix("/v1"), "key": srv.get("key") or "",
                          "role": srv.get("role") or "general"} for srv in servers]
         self._default = self.servers[0]
+        self._inflight = {srv["id"]: 0 for srv in self.servers}  # encargos en curso de cada modelo (reparto por cola)
         self._models: dict[str, str | None] = {}
         self.root = Path(env.get("LH_ROOT") or os.getcwd()).resolve()
         self.log = Path(env["LH_LOG"]) if env.get("LH_LOG") else None
@@ -346,6 +352,22 @@ class Server:
                                 f"{', '.join(srv['id'] for srv in self.servers)}")
             order = chosen + [srv for srv in order if srv is not chosen[0]]
         return order
+
+    def claim(self, kind: str, wanted=None) -> list[dict]:
+        """Como `route`, pero mirando la cola: va primero el modelo con menos encargos en curso (a igualdad, el
+        elegido o el de su papel) y se le apunta este. El 08/10 Claude mandó 12 de 13 bloques al rápido y el fuerte
+        se quedó 5 min parado: los dos van a ~25-30 tok/s, así que esperar en cola nunca compensa. Suéltalo con
+        `release`."""
+        order = self.route(kind, wanted)
+        with self._lock:
+            rank = {srv["id"]: i for i, srv in enumerate(order)}
+            order = sorted(order, key=lambda srv: (self._inflight.get(srv["id"], 0), rank[srv["id"]]))
+            self._inflight[order[0]["id"]] = self._inflight.get(order[0]["id"], 0) + 1
+        return order
+
+    def release(self, server_id: str) -> None:
+        with self._lock:
+            self._inflight[server_id] = max(0, self._inflight.get(server_id, 0) - 1)
 
     def model_of(self, srv: dict) -> str | None:
         """Qué GGUF tiene cargado (para que Claude sepa con quién habla). Se pregunta una vez; None si no contesta."""
@@ -422,11 +444,13 @@ class Server:
     def call(self, name: str, args: dict) -> dict:
         t0 = time.monotonic()
         entry: dict = {"tool": name, "at": time.time()}
+        claimed = None
         self.current = {"tool": name, "task": str(args.get("task") or args.get("path") or args.get("question")
                                                   or args.get("command") or "")[:300]}
         try:
-            if name in SERVER_TOOLS:
-                self.order = self.route(name, args.get("server"))
+            if name in SERVER_TOOLS and name != "local_execute_plan":  # el plan reparte bloque a bloque
+                self.order = self.claim(name, args.get("server"))
+                claimed = self.order[0]["id"]
                 self.use(self.order[0])
                 self.current["server"] = self.server_id
             if name == "local_prepare" and self.worker_path:
@@ -468,6 +492,8 @@ class Server:
                 entry.setdefault("server", self.server_id)
             return {"content": [{"type": "text", "text": f"No se pudo: {msg}"}], "isError": True}
         finally:
+            if claimed:
+                self.release(claimed)
             entry["seconds"] = round(time.monotonic() - t0, 1)
             self._log(entry)
 
@@ -589,6 +615,7 @@ class Server:
             if bad:
                 raise ToolError(f"el bloque {it['id']} depende de {', '.join(bad)}, que no es un bloque anterior")
             it["after"] = after
+        waited = tests_after_code(items) if graph else []
 
         results: dict[str, tuple[bool, str]] = {}  # id → (bien, texto del informe)
         wrote = 0
@@ -601,8 +628,10 @@ class Server:
             if it["path"]:
                 entry["path"] = it["path"]
             t0 = time.monotonic()
+            claimed = None
             try:
-                self.order = self.route(entry["tool"], it["b"].get("server"))
+                self.order = self.claim(entry["tool"], it["b"].get("server"))
+                claimed = self.order[0]["id"]
                 self.use(self.order[0])
                 self.current = {"tool": entry["tool"], "task": it["title"][:300], "server": self.server_id}
                 if it["kind"] == "write":
@@ -620,6 +649,8 @@ class Server:
                 entry.update(ok=False, error=str(e))
                 return False, f"No se pudo: {e}"
             finally:
+                if claimed:
+                    self.release(claimed)
                 entry["seconds"] = round(time.monotonic() - t0, 1)
                 if len(self.servers) > 1:
                     entry.setdefault("server", self.server_id)
@@ -659,14 +690,71 @@ class Server:
         for it in items:
             good, text = results.get(it["id"], (False, "No se hizo"))
             lines.append(f"## Bloque {it['id']} — {it['title']} {'✅' if good else '❌'}\n{text}")
+        if waited:
+            lines.append("(Los tests esperaron a los archivos que comprueban y los leyeron: "
+                         + "; ".join(f"{t} → {', '.join(ps)}" for t, ps in waited) + ")")
         stats = {"blocks": len(items), "ok": ok, "parallel": most, "plan_seconds": round(time.monotonic() - t_plan, 1)}
         if check.strip():
             result = self.run_check(check) if wrote else "(no se ejecutó: ningún bloque escribió archivos)"
+            fixes = []
+            while wrote and check_failed(result) and len(fixes) < AUTO_FIX_ROUNDS and not stop.is_set():
+                fixed = self.auto_fix(check, result, items, results, run, len(fixes) + 1)
+                if not fixed:
+                    break
+                fixes.append(fixed)
+                result = self.run_check(check)
+            if fixes:
+                lines.append("## Arreglo automático (modelo local, sin ti)\n" + "\n".join(
+                    f"- Ronda {i}: reescribió `{path}`" + ("" if good else " (falló al escribirlo)")
+                    for i, (path, good) in enumerate(fixes, 1))
+                    + ("\nAhora la comprobación pasa." if not check_failed(result) else
+                       "\nSigue fallando: reencarga tú solo el bloque culpable con instrucciones exactas."))
+                stats["auto_fix"] = len(fixes)
             lines.append(f"## Comprobación: `{check}`\n```\n{result}\n```")
             stats["check"] = check
+            stats["check_ok"] = not check_failed(result)
         head = f"Plan hecho por el modelo local: {ok} de {len(items)} bloques bien"
         head += f" (hasta {most} a la vez, {stats['plan_seconds']} s)." if most > 1 else "."
         return head + "\n\n" + "\n\n".join(lines), stats
+
+    def auto_fix(self, check: str, result: str, items: list, results: dict, run, n: int) -> tuple[str, bool] | None:
+        """Una ronda de arreglo sin Claude: el modelo local elige qué archivo del plan corregir (casi siempre el test,
+        que adivinó el marcado) y se reescribe ese bloque con la salida de la comprobación delante. Es lo que Claude
+        hacía a mano el 08/10 en 5 de 7 parches, y le costaba un turno cada vez."""
+        out = result[-2500:]
+        written = [it for it in items if it["kind"] == "write" and it["path"] and results.get(it["id"], (False,))[0]]
+        if not written:
+            return None
+        named = [it for it in written if it["path"] in out or Path(it["path"]).name in out]
+        ctx = list(dict.fromkeys(f for it in named for f in [it["path"], *it["files"]]))[:5]
+        paths = [it["path"] for it in written]
+        pick = {"b": {"instructions": (
+                    f"Tras escribir estos archivos, `{check}` falla así:\n```\n{out}\n```\nArchivos escritos: "
+                    f"{', '.join(paths)}.\n¿Cuál hay que corregir para que pase? Si el archivo comprobado hace lo "
+                    "pedido y el test es demasiado estricto o se equivoca (selector, etiqueta, import, regex), "
+                    "corrige el TEST; si el código no hace lo pedido, corrige el código. Responde SOLO con la ruta "
+                    "de UN archivo de la lista.")},
+                "id": f"arreglo{n}-elige", "path": "", "kind": "ask", "files": ctx,
+                "title": f"arreglo {n}: qué archivo corregir"}
+        good, answer = run(pick)
+        choice = next((p for p in sorted(paths, key=len, reverse=True) if good and p in answer), None)
+        if not choice:
+            tests = [it["path"] for it in named if is_test_path(it["path"])]
+            choice = (tests or [it["path"] for it in named] or [None])[0]
+        if not choice:
+            return None
+        orig = next(it for it in written if it["path"] == choice)
+        others = [f for f in dict.fromkeys([*orig["files"], *(it["path"] for it in named)]) if f != choice]
+        fix = {"b": {"instructions": (
+                   f"{orig['b'].get('instructions') or ''}\n\nCORRECCIÓN: con el archivo ya escrito, `{check}` falla "
+                   f"así:\n```\n{out}\n```\nCorrígelo para que pase. Si es un test, que compruebe lo que pide el "
+                   "encargo mirando el contenido REAL de los archivos de contexto (no inventes etiquetas ni clases, "
+                   "y no lo relajes hasta no comprobar nada)."),
+                   "server": orig["b"].get("server")},
+               "id": f"arreglo{n}", "path": choice, "kind": "write", "files": others[:5],
+               "title": f"arreglo {n}: {choice}"}
+        good, _ = run(fix)
+        return choice, good
 
     def run_check(self, command: str) -> str:
         """Orden de comprobación (tests/linter) en la raíz del repo, sin shell y de la lista blanca."""
@@ -680,6 +768,8 @@ class Server:
             return f"orden no permitida. Permitidas: {'; '.join(commands)}"
         exe = sys.executable if argv[0] in ("python", "python3") else (shutil.which(argv[0]) or argv[0])
         env = {k: v for k, v in os.environ.items() if k not in ENV_DROP}
+        # un archivo reescrito en el mismo segundo y con el mismo tamaño haría que Python usara su .pyc viejo
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
         try:
             p = subprocess.run([exe, *argv[1:]], cwd=self.root, stdin=subprocess.DEVNULL, capture_output=True,
                                env=env, timeout=CHECK_TIMEOUT_S)
@@ -1074,6 +1164,49 @@ def page_text(raw: str) -> str:
     p.feed(raw)
     lines = (" ".join(ln.split()) for ln in "".join(p.parts).splitlines())
     return "\n".join(ln for ln in lines if ln)
+
+
+def check_failed(result: str) -> bool:
+    """La comprobación se ejecutó y no salió con 0 (si ni se ejecutó, no hay nada que arreglar aquí)."""
+    first = result.split("\n", 1)[0]
+    return first.startswith("código de salida ") and first != "código de salida 0"
+
+
+def is_test_path(path: str) -> bool:
+    p = path.replace("\\", "/").lower()
+    name = p.rsplit("/", 1)[-1]
+    return (p.startswith(("tests/", "test/")) or "/tests/" in p or "/test/" in p or ".test." in name
+            or ".spec." in name or name.startswith("test_") or name.endswith("_test.py"))
+
+
+def tests_after_code(items: list[dict]) -> list[tuple[str, list[str]]]:
+    """En un plan en paralelo, cada bloque que escribe un test espera a los bloques que escriben los archivos que
+    nombra (en sus instrucciones o en `files`) y los lee. Si no, adivina el marcado: el 08/10 fallaron así 5 de 7
+    primeras rondas (buscaba un div y era un button, un span y era un p…). No se toca si crearía un ciclo."""
+    code = [it for it in items if it["kind"] == "write" and it["path"] and not is_test_path(it["path"])]
+    by_id = {it["id"]: it for it in items}
+
+    def needs(it: dict, target: str, seen: set) -> bool:  # ¿`it` depende (aunque sea de lejos) de `target`?
+        for a in it["after"]:
+            if a == target:
+                return True
+            if a not in seen:
+                seen.add(a)
+                if needs(by_id[a], target, seen):
+                    return True
+        return False
+    out = []
+    for t in items:
+        if t["kind"] != "write" or not is_test_path(t["path"]):
+            continue
+        text = str(t["b"].get("instructions") or "") + " " + " ".join(t["files"])
+        deps = [c for c in code if (c["path"] in text or Path(c["path"]).name in text)
+                and c["id"] not in t["after"] and not needs(c, t["id"], set())]
+        if deps:
+            t["after"] = [*t["after"], *(c["id"] for c in deps)]
+            t["files"] = list(dict.fromkeys([*t["files"], *(c["path"] for c in deps)]))
+            out.append((t["path"], [c["path"] for c in deps]))
+    return out
 
 
 def strip_fence(text: str) -> str:

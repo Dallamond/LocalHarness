@@ -218,7 +218,9 @@ class Autopilot:
                 m["encargos"] += 1
                 m["fallidos"] += 0 if d.get("ok", True) else 1
                 m["tokens"] += int(d.get("completion_tokens") or 0)
-                m["segundos"] += float(d.get("gen_seconds") or d.get("seconds") or 0)
+                # gen_seconds incluye la espera en la cola del servidor: con tok/s se cuenta solo lo que generó
+                tokens, tps = int(d.get("completion_tokens") or 0), float(d.get("tps") or 0)
+                m["segundos"] += tokens / tps if tokens and tps else float(d.get("gen_seconds") or d.get("seconds") or 0)
                 m["modelo"] = d.get("model") or m["modelo"]
         return out
 
@@ -361,8 +363,8 @@ class Autopilot:
                              f"{a['segundos'] / 60:.1f} min | {100 * a['segundos'] / total_s:.0f} % | "
                              f"{a['tokens'] / a['segundos'] if a['segundos'] else 0:.1f} |")
             lines.append("")
-            lines.append("«% del tiempo» = tiempo de los encargos de ese modelo (incluida la espera en su cola) "
-                         "frente al tiempo total: lo que falta hasta 100 % es su GPU parada.")
+            lines.append("«% del tiempo» = tiempo generando de ese modelo (tokens ÷ su velocidad, sin la espera en "
+                         "cola) frente al tiempo total: lo que falta hasta 100 % es su GPU parada.")
         for r in rs:
             lines += ["", f"## Parche {r.n:03d}: {r.text}", "", f"**{r.outcome}** · tareas "
                       f"{', '.join(f'#{t}' for t in r.task_ids)} · tests: {r.check.splitlines()[0] if r.check else '—'}"]
