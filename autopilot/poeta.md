@@ -20,4 +20,34 @@ Puedes editarla antes de lanzar: lo que no empiece por «- » se ignora.
 - Mapa del sitio (mapa.html) con todas las páginas y una frase de cada una, enlazado desde el pie; test que comprueba que cada .html de la raíz y del blog aparece en el mapa.
 - Libro, capítulo tres y final: cierra el relato en al menos 800 palabras y añade al final del libro un colofón con los parches en los que se escribió cada capítulo.
 - Revisión general: repasa todas las páginas buscando enlaces rotos, textos de relleno, faltas de ortografía y estilos incoherentes; arréglalo y deja un test que recorra todos los enlaces internos y compruebe que existen.
+- Recetario del taller (recetas.html): ocho «recetas» de oficio (barniz de goma laca, cola de conejo, tinta de agallas, afilado de una gubia…) con ingredientes, pasos numerados y una nota poética; test de que hay ocho recetas con lista de pasos.
+- Diccionario de maderas (maderas.html): doce maderas (roble, nogal, cerezo, haya, pino, olivo, boj, tejo, castaño, fresno, arce, ébano) con dureza, color, uso y un verso; filtro por dureza con botones; tests del filtro.
+- Cuaderno de bocetos: en galeria.html, cada pieza tiene un boceto hecho solo con SVG en línea (trazos de lápiz), distinto para cada una; test de que cada ficha contiene un svg.
+- Libro: añade un marcador de página que recuerda en localStorage dónde se quedó el lector y un botón «Seguir leyendo» en la portada que lleva allí; tests de la función que guarda y lee el marcador.
+- Poemas visuales: página caligramas.html con cuatro poemas cuya forma dibuja un objeto del taller (un martillo, una vela, una pluma, una silla) usando solo HTML y CSS; test de que hay cuatro caligramas.
+- Tipografía cuidada: escala tipográfica coherente en variables CSS (h1–h4, párrafo, pie), interlineado y medida de línea de 60–75 caracteres en los textos largos; test de que styles.css define la escala.
+- El oficio en diez lecciones (lecciones.html): diez lecciones breves de carpintería y escritura en paralelo («medir dos veces, cortar una» / «releer dos veces, borrar una»), cada una desplegable con details/summary; test de que hay diez.
+- Buscador global: una caja en la cabecera que busca en títulos y textos de todas las páginas a partir de un índice JSON (busqueda.json) generado a mano, mostrando resultados con enlace; tests de la función de búsqueda.
+- Cartas al aprendiz (cartas.html): cinco cartas de la artesana a un aprendiz, de 200–300 palabras cada una, con fecha inventada y firma; navegación entre cartas; test de que hay cinco con fecha y firma.
+- Modo lectura: un botón en el libro y en las cartas que oculta todo menos el texto, agranda la letra y cambia a fondo sepia; se recuerda en localStorage; tests de la clase y del guardado.
+- Taller de rimas: herramienta rimas.html que, dada una palabra escrita por el usuario, sugiere rimas de una lista interna de 200 palabras del taller (rima consonante y asonante); tests de la función de rima.
+- Agenda de cursos inventados (cursos.html): seis cursos del taller con fecha, plazas y nivel, ordenables por fecha o nivel, y una etiqueta «Completo» cuando no quedan plazas; tests de la ordenación.
+- Blog con etiquetas: cada entrada del blog lleva etiquetas (madera, tinta, noche, oficio…) y blog/index.html permite filtrar por etiqueta; test de que toda entrada tiene al menos una etiqueta.
+- Impresión bonita: hoja de estilos de impresión (@media print) para el libro, las cartas y el glosario: sin cabecera ni botones, márgenes de libro y números de página; test de que existe la regla print.
+- Libro, interludio: un relato corto independiente (600–800 palabras) contado por la gubia en primera persona, como capítulo aparte marcado «Interludio» en el índice del libro.
+- Página 404 (404.html) poética y útil: «Esta página se la llevó la viruta», con enlaces a las secciones principales y el buscador; test de que enlaza la portada y el mapa del sitio.
+- Contador de lectura: cada entrada de blog, carta y capítulo muestra «Lectura de N min» calculado con JavaScript a partir del número de palabras; tests de la función que cuenta palabras y minutos.
+- Herbario del bosque (herbario.html): diez plantas del monte cercano al taller con nombre común, nombre científico, estación y un haiku cada una; test de que cada ficha tiene haiku de tres líneas.
+- Navegación móvil: en pantallas estrechas la cabecera se convierte en un menú desplegable accesible (botón con aria-expanded); tests del botón y de que alterna aria-expanded.
+- Entrevista imaginaria (entrevista.html): una entrevista de 12 preguntas a la artesana sobre oficio, escritura y paciencia, con las preguntas destacadas; test de que hay 12 preguntas.
+- Tarjetas para compartir: cada poema del blog tiene un botón «Copiar verso» que copia al portapapeles el primer verso con el enlace, con aviso accesible de «copiado»; tests de la función que prepara el texto.
+- Cronología del taller: amplía sobre.html con una línea de tiempo interactiva (clic en cada año muestra su historia) y añade cinco momentos más; tests de que hay diez momentos y del cambio de año.
+- Juego «¿Qué herramienta soy?» (adivina.html): ocho adivinanzas en verso sobre herramientas del taller con tres opciones cada una, puntuación final y botón de reintentar; tests de la lógica de puntuación.
+- Coherencia de cabeceras: todas las páginas comparten la misma cabecera y navegación con enlace activo marcado (aria-current="page"); test que recorre todos los .html y comprueba la navegación común.
+- Libro, epílogo: un epílogo de 500–700 palabras años después del final, y la estantería de la portada del libro muestra el nuevo volumen; test de que el índice lo incluye.
+- Estadísticas del taller (estadisticas.html): cuenta con JavaScript cuántos poemas, palabras, capítulos, recetas y maderas tiene la web leyendo busqueda.json, y lo muestra en tarjetas; tests de los recuentos.
+- Bitácora de sonidos: página sonidos.html que describe en prosa poética doce sonidos del taller (la garlopa, la lluvia en el tejado, la estufa…), cada uno con su onomatopeya destacada; test de que hay doce.
+- Accesibilidad, segunda pasada: contraste suficiente en modo noche y modo lectura (variables revisadas), textos alternativos en todos los SVG con title, y un test que comprueba que cada svg tiene title o aria-label.
+- Revisión de textos: relee todas las páginas de prosa (libro, cartas, sobre, entrevista) corrigiendo erratas, repeticiones y tiempos verbales; añade al CHANGELOG la lista de páginas revisadas y deja todos los tests pasando.
+- Índice general (indice.html): un índice alfabético de todo el contenido (poemas, capítulos, cartas, recetas, maderas, plantas, lecciones) con enlaces, generado desde busqueda.json; test de que cada página del sitio aparece al menos una vez.
 - Parche de cierre de la jornada: una entrada de blog especial, más larga (20–30 versos), que repase en verso todo lo construido hoy, y una portada actualizada que la destaque.

@@ -74,6 +74,20 @@ def keep_awake(on: bool) -> None:
         pass
 
 
+def no_quick_edit() -> None:
+    """Windows: quita la «edición rápida» de esta consola. Con ella, un clic en la ventana empieza a seleccionar texto
+    y congela el proceso en el siguiente print hasta que pulses Esc (así se quedó parado el 08/10 en la tarea 1)."""
+    try:
+        import ctypes
+        k32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        h = k32.GetStdHandle(-10)  # STD_INPUT_HANDLE
+        mode = ctypes.c_uint32()
+        if k32.GetConsoleMode(h, ctypes.byref(mode)):
+            k32.SetConsoleMode(h, (mode.value & ~0x0040) | 0x0080)  # sin ENABLE_QUICK_EDIT_MODE, con EXTENDED_FLAGS
+    except (AttributeError, OSError):
+        pass
+
+
 def run_check(command: str, cwd: str, timeout: float = 300) -> tuple[bool, str]:
     parts = command.split()
     exe = shutil.which(parts[0]) or parts[0]
@@ -106,8 +120,9 @@ class Autopilot:
     def __init__(self, api: Callable, project: str, agent: str, items: list[str], *, hours: float = 6,
                  budget: float = 5.0, task_minutes: float = 30, check: str = "node --test", state: Path,
                  report: Path, say: Callable[[str], None] = print, sleep: Callable[[float], None] = time.sleep,
-                 clock: Callable[[], float] = time.monotonic, checker: Callable = run_check):
-        self.api, self.items, self.check = api, items, check
+                 clock: Callable[[], float] = time.monotonic, checker: Callable = run_check,
+                 reload: Callable[[], list[str]] | None = None):
+        self.api, self.items, self.check, self.reload = api, items, check, reload
         self.hours, self.budget, self.task_s = hours, budget, task_minutes * 60
         self.state_path, self.report_path, self.say, self.sleep, self.clock = state, report, say, sleep, clock
         self.checker = checker
@@ -175,6 +190,17 @@ class Autopilot:
                 self.sleep(30)
         raise ApiError("el proyecto lleva 30 min ocupado por otra tarea")
 
+    def adoptable(self, n: int) -> dict | None:
+        """Si el autopiloto se cerró a mitad de un parche, su tarea sigue viva: se retoma en vez de lanzar otra
+        (que chocaría con ella en el mismo repo y repetiría el parche)."""
+        try:
+            tasks = self.api("GET", "/api/tasks")
+        except ApiError:
+            return None
+        return next((t for t in tasks if t.get("project_id") == self.project["id"]
+                     and str(t.get("title") or "").startswith(f"Autopiloto {n}/")
+                     and t.get("status") in (*OPEN, "review")), None)
+
     def models_of(self, tids: list[int]) -> dict:
         out: dict = {}
         for tid in tids:
@@ -202,11 +228,15 @@ class Autopilot:
         t0 = self.clock()
         # el número del parche lo pone el agente siguiendo CHANGELOG.md (la lista no sabe cuántos hay ya)
         prompt = f"Nuevo parche (el siguiente número según CHANGELOG.md): {text}{NOTE}"
-        t = self.start_when_free({"project_id": self.project["id"], "agent_id": self.agent["id"], "prompt": prompt,
-                                  "title": f"Autopiloto {n}/{len(self.items)}: {text}"[:80]})
+        t = self.adoptable(n)
+        if t:
+            self.say(f"  sigo con la tarea #{t['id']}, que ya estaba en marcha (se reinició el autopiloto)")
+        else:
+            t = self.start_when_free({"project_id": self.project["id"], "agent_id": self.agent["id"],
+                                      "prompt": prompt, "title": f"Autopiloto {n}/{len(self.items)}: {text}"[:80]})
+            self.say(f"  tarea #{t['id']}")
         tid = t["id"]
         r.task_ids.append(tid)
-        self.say(f"  tarea #{tid}")
         t = self.wait(tid)
         if t.get("timed_out"):
             r.outcome = "tiempo agotado"
@@ -237,6 +267,10 @@ class Autopilot:
                 r.outcome = "descartado (tests)"
         elif t["status"] == "done":
             r.outcome = "sin cambios"
+        elif t["status"] == "merged":  # la integraste tú desde la oficina
+            r.outcome = "integrado"
+        elif t["status"] in ("rejected", "discarded"):
+            r.outcome = "descartado (a mano)"
         else:
             r.outcome = f"falló ({t['status']})"
         t = self.api("GET", f"/api/tasks/{tid}")
@@ -252,8 +286,19 @@ class Autopilot:
         done = {r.n for r in self.results}
         fails = 0
         keep_awake(True)
+        no_quick_edit()
         try:
-            for n, text in enumerate(self.items, start=1):
+            n = 0
+            while True:
+                if self.reload:  # la lista se puede alargar (o corregir) con el autopiloto en marcha
+                    try:
+                        self.items = self.reload() or self.items
+                    except (OSError, ValueError):
+                        pass
+                n += 1
+                if n > len(self.items):
+                    break
+                text = self.items[n - 1]
                 if n in done:
                     continue
                 spent = sum(r.cost for r in self.results)

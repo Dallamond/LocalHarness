@@ -390,7 +390,8 @@ def cmd_autopilot(args) -> int:
     try:
         pilot = autopilot.Autopilot(autopilot.http(args.url), args.project, args.agent, items, hours=args.hours,
                                     budget=args.budget, task_minutes=args.task_minutes, check=args.check,
-                                    state=state, report=out / f"{stem}-informe.md")
+                                    state=state, report=out / f"{stem}-informe.md",
+                                    reload=lambda: autopilot.read_list(lst))
     except autopilot.ApiError as e:
         return _fail(str(e))
     hecho = len(pilot.results)

@@ -85,7 +85,7 @@ class AutopilotTests(unittest.TestCase):
         rs = pilot.run()
         self.assertEqual([r.outcome for r in rs], ["integrado", "sin cambios"])
         self.assertIn(("POST", "/api/tasks/1/merge", {"confirm": True}), api.calls)
-        self.assertIn("CHANGELOG.md): modo noche", api.calls[[c[1] for c in api.calls].index("/api/tasks")][2]["prompt"])
+        self.assertIn("CHANGELOG.md): modo noche", next(c for c in api.calls if c[:2] == ("POST", "/api/tasks"))[2]["prompt"])
         self.assertEqual(rs[0].models["principal"]["tokens"], 100)
         self.assertEqual(rs[0].models["rapido"]["fallidos"], 1)
         informe = (tmp / "informe.md").read_text(encoding="utf-8")
@@ -101,6 +101,33 @@ class AutopilotTests(unittest.TestCase):
         reply = next(c for c in api.calls if c[1].endswith("/reply"))
         self.assertIn("1 failing", reply[2]["message"])
         self.assertEqual(api.tasks[1]["status"], "rejected")
+
+    def test_task_decided_by_hand_is_not_a_failure(self):
+        api = FakeApi([("merged", 0.2), ("rejected", 0.1)])
+        pilot, _ = self.make(api, ["modo noche", "galería"])
+        self.assertEqual([r.outcome for r in pilot.run()], ["integrado", "descartado (a mano)"])
+        self.assertFalse(any(c[1].endswith("/merge") for c in api.calls))
+
+    def test_list_grows_while_running(self):
+        api = FakeApi([("done", 0.1), ("done", 0.1), ("done", 0.1)])
+        lists = [["a"], ["a", "b"], ["a", "b", "c"]]
+        pilot, _ = self.make(api, ["a"], reload=lambda: lists.pop(0) if len(lists) > 1 else lists[0])
+        self.assertEqual([r.text for r in pilot.run()], ["a", "b", "c"])
+
+    def test_adopts_the_task_left_running_by_a_previous_run(self):
+        api = FakeApi([])
+        api.tasks[7] = {"id": 7, "project_id": 3, "title": "Autopiloto 1/18: modo noche", "status": "review",
+                        "cost_usd": 0.2, "worktree": "/wt/7", "final": "hecho"}
+        orig = api.__call__
+
+        def call(method, path, body=None):
+            if method == "GET" and path == "/api/tasks":
+                return list(api.tasks.values())
+            return orig(method, path, body)
+        pilot, _ = self.make(call, ["modo noche"])
+        r = pilot.run()[0]
+        self.assertEqual((r.outcome, r.task_ids), ("integrado", [7]))
+        self.assertFalse(any(c[:2] == ("POST", "/api/tasks") for c in api.calls))
 
     def test_hung_task_is_cancelled_and_three_failures_stop(self):
         api = FakeApi([("hang", 0.0)] * 3 + [("review", 0.1)])
