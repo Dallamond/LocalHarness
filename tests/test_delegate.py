@@ -45,11 +45,13 @@ class McpServerTests(unittest.TestCase):
             self.assertIsNone(s.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}))
             names = [t["name"] for t in s.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]]
             self.assertEqual(names, ["local_map", "local_ask", "local_edit_file", "local_write_file",
-                                     "local_execute_plan", "local_agent", "run_checks", "local_research"])
+                                     "local_execute_plan", "local_plan", "local_agent", "run_checks",
+                                     "local_research", "local_read_documents", "local_look"])
             ro = server(tmp, write=False).handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
             # Director / jefe: pensar e investigar, nunca escribir
             self.assertEqual([t["name"] for t in ro["result"]["tools"]],
-                             ["local_map", "local_ask", "run_checks", "local_research"])
+                             ["local_map", "local_ask", "run_checks", "local_research", "local_read_documents",
+                              "local_look"])
             self.assertIn("error", s.handle({"jsonrpc": "2.0", "id": 3, "method": "otra/cosa"}))
 
     def test_ask_reads_files_itself(self):

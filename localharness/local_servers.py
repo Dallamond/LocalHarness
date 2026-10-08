@@ -124,3 +124,121 @@ def ensure_for_task(store: Store, wanted: list[str] | None = None, wait_s: float
     for srv in pending:
         say(f"{srv['name']} sigue cargando: los encargos esperarán a que termine")
     return [s["name"] for s in started]
+
+
+# --- cambio de modelo en caliente (P2) y GPU unidas o separadas (P3)
+_SWAP_LOCKS: dict[str, "threading.Lock"] = {}
+
+
+def server_busy(server_id: str) -> bool:
+    """¿Algún encargo en curso de una tarea está usando ese modelo local AHORA? (lo dice el directo de cada
+    delegación: si no ha terminado y se movió hace menos de un minuto)."""
+    import json
+
+    from localharness import orchestrator
+    for deleg in list(orchestrator.ACTIVE_WORKERS.values()):
+        try:
+            live = json.loads(Path(deleg["live"]).read_text(encoding="utf-8"))
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        for sid, data in (live.get("servers") or {}).items():
+            if sid == server_id and not data.get("done") and time.time() - float(data.get("at") or 0) < 60:
+                return True
+    return False
+
+
+def swap(store: Store, pool: "llama.LlamaPool", srv: dict, model: Path, options: dict | None = None,
+         wait_s: float = 300, idle_wait_s: float = 600, busy=server_busy, say=lambda text: None) -> dict:
+    """Cambia el modelo de un servidor local sin romper lo que esté haciendo: espera a que no tenga encargos, lo
+    para, arranca `model` y espera a que conteste. Si el nuevo no arranca, vuelve a poner el anterior. Un candado
+    por servidor (dos cambios a la vez sobre el mismo servidor se esperan). Devuelve el estado final."""
+    import threading
+    lock = _SWAP_LOCKS.setdefault(srv["id"], threading.Lock())
+    with lock:
+        mgr = pool.get(srv["id"], srv["port"])
+        current = mgr.status(srv["port"])
+        if current.get("model") and Path(current["model"]) == Path(model) and current["state"] == "ready":
+            return current  # ya está
+        deadline = time.monotonic() + idle_wait_s
+        while busy(srv["id"]) and time.monotonic() < deadline:
+            time.sleep(2)
+        prev = last_of(store, srv)
+        say(f"{srv['name']}: cambiando a {model_name(str(model))}…")
+        state = _start_and_wait(store, pool, srv, model, options, wait_s)
+        if state["state"] != "ready":
+            say(f"{srv['name']}: {model_name(str(model))} no arrancó ({state['state']}); vuelvo al anterior")
+            if prev.get("model") and Path(prev["model"]).is_file():
+                _start_and_wait(store, pool, srv, Path(prev["model"]), prev.get("options") or None, wait_s)
+            raise RuntimeError(f"{model_name(str(model))} no arrancó en {srv['name']}: {state.get('error') or state['state']}")
+        remember(store, srv, model, options or {})
+        return state
+
+
+def _start_and_wait(store, pool, srv, model, options, wait_s) -> dict:
+    start_on(store, pool, srv, model, options)
+    mgr = pool.get(srv["id"], srv["port"])
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
+        state = mgr.status(srv["port"])
+        if state["state"] in ("ready", "failed", "off"):
+            return state
+        time.sleep(1)
+    return mgr.status(srv["port"])
+
+
+def remember(store: Store, srv: dict, model: Path, options: dict) -> None:
+    """Lo último arrancado en cada servidor (para el autoarranque y para volver atrás)."""
+    cfg = settings.load(store)["llama"]
+    last = {"model": str(model), "options": options}
+    if srv["id"] == llama.PRINCIPAL:
+        settings.save(store, {"llama": {"last": last}})
+    else:
+        settings.save(store, {"llama": {"last_by_server": {**(cfg.get("last_by_server") or {}), srv["id"]: last}}})
+
+
+def split_for(devices: list[dict], margin_mb: int = 700) -> str:
+    """-ts según la VRAM LIBRE de cada GPU (menos un margen): «9,2» = 9 partes en la primera y 2 en la segunda."""
+    free = [max(0, d.get("free_mb", d.get("total_mb", 0)) - margin_mb) for d in devices]
+    total = sum(free) or 1
+    parts = [max(1, round(10 * f / total)) for f in free]
+    return ",".join(str(p) for p in parts)
+
+
+def set_topology(store: Store, pool: "llama.LlamaPool", mode: str, model: Path | None = None,
+                 devices: list[dict] | None = None, say=lambda text: None) -> dict:
+    """`unido`: apaga los demás servidores y arranca `model` en el principal repartido entre todas las GPU
+    (-dev CUDA0,CUDA1 -sm layer -ts según VRAM libre). `separado`: vuelve a un servidor por GPU con lo último que
+    tuvo cada uno. OJO: unido solo compensa para modelos que no caben en una GPU (la 1060 va a la mitad de
+    ancho de banda que la 3060); el banco de pruebas (bench) lo mide."""
+    if mode not in ("unido", "separado"):
+        raise ValueError("topology: unido | separado")
+    servers = settings.local_servers(store)
+    main = next(s for s in servers if s["id"] == llama.PRINCIPAL)
+    if mode == "unido":
+        devices = llama.list_devices() if devices is None else devices
+        if len(devices) < 2:
+            raise RuntimeError("Hace falta más de una GPU para unirlas")
+        model = model or Path(last_of(store, main).get("model") or "")
+        if not model.is_file():
+            raise LookupError("Elige qué modelo cargar con las GPU unidas")
+        for srv in servers:
+            if srv["id"] != llama.PRINCIPAL:
+                pool.get(srv["id"], srv["port"]).stop()
+        opts = {"device": ",".join(d["id"] for d in devices), "split_mode": "layer",
+                "tensor_split": split_for(devices), "main_gpu": 0}
+        say(f"Uniendo {opts['device']} (-ts {opts['tensor_split']}) para {model_name(str(model))}")
+        settings.save(store, {"llama": {"topology": "unido"}})
+        state = swap(store, pool, {**main, "device": ""}, model, opts, busy=lambda _: False)
+        return {"topology": "unido", "options": opts, "status": state}
+    settings.save(store, {"llama": {"topology": "separado"}})
+    started = []
+    for srv in servers:
+        last = last_of(store, srv)
+        if not last.get("model") or not Path(last["model"]).is_file():
+            continue
+        opts = {k: v for k, v in (last.get("options") or {}).items()
+                if k not in ("device", "split_mode", "tensor_split", "main_gpu")}
+        start_on(store, pool, srv, Path(last["model"]), opts)
+        remember(store, srv, Path(last["model"]), opts)
+        started.append(srv["name"])
+    return {"topology": "separado", "started": started}

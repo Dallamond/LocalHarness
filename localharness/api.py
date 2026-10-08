@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from localharness.local_servers import autostart_llama, servers_status, start_on, suggest_servers  # noqa: F401
+from localharness import bench, local_servers, profiles
 from localharness import compare
 from localharness import (actions, analytics, catalog, context, designer, hardware, hf, library, llama, maintenance, mcp_local,
                           modelinfo, orchestrator, roles, settings, usage, workspace)
@@ -49,6 +50,33 @@ class LlamaStartIn(BaseModel):
     options: dict[str, Any] | None = None  # ajustes del diálogo de arranque (ver llama.OPTION_FLAGS)
     save: bool = False  # guardarlos como configuración propia de este modelo
     server: str = llama.PRINCIPAL  # en qué servidor local (Ajustes → llama.servers; uno por GPU)
+
+
+class ProfileIn(BaseModel):
+    path: str
+    caps: list[str] | None = None  # None = las deducidas
+    mmproj: str | None = None  # "" = sin visión
+    draft: dict[str, Any] | None = None  # {model, ngl, device, max, min}; {} = sin borrador
+
+
+class SwapIn(BaseModel):
+    server: str = llama.PRINCIPAL
+    path: str
+    options: dict[str, Any] | None = None
+
+
+class UseIn(BaseModel):
+    capability: str
+    server: str | None = None  # si se quiere en un servidor concreto
+
+
+class TopologyIn(BaseModel):
+    mode: str  # unido | separado
+    path: str | None = None  # unido: qué modelo cargar con las dos GPU
+
+
+class BenchIn(BaseModel):
+    server: str | None = None  # None = todos los que estén listos
 
 
 class EstimateIn(BaseModel):
@@ -735,6 +763,142 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
         """Apaga TODOS los llama-server del PC: los de los paneles y los que se quedaron sueltos."""
         killed = await asyncio.to_thread(request.app.state.llama.kill_everything)
         return {"killed": killed, "left": await asyncio.to_thread(llama.running_servers)}
+
+    # --- armario de modelos (perfiles), cambio en caliente, GPU unidas y banco de pruebas (PLAN-MODELOS-LOCALES)
+    def all_profiles(request: Request) -> list[dict]:
+        store = st(request)
+        return profiles.describe_all(store, request.app.state.modelinfo, request.app.state.llama.load_times(),
+                                     budget=hw_budget(store)[1])
+
+    @app.get("/api/llama/profiles")
+    async def llama_profiles(request: Request) -> dict:
+        return {"profiles": await asyncio.to_thread(all_profiles, request), "caps": profiles.CAP_TEXT,
+                "topology": settings.load(st(request))["llama"].get("topology") or "separado"}
+
+    @app.put("/api/llama/profiles")
+    async def llama_profile_put(request: Request, body: ProfileIn) -> dict:
+        store = st(request)
+        model = Path(body.path)
+        if not model.is_file():
+            raise HTTPException(404, "No existe ese GGUF")
+        cur = settings.load(store)["llama"].get("profiles") or {}
+        mine = dict(cur.get(str(model)) or {})
+        if body.caps is not None:
+            bad = [c for c in body.caps if c not in profiles.CAPS]
+            if bad:
+                raise HTTPException(422, f"Capacidades desconocidas: {', '.join(bad)}")
+            mine["caps"] = list(dict.fromkeys(body.caps))
+        if body.mmproj is not None:
+            if body.mmproj and not (Path(body.mmproj).is_file() and body.mmproj.lower().endswith(".gguf")):
+                raise HTTPException(422, "El mmproj tiene que ser un .gguf que exista")
+            mine["mmproj"] = body.mmproj
+        warning = None
+        if body.draft is not None:
+            d = {k: v for k, v in body.draft.items() if k in ("model", "ngl", "device", "max", "min")}
+            if d.get("model"):
+                if not Path(str(d["model"])).is_file():
+                    raise HTTPException(422, "El modelo borrador tiene que ser un .gguf que exista")
+                if d.get("device") and not settings.DEVICE.match(str(d["device"])):
+                    raise HTTPException(422, "GPU del borrador no válida (p. ej. CUDA1)")
+                warning = await asyncio.to_thread(profiles.draft_problem, model, Path(str(d["model"])))
+            mine["draft"] = d if d.get("model") else {}
+        settings.save(store, {"llama": {"profiles": {**cur, str(model): mine}}})
+        return {"profile": mine, "warning": warning}
+
+    @app.post("/api/llama/swap")
+    async def llama_swap(request: Request, body: SwapIn) -> dict:
+        """Cambia el modelo de un servidor esperando a que acabe lo que esté haciendo; si falla, vuelve al anterior."""
+        store = st(request)
+        srv = server_or_404(store, body.server)
+        model = Path(body.path)
+        if not model.is_file() or model.suffix.lower() != ".gguf":
+            raise HTTPException(422, "Eso no es un archivo .gguf")
+        try:
+            state = await asyncio.to_thread(local_servers.swap, store, request.app.state.llama, srv, model,
+                                            clean_options(body.options) or None)
+        except (LookupError, RuntimeError, OSError) as e:
+            raise HTTPException(409, str(e)) from None
+        return {"server": srv["id"], "status": state}
+
+    @app.post("/api/llama/use")
+    async def llama_use(request: Request, body: UseIn) -> dict:
+        """«Necesito `vision`»: elige el perfil y el servidor, cambia el modelo si hace falta y dice cuál quedó."""
+        store = st(request)
+        if body.capability not in profiles.CAPS:
+            raise HTTPException(422, f"Capacidad desconocida; hay: {', '.join(profiles.CAPS)}")
+
+        def go() -> dict:
+            servers = [s for s in local_servers.servers_status(store, request.app.state.llama)
+                       if not body.server or s["id"] == body.server]
+            found = profiles.pick(body.capability, all_profiles(request), servers)
+            if not found:
+                raise LookupError(f"Ningún modelo descargado sabe «{profiles.CAP_TEXT[body.capability]}» y cabe en "
+                                  "esa GPU (Modelos locales → capacidades)")
+            prof, srv = found
+            loaded = (srv.get("status") or {}).get("model")
+            changed = not (loaded and Path(loaded) == Path(prof["path"]))
+            mine = profiles.own(store, prof["path"])
+            if body.capability in ("vision", "ocr") and prof["mmproj"] and not mine.get("mmproj"):
+                # para ver hace falta su proyector: se guarda en el perfil y se arranca otra vez con él
+                cur = settings.load(store)["llama"].get("profiles") or {}
+                settings.save(store, {"llama": {"profiles": {**cur, prof["path"]: {**mine, "mmproj": prof["mmproj"]}}}})
+                if not changed:
+                    request.app.state.llama.get(srv["id"], srv["port"]).stop()
+                    changed = True
+            state = local_servers.swap(store, request.app.state.llama, srv, Path(prof["path"])) if changed \
+                else srv["status"]
+            return {"server": srv["id"], "model": prof["name"], "path": prof["path"], "changed": changed,
+                    "status": state}
+        try:
+            return await asyncio.to_thread(go)
+        except (LookupError, RuntimeError, OSError) as e:
+            raise HTTPException(409, str(e)) from None
+
+    @app.post("/api/llama/topology")
+    async def llama_topology(request: Request, body: TopologyIn) -> dict:
+        try:
+            return await asyncio.to_thread(local_servers.set_topology, st(request), request.app.state.llama,
+                                           body.mode, Path(body.path) if body.path else None)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+        except (LookupError, RuntimeError, OSError) as e:
+            raise HTTPException(409, str(e)) from None
+
+    def bench_path(request: Request) -> Path:
+        return request.app.state.llama.principal().log_path.with_name("llama-bench.json")
+
+    @app.get("/api/llama/bench")
+    async def llama_bench_get(request: Request) -> dict:
+        return {"results": bench.load(bench_path(request))}
+
+    @app.post("/api/llama/bench")
+    async def llama_bench(request: Request, body: BenchIn) -> dict:
+        """La misma petición a cada servidor listo: tok/s de lectura y escritura, guardados por modelo y topología."""
+        store = st(request)
+
+        def go() -> list[dict]:
+            out = []
+            devices = llama.list_devices(force=True)
+            for srv in local_servers.servers_status(store, request.app.state.llama):
+                if body.server and srv["id"] != body.server or srv["status"]["state"] != "ready":
+                    continue
+                last = local_servers.last_of(store, srv)
+                model = srv["status"].get("model") or last.get("model") or "?"
+                opts = {**(last.get("options") or {}),
+                        "draft": bool((profiles.own(store, model).get("draft") or {}).get("model"))}
+                try:
+                    r = bench.run(srv["url"], llama.key_for(srv["port"]))
+                except (OSError, ValueError) as e:
+                    out.append({"server": srv["id"], "error": str(e)})
+                    continue
+                topo = bench.topology_of(srv, opts)
+                bench.save(bench_path(request), model, topo, r, devices, {"server": srv["id"]})
+                out.append({"server": srv["id"], "topology": topo, **r})
+            return out
+        results = await asyncio.to_thread(go)
+        if not results:
+            raise HTTPException(409, "No hay ningún modelo local listo: arranca uno en Modelos locales")
+        return {"results": results, "table": bench.load(bench_path(request))}
 
     # --- hardware, fichas, recomendaciones y descargas de Hugging Face
     def hw_budget(store: Store, force: bool = False) -> tuple[dict, dict]:

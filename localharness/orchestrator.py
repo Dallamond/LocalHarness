@@ -26,12 +26,17 @@ DELEGATE_TOOLS = {"local_ask": "mcp__local__local_ask", "local_write_file": "mcp
                   "local_execute_plan": "mcp__local__local_execute_plan",
                   "local_agent": "mcp__local__local_agent", "run_checks": "mcp__local__run_checks",
                   "local_research": "mcp__local__local_research", "local_prepare": "mcp__local__local_prepare",
-                  "local_edit_file": "mcp__local__local_edit_file", "local_map": "mcp__local__local_map"}
+                  "local_edit_file": "mcp__local__local_edit_file", "local_map": "mcp__local__local_map",
+                  "local_plan": "mcp__local__local_plan", "local_read_documents": "mcp__local__local_read_documents",
+                  "local_look": "mcp__local__local_look", "local_search": "mcp__local__local_search",
+                  "local_models": "mcp__local__local_models", "local_use": "mcp__local__local_use"}
 PLAN_TOOL = "local_execute_plan"
 PREPARE_TOOL = "local_prepare"
-NOT_ENCARGOS = (PLAN_TOOL, PREPARE_TOOL, "local_map")  # no cuentan como encargos en el resumen (no generan nada)
+# no cuentan como encargos en el resumen (no generan nada)
+NOT_ENCARGOS = (PLAN_TOOL, PREPARE_TOOL, "local_map", "local_models", "local_use", "local_search")
 # trabajador local de las tareas en marcha: task_id -> datos de su delegación (la GUI cambia sus skills al vuelo)
 ACTIVE_WORKERS: dict[int, dict] = {}
+API_URL = "http://127.0.0.1:8095"  # la API de esta sesión (cli start/serve lo ponen con su puerto)
 
 # Las guías van en el prompt de SISTEMA (--append-system-prompt), no en el de la tarea: Claude las trata como reglas
 # de trabajo y se repiten en cada vuelta de la conversación (con --resume también).
@@ -54,12 +59,15 @@ que haya que generar (código, tests, documentación, correcciones) lo genera el
      YA EXISTE usa `kind: edit` (el modelo devuelve solo los trozos que cambian: mucho más rápido y no pierde
      líneas); `write` solo para archivos nuevos o que cambian enteros. Pon `after` en cada bloque (de qué bloques
      anteriores depende; [] si de ninguno): los independientes se hacen a la vez y el plan tarda mucho menos;
+   - si el parche es de plantilla (como otros que ya se hicieron), pide antes el plan a `local_plan` (gratis):
+     revisarlo y corregirlo te cuesta mucho menos que escribirlo;
    - un retoque suelto en un archivo existente: `local_edit_file`;
    - `local_agent` casi nunca: solo si hay que explorar algo que no sabes planificar. Se atasca releyendo; NUNCA
      para arreglar un fallo ni para añadir entradas a una lista.
 4. REVISA siempre: el informe trae el diff de cada `edit`, así que muchas veces no hace falta Read. Pasa los tests
    con `run_checks` (no gasta cuota). Si algo falla, vuelve a encargar SOLO lo que falló, como `edit` del archivo
-   culpable con el error y la corrección exacta (como mucho 2 rondas más).
+   culpable con el error y la corrección exacta (como mucho 2 rondas más). Si hay páginas web, `local_look` las
+   mira en escritorio y móvil con un modelo de visión (si no hay uno cargado, `local_use` con «vision»).
 5. PRESENTA: el plan, qué hizo el modelo local en cada parte, el resultado de los tests y lo pendiente o dudoso.
    Sé honesto: si algo no quedó bien, dilo.
 Investigar en internet: `local_research`. Si el modelo local deja de responder, para y díselo al usuario."""
@@ -328,14 +336,18 @@ def local_endpoints(store: Store, only: list[str] | None = None) -> list[dict]:
     """Los servidores locales para el MCP de delegación: id, nombre, papel, GPU, URL y clave. El primero, el que usan
     los encargos si no hay papel que encaje (el principal). `only`: solo esos (config `local_servers` del agente)."""
     out = []
+    joined = settings.load(store)["llama"].get("topology") == "unido"
     for srv in settings.local_servers(store):
         if only and srv["id"] not in only:
             continue
+        if joined and srv["id"] != llama.PRINCIPAL:
+            continue  # GPU unidas: solo hay un llama-server (el principal, con las dos)
         url = settings.server_url(srv)
         if srv["id"] == llama.PRINCIPAL:
             url = settings.load(store)["local_base_url"] or url
-        out.append({"id": srv["id"], "name": srv["name"], "role": srv["role"], "device": srv["device"],
-                    "thinking": srv.get("thinking") or "normal", "url": url, "key": llama.key_for_url(url) or ""})
+        out.append({"id": srv["id"], "name": srv["name"], "role": "general" if joined else srv["role"],
+                    "device": srv["device"], "thinking": srv.get("thinking") or "normal", "url": url,
+                    "key": llama.key_for_url(url) or ""})
     return out
 
 
@@ -418,7 +430,10 @@ def _mcp_setup(store: Store, root: Path, cfg: dict, write: bool, coordinator: bo
                # con dos GPU, dos modelos: el MCP reparte cada encargo según el papel de cada servidor
                "LH_LOCAL_SERVERS": json.dumps(endpoints, ensure_ascii=False),
                "LH_ROOT": str(root), "LH_LOG": str(log), "LH_WRITE": "1" if write else "0",
-               "LH_COORDINATOR": "1" if coordinator else "0", "PYTHONIOENCODING": "utf-8"}
+               "LH_COORDINATOR": "1" if coordinator else "0", "PYTHONIOENCODING": "utf-8",
+               # para `local_models`/`local_use` (cambiar de modelo) y el RAG
+               "LH_API": API_URL, "LH_EMBED_URL": settings.load(store)["llama"].get("embed_url") or "",
+               "LH_AUTO_SWAP": "1" if settings.load(store)["llama"].get("auto_swap") else "0"}
         servers["local"] = {"type": "stdio", "command": sys.executable,
                             # por ruta: la CLI lo lanza desde el worktree, donde el paquete no está en el path
                             "args": [str(Path(mcp_local.__file__).resolve())], "env": env}
@@ -433,7 +448,9 @@ def _mcp_setup(store: Store, root: Path, cfg: dict, write: bool, coordinator: bo
         env.update(LH_WORKER=str(d / "worker.json"), LH_SKILLS=str(d / "skills.json"), LH_LIVE=str(d / "live.json"))
         tools = ([DELEGATE_TOOLS[PREPARE_TOOL], DELEGATE_TOOLS["local_map"], DELEGATE_TOOLS["local_ask"]]
                  + ([DELEGATE_TOOLS["local_edit_file"], DELEGATE_TOOLS["local_write_file"], DELEGATE_TOOLS[PLAN_TOOL],
-                     DELEGATE_TOOLS["local_agent"]] if write else [])
+                     DELEGATE_TOOLS["local_plan"], DELEGATE_TOOLS["local_agent"]] if write else [])
+                 + [DELEGATE_TOOLS[n] for n in ("local_read_documents", "local_look", "local_search", "local_models",
+                                                "local_use")]
                  + ([DELEGATE_TOOLS["run_checks"]] if cfg.get("commands") != [] else [])
                  + [DELEGATE_TOOLS["local_research"]] + tools)
     path = d / "mcp.json"

@@ -46,7 +46,14 @@ DEFAULTS: dict[str, Any] = {
               "autostart": False, "last": {}, "last_by_server": {},
               # autostart_on_task: una tarea que usa modelos locales arranca los que estén apagados (el último que
               # tuvo cada servidor) y espera a que carguen, en vez de que Claude trabaje solo
-              "autostart_on_task": True},
+              "autostart_on_task": True,
+              # profiles: {ruta del GGUF: {caps: [...], mmproj: ruta, draft: {model, ngl, device, max, min}}} —
+              # lo que no está se deduce (profiles.py). topology: separado (un llama-server por GPU) | unido (uno
+              # solo con las dos GPU, para modelos que no caben en una). embed_url: llama-server con --embeddings
+              # para buscar trozos relacionados (RAG); vacío = sin RAG.
+              # auto_swap: si un encargo necesita visión y el modelo cargado no la tiene, LocalHarness carga solo
+              # el del armario que la tenga (gestor de turnos, P16). Apagado: lo pide Claude con `local_use`.
+              "profiles": {}, "topology": "separado", "embed_url": "", "auto_swap": False},
     # Valores que propone el formulario de nuevo agente
     "agent_defaults": {"provider": "claude", "model": "sonnet", "role": "trabajador", "max_turns": 10,
                        "max_budget_usd": 1.0},
@@ -231,13 +238,15 @@ def llama_launch(store: Store, model: str, override: dict | None = None) -> dict
     """ctx, ngl y argumentos extra con los que arrancar un GGUF: su configuración propia (si la tiene) con
     `override` encima (los ajustes elegidos en el diálogo de arranque, solo para esta vez)."""
     import shlex
+
+    from localharness import profiles
     lm = load(store)["llama"]
     own = {**((lm.get("per_model") or {}).get(model) or {}), **(override or {})}
     extra = own.get("extra") or ""
     extra = shlex.split(extra, posix=False) if isinstance(extra, str) else list(extra)
     return {"ctx": int(own.get("ctx") or lm["ctx"]),
             "ngl": int(own["ngl"]) if own.get("ngl") not in (None, "") else int(lm["ngl"]),
-            "extra": [*llama.option_args(own), *extra], "options": own}
+            "extra": [*llama.option_args(own), *profiles.launch_extra(store, model), *extra], "options": own}
 
 
 def task_timeout_s(store: Store) -> float:

@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import ResourceUsage from "../components/ResourceUsage.vue";
 import Card from "../components/Card.vue";
 import LaunchDialog from "../components/LaunchDialog.vue";
+import ModelCloset from "../components/ModelCloset.vue";
 import StatusChip from "../components/StatusChip.vue";
 import {
   ROLE_TEXT, SERVER_ROLE_LABEL, SERVER_ROLE_TEXT, ago, api, duration, live, pickPath, post, refreshAll, refreshLocals,
@@ -630,6 +631,8 @@ async function setAgentServer(id: number, server: string) {
         <div class="row"><button class="btn btn--primary btn--small">Guardar</button><span class="hint">Vacío = lo detectado.</span></div>
       </form>
     </Card>
+
+    <ModelCloset v-if="info" :servers="servers" @changed="load()" />
 
     <!-- modelos -->
     <Card title="Tus modelos" :subtitle="info ? `${info.models.length} encontrados en ${info.dirs.length} carpeta(s)` : 'Buscando…'">

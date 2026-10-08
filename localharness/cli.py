@@ -330,6 +330,20 @@ def cmd_plan(args, store: Store) -> int:
 
 def cmd_llama(args) -> int:
     from localharness import llama
+    if args.action == "bench":  # con LocalHarness abierto: mide los modelos que estén cargados (P4)
+        import urllib.request
+        req = urllib.request.Request(args.url.rstrip("/") + "/api/llama/bench", data=b"{}", method="POST",
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=1800) as r:
+                data = json.loads(r.read())
+        except OSError as e:
+            return _fail(f"no pude medir (¿LocalHarness abierto y algún modelo cargado?): {e}")
+        for row in data["table"]:
+            name = Path(row["model"]).name.removesuffix(".gguf")
+            print(f"  {name:45} {row['topology']:28} lee {row.get('read_tps') or '-':>7} · escribe "
+                  f"{row.get('write_tps') or '-':>6} tok/s")
+        return 0
     if args.action == "models":
         models = llama.list_models()
         print(f"llama-server: {llama.server_binary() or 'NO ENCONTRADO (define LOCALHARNESS_LLAMA_SERVER)'}")
@@ -412,6 +426,8 @@ def cmd_serve(args) -> int:
     db = Path(args.db or os.environ.get("LOCALHARNESS_DB") or DEFAULT_DB)
     db.parent.mkdir(parents=True, exist_ok=True)
     print(f"LocalHarness en http://{args.host}:{args.port}  (base de datos {db})")
+    from localharness import orchestrator
+    orchestrator.API_URL = f"http://127.0.0.1:{args.port}"  # el MCP de delegación llama aquí para cambiar de modelo
     from localharness.api import LOCAL_HOSTS
     # escuchar en otra dirección (p. ej. la LAN) es decisión explícita: entonces se acepta también ese nombre
     hosts = LOCAL_HOSTS if args.host in ("127.0.0.1", "localhost", "::1") else (*LOCAL_HOSTS, args.host)
@@ -576,7 +592,8 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(fn=cmd_plan)
 
     p = sub.add_parser("llama", help="M4: modelos locales con llama-server")
-    p.add_argument("action", choices=["models", "serve", "status"]); p.add_argument("model", nargs="?")
+    p.add_argument("action", choices=["models", "serve", "status", "bench"]); p.add_argument("model", nargs="?")
+    p.add_argument("--url", default="http://127.0.0.1:8095", help="bench: la API de LocalHarness")
     p.add_argument("--port", type=int, default=8080); p.add_argument("--ctx", type=int, default=16384)
     p.add_argument("--ngl", type=int, default=99, help="capas en GPU (99 = todas)")
     p.set_defaults(fn=cmd_llama)

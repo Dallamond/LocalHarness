@@ -252,6 +252,10 @@ OPTION_FLAGS = {
     "min_p": "--min-p", "repeat_penalty": "--repeat-penalty", "reasoning_budget": "--reasoning-budget",
     # varias GPUs: en cuáles cargar (CUDA0, CUDA0,CUDA1…), cómo repartir (layer|row|none), proporción (3,1) y la principal
     "device": "-dev", "split_mode": "-sm", "tensor_split": "-ts", "main_gpu": "-mg",
+    # decodificación especulativa (el modelo borrador va en el perfil: profiles.launch_extra) y MTP de Qwen3.6
+    "draft_max": "--draft-max", "draft_min": "--draft-min", "spec_type": "--spec-type",
+    # se reutiliza lo ya procesado del prompt entre peticiones parecidas (bloques de un plan con los mismos archivos)
+    "cache_reuse": "--cache-reuse",
 }
 BOOL_FLAGS = {"mlock": "--mlock", "no_mmap": "--no-mmap", "cont_batching_off": "--no-cont-batching"}
 

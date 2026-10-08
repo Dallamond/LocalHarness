@@ -139,6 +139,91 @@ MAP = {
     "annotations": {"readOnlyHint": True},
 }
 
+MODELS = {
+    "name": "local_models",
+    "description": (
+        "Qué modelo local hay cargado en cada GPU y qué modelos hay en el armario con lo que sabe hacer cada uno "
+        "(programar, planificar, ver imágenes, embeddings…) y lo que tardan en cargar. Sin modelo y sin cuota."),
+    "inputSchema": {"type": "object", "properties": {}},
+    "annotations": {"readOnlyHint": True},
+}
+USE = {
+    "name": "local_use",
+    "description": (
+        "Pide una CAPACIDAD a los modelos locales («vision» para leer imágenes o capturas, «plan», «code», "
+        "«embed»…): LocalHarness elige el modelo del armario que la tiene y cabe, cambia el de una GPU si hace "
+        "falta (espera a que acabe lo que esté haciendo; tarda lo que tarde en cargar) y te dice cuál quedó. "
+        "Úsalo antes de `local_read_documents` o `local_look` si el modelo cargado no ve imágenes."),
+    "inputSchema": {
+        "type": "object",
+        "properties": {"capability": {"type": "string", "enum": ["plan", "code", "review", "vision", "ocr", "embed",
+                                                                 "draft", "tools", "thinking", "fast"]},
+                       "server": {"type": "string", "description": "En qué servidor (opcional)"}},
+        "required": ["capability"],
+    },
+}
+PLAN_LOCAL = {
+    "name": "local_plan",
+    "description": (
+        "El modelo local PLANIFICA por ti (gratis): parte la tarea en bloques pequeños (un archivo o una edición "
+        "cada uno, con `after`) en el formato de `local_execute_plan`, mirando el mapa del repo y los archivos que "
+        "le pases. Revisar un plan te cuesta mucho menos que escribirlo: léelo, corrígelo si hace falta y pásalo "
+        "a `local_execute_plan`. Con `execute: true` lo ejecuta directamente (para parches de plantilla)."),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "task": {"type": "string", "description": "La tarea entera, con criterios de aceptación"},
+            "files": {"type": "array", "items": {"type": "string"}, "description": "Archivos que debe leer"},
+            "execute": {"type": "boolean", "description": "Ejecutarlo en cuanto esté (por defecto, no)"},
+            "check": {"type": "string", "description": "Orden de tests si se ejecuta"},
+        },
+        "required": ["task"],
+    },
+}
+DOCS = {
+    "name": "local_read_documents",
+    "description": (
+        "Un modelo local GRATIS lee documentos y contesta una pregunta sobre ellos: PDF con texto, PDF escaneado o "
+        "imágenes (con un modelo de visión: pide antes `local_use` con «vision» si no hay uno cargado), Markdown o "
+        "texto. Varios documentos: resume cada uno y luego responde con todos."),
+    "inputSchema": {
+        "type": "object",
+        "properties": {"paths": {"type": "array", "items": {"type": "string"}},
+                       "question": {"type": "string", "description": "Qué quieres saber de ellos"}},
+        "required": ["paths", "question"],
+    },
+    "annotations": {"readOnlyHint": True},
+}
+LOOK = {
+    "name": "local_look",
+    "description": (
+        "Revisión VISUAL de páginas web del repo: hace capturas (escritorio y móvil) con Chrome sin ventana y un "
+        "modelo local con visión dice si se ve como se pidió y si hay algo roto (solapado, cortado, ilegible, "
+        "vacío). Gratis. Necesita un modelo con visión cargado (`local_use` con «vision»)."),
+    "inputSchema": {
+        "type": "object",
+        "properties": {"pages": {"type": "array", "items": {"type": "string"},
+                                 "description": "Páginas .html (rutas relativas)"},
+                       "question": {"type": "string", "description": "Qué debería verse (lo pedido en el parche)"},
+                       "mobile": {"type": "boolean", "description": "También en móvil (por defecto, sí)"}},
+        "required": ["pages", "question"],
+    },
+    "annotations": {"readOnlyHint": True},
+}
+SEARCH = {
+    "name": "local_search",
+    "description": (
+        "Busca en el repo los trozos de código o texto más PARECIDOS EN SIGNIFICADO a lo que describes "
+        "(embeddings con un modelo local; gratis). Mejor que Grep cuando no sabes cómo se llama algo: «dónde se "
+        "guarda el modo noche», «qué test comprueba el pie»."),
+    "inputSchema": {
+        "type": "object",
+        "properties": {"query": {"type": "string"}, "k": {"type": "integer", "description": "Cuántos (5)"}},
+        "required": ["query"],
+    },
+    "annotations": {"readOnlyHint": True},
+}
+
 BLOCK = {
     "type": "object",
     "properties": {
@@ -299,11 +384,12 @@ LIGHT = ("rapido", "general", "fuerte")
 HEAVY = ("fuerte", "general", "rapido")
 TOOL_WEIGHT = {"local_ask": LIGHT, "local_research": LIGHT, "local_write_file": HEAVY, "local_agent": HEAVY,
                "local_edit_file": HEAVY, "local_execute_plan/ask": LIGHT, "local_execute_plan/write": HEAVY,
-               "local_execute_plan/edit": HEAVY}
+               "local_execute_plan/edit": HEAVY, "local_plan": HEAVY, "local_read_documents": LIGHT,
+               "local_look": LIGHT}
 ROLE_TEXT = {"fuerte": "escribir código y tareas enteras", "rapido": "preguntas, resúmenes e investigar",
              "general": "de todo"}
 SERVER_TOOLS = ("local_ask", "local_write_file", "local_edit_file", "local_execute_plan", "local_research",
-                "local_agent")
+                "local_agent", "local_plan", "local_read_documents", "local_look")
 
 
 def thinking_body(level: str | None) -> dict:
@@ -377,14 +463,20 @@ class Server:
         self.worker_path = Path(env["LH_WORKER"]) if env.get("LH_WORKER") else None
         self.skills_path = Path(env["LH_SKILLS"]) if env.get("LH_SKILLS") else None
         self.live_path = Path(env["LH_LIVE"]) if env.get("LH_LIVE") else None
+        self.api = (env.get("LH_API") or "").rstrip("/")  # la API de LocalHarness (cambiar de modelo)
+        self.embed_url = (env.get("LH_EMBED_URL") or "").rstrip("/")  # llama-server de embeddings (RAG)
+        self.auto_swap = env.get("LH_AUTO_SWAP") == "1"  # cambiar solo de modelo cuando un encargo lo necesita
+        self.api_call = None  # pruebas: función (método, ruta, cuerpo) -> JSON, en vez de la API de verdad
+        self.embed_post = None  # pruebas: función (url, cuerpo) -> JSON de /v1/embeddings
         self.transport = transport  # pruebas: función (body) -> respuesta JSON de /v1/chat/completions
         self.http_get = http_get or _http_get  # pruebas: función (url, data) -> HTML; sin red de verdad
 
     # --- protocolo
     def tools(self) -> list[dict]:
         prepare = [self.prepare_tool()] if self.worker_path else []
-        tools = (prepare + [MAP, ASK] + ([EDIT, WRITE, PLAN, AGENT] if self.write else [])
-                 + ([CHECKS] if self.commands != [] else []) + ([RESEARCH] if self.web else []))
+        tools = (prepare + [MAP, ASK] + ([EDIT, WRITE, PLAN, PLAN_LOCAL, AGENT] if self.write else [])
+                 + ([CHECKS] if self.commands != [] else []) + ([RESEARCH] if self.web else [])
+                 + [DOCS, LOOK] + ([SEARCH] if self.embed_url else []) + ([MODELS, USE] if self.api else []))
         return [self.with_server(t) for t in tools] if len(self.servers) > 1 else tools
 
     # --- varios modelos locales
@@ -518,6 +610,25 @@ class Server:
                 entry["path"] = str(args.get("path", ""))
                 text, stats = self.edit_file(str(args.get("path") or ""), str(args.get("instructions") or ""),
                                              args.get("context_files") or [])
+            elif name == "local_models" and self.api:
+                text, stats = self.models_text(), {}
+            elif name == "local_use" and self.api:
+                entry["task"] = str(args.get("capability") or "")
+                text, stats = self.use_capability(str(args.get("capability") or ""), args.get("server"))
+            elif name == "local_plan" and self.write:
+                entry["task"] = str(args.get("task", ""))[:300]
+                text, stats = self.plan(str(args.get("task") or ""), args.get("files") or [],
+                                        bool(args.get("execute")), str(args.get("check") or ""))
+            elif name == "local_read_documents":
+                entry["task"] = str(args.get("question", ""))[:300]
+                text, stats = self.read_documents(args.get("paths") or [], str(args.get("question") or ""))
+            elif name == "local_look":
+                entry["task"] = str(args.get("question", ""))[:300]
+                text, stats = self.look(args.get("pages") or [], str(args.get("question") or ""),
+                                        args.get("mobile", True) is not False)
+            elif name == "local_search" and self.embed_url:
+                entry["task"] = str(args.get("query", ""))[:300]
+                text, stats = self.search_repo(str(args.get("query") or ""), args.get("k"))
             elif name == "local_map":
                 from localharness.repomap import repo_map
                 entry["task"] = ", ".join(str(x) for x in args.get("paths") or []) or "todo el repo"
@@ -685,6 +796,192 @@ class Server:
         return (f"Cambiado {path}: {n} trozo(s), {diff['added']} líneas añadidas y {diff['removed']} quitadas. Lo hizo "
                 f"el modelo local; el cambio:\n```diff\n{diff['text']}\n```"), {
                     **stats, "completion_tokens": tokens, "files": read, "edits": n, "attempts": attempt + 1}
+
+    # --- armario de modelos (la API de LocalHarness cambia el modelo de cada GPU)
+    def _api(self, method: str, path: str, body: dict | None = None, timeout: float = 900) -> dict:
+        if self.api_call:
+            return self.api_call(method, path, body)
+        req = urllib.request.Request(self.api + path, method=method,
+                                     data=json.dumps(body).encode() if body is not None else None,
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            try:
+                detail = json.loads(e.read()).get("detail")
+            except ValueError:
+                detail = None
+            raise ToolError(f"LocalHarness: {detail or f'HTTP {e.code}'}") from None
+        except (OSError, ValueError) as e:
+            raise ToolError(f"no contesta LocalHarness en {self.api}: {e}") from None
+
+    def models_text(self) -> str:
+        info = self._api("GET", "/api/llama/profiles")
+        status = self._api("GET", "/api/llama")
+        lines = [f"Topología: {info.get('topology') or 'separado'}.", "Cargados ahora:"]
+        for srv in status.get("servers") or []:
+            st = srv.get("status") or {}
+            lines.append(f"- «{srv['id']}» ({srv.get('device') or 'auto'}): {srv.get('model_name') or 'apagado'} "
+                         f"[{st.get('state')}]")
+        lines.append("Armario (capacidades · dónde cabe entero · segundos de carga):")
+        for p in info.get("profiles") or []:
+            where = ", ".join(k for k, v in (p.get("fits") or {}).items() if v.get("fit") == "gpu") or "en ninguna sola"
+            load = f" · {p['load_s']:.0f} s" if p.get("load_s") else ""
+            lines.append(f"- {p['name']} ({p['size_gb']} GB): {', '.join(p['caps']) or '—'} · {where}{load}")
+        return "\n".join(lines)
+
+    def use_capability(self, cap: str, server) -> tuple[str, dict]:
+        if not cap:
+            raise ToolError("falta `capability`")
+        r = self._api("POST", "/api/llama/use", {"capability": cap, "server": server or None})
+        self._models.pop(r.get("server"), None)
+        self._ctx.pop(r.get("server"), None)
+        verb = "Cargado" if r.get("changed") else "Ya estaba cargado"
+        return (f"{verb} {r.get('model')} en «{r.get('server')}» para «{cap}». Los encargos que pidan ese servidor "
+                f"(`server`) lo usan."), {"server": r.get("server"), "model": r.get("model"), "changed": r.get("changed")}
+
+    # --- el modelo local planifica (P8), con JSON garantizado (P9)
+    def plan(self, task: str, files: list, execute: bool, check: str) -> tuple[str, dict]:
+        from localharness.repomap import repo_map
+        if not task.strip():
+            raise ToolError("falta `task`")
+        ctx, read = self.read_files(files)
+        user = (f"TAREA:\n{task}\n\nMAPA DEL REPO:\n{repo_map(self.root)[:12000]}"
+                + (f"\n\nARCHIVOS:\n{ctx}" if ctx else ""))
+        errors: list[str] = []
+        stats: dict = {}
+        blocks: list = []
+        for _ in range(2):
+            raw, stats = self.complete(SYSTEM_PLAN, user + (
+                "\n\nTU PLAN ANTERIOR TENÍA ESTOS ERRORES, corrígelos:\n- " + "\n- ".join(errors) if errors else ""),
+                schema=PLAN_SCHEMA)
+            try:
+                blocks = json.loads(strip_fence(raw)).get("blocks") or []
+            except (ValueError, AttributeError):
+                blocks, errors = [], ["la respuesta no era un JSON con `blocks`"]
+                continue
+            errors = validate_plan(blocks, self.root)
+            if not errors:
+                break
+        if errors:
+            raise ToolError("el plan del modelo local no vale: " + "; ".join(errors[:5]) + ". Planifícalo tú")
+        stats = {**stats, "files": read, "blocks": len(blocks)}
+        listing = "\n".join(f"- {b['id']} [{b['kind']}] {b.get('path') or ''} ← after {b.get('after') or []}: "
+                            f"{str(b.get('title') or b['instructions'])[:100]}" for b in blocks)
+        if not execute:
+            return (f"Plan del modelo local ({len(blocks)} bloques):\n{listing}\n\nJSON para `local_execute_plan` "
+                    f"(revísalo y corrígelo si hace falta):\n```json\n{json.dumps(blocks, ensure_ascii=False)}\n```"), stats
+        text, run = self.execute_plan(blocks, check)
+        return f"Plan del modelo local ({len(blocks)} bloques):\n{listing}\n\n{text}", {**stats, **run}
+
+    # --- documentos e imágenes (P14) y revisión visual (P15)
+    def vision_complete(self, question: str, images: list[Path], extra_text: str = "") -> tuple[str, dict]:
+        from localharness.vision import image_part
+        parts = [{"type": "text", "text": question + (f"\n\n{extra_text}" if extra_text else "")}]
+        parts += [image_part(p) for p in images]
+        try:
+            return self.complete(SYSTEM_ASK, parts)
+        except ToolError as e:
+            if not any(w in str(e).lower() for w in ("image", "mmproj", "multimodal")):
+                raise
+            if not (self.auto_swap and self.api):
+                raise ToolError("el modelo cargado no ve imágenes: pide antes `local_use` con «vision»") from None
+        # gestor de turnos (P16, Ajustes → llama.auto_swap): carga él mismo un modelo con visión y lo reintenta
+        _, got = self.use_capability("vision", None)
+        srv = next((x for x in self.servers if x["id"] == got.get("server")), None)
+        if srv:
+            self.order = [srv]
+            self.use(srv)
+        return self.complete(SYSTEM_ASK, parts)
+
+    def read_documents(self, paths: list, question: str) -> tuple[str, dict]:
+        import tempfile
+
+        from localharness import vision
+        if not question.strip() or not paths:
+            raise ToolError("faltan `paths` y `question`")
+        answers, stats = [], {}
+        with tempfile.TemporaryDirectory(prefix="lh-docs-") as tmp:
+            for rel in [p for p in paths if isinstance(p, str)][:10]:
+                p = self.safe(rel)
+                if not p.is_file():
+                    answers.append(f"### {rel}\n(no existe)")
+                    continue
+                ext = p.suffix.lower()
+                try:
+                    if ext in vision.IMAGE_EXT:
+                        a, stats = self.vision_complete(question, [p])
+                    elif ext == ".pdf":
+                        pages = vision.pdf_text(p)
+                        scanned = [i for i, t in enumerate(pages) if len(t) < vision.MIN_TEXT_PER_PAGE]
+                        text = "\n\n".join(f"[pág. {i + 1}]\n{t}" for i, t in enumerate(pages) if t)
+                        if scanned:
+                            imgs = vision.pdf_page_images(p, scanned[:8], Path(tmp))
+                            a, stats = self.vision_complete(question, imgs, f"TEXTO DE LAS OTRAS PÁGINAS:\n{text[:self.input_budget() // 2]}" if text else "")
+                        else:
+                            a, stats = self.complete(SYSTEM_ASK, f"{question}\n\nDOCUMENTO {rel}:\n{text[:self.input_budget()]}")
+                    elif ext in vision.TEXT_EXT:
+                        a, stats = self.ask(question, [rel])
+                    else:
+                        a = f"(no sé leer {ext})"
+                except vision.VisionError as e:
+                    a = f"(no se pudo: {e})"
+                answers.append(f"### {rel}\n{a}")
+        if len(answers) > 1:
+            joined = "\n\n".join(answers)
+            final, stats = self.complete(SYSTEM_ASK, f"{question}\n\nRESPUESTAS POR DOCUMENTO:\n{joined}\n\n"
+                                                     "Responde a la pregunta con todo junto, diciendo de qué documento sale cada cosa.")
+            return final + "\n\n---\n" + joined, {**stats, "documents": len(answers)}
+        return answers[0], {**stats, "documents": 1}
+
+    def look(self, pages: list, question: str, mobile: bool) -> tuple[str, dict]:
+        import tempfile
+
+        from localharness import vision
+        if not pages or not question.strip():
+            raise ToolError("faltan `pages` y `question`")
+        out, stats = [], {}
+        with tempfile.TemporaryDirectory(prefix="lh-look-") as tmp:
+            for rel in [p for p in pages if isinstance(p, str)][:6]:
+                p = self.safe(rel)
+                if not p.is_file():
+                    out.append(f"### {rel}\n(no existe)")
+                    continue
+                shots = []
+                try:
+                    for name, size in vision.VIEWPORTS.items():
+                        if name == "móvil" and not mobile:
+                            continue
+                        shots.append(vision.screenshot(p, Path(tmp) / f"{p.stem}-{len(shots)}.png", size))
+                except vision.VisionError as e:
+                    raise ToolError(str(e)) from None
+                ask = (f"Son capturas de la página {rel} (" + " y ".join(n for n in vision.VIEWPORTS
+                                                                         if n != "móvil" or mobile) + "). "
+                       f"Lo que debería verse: {question}\n¿Se ve así? Señala solo problemas concretos y visibles: "
+                       "elementos solapados, cortados o fuera de la pantalla, texto ilegible o sin contraste, partes "
+                       "vacías, imágenes rotas. Si está bien, dilo en una línea.")
+                a, stats = self.vision_complete(ask, shots)
+                out.append(f"### {rel}\n{a}")
+        return "\n\n".join(out), {**stats, "pages": len(out)}
+
+    # --- RAG (P12)
+    def search_repo(self, query: str, k) -> tuple[str, dict]:
+        from localharness import rag
+        if not query.strip():
+            raise ToolError("falta `query`")
+        try:
+            n = max(1, min(15, int(k or 5)))
+        except (TypeError, ValueError):
+            n = 5
+        try:
+            hits = rag.search(self.root, query, self.embed_url, n, post=self.embed_post)
+        except (OSError, ValueError, KeyError) as e:
+            raise ToolError(f"no contesta el modelo de embeddings en {self.embed_url}: {e}") from None
+        if not hits:
+            return "Sin resultados.", {"hits": 0}
+        return "\n\n".join(f"--- {h['path']}:{h['line']} (parecido {h['score']})\n{h['text'][:700]}"
+                           for h in hits), {"hits": len(hits)}
 
     def execute_plan(self, blocks, check: str) -> tuple[str, dict]:
         """Hace los bloques con los modelos locales. Si algún bloque trae `after`, se respetan esas dependencias y
@@ -1102,7 +1399,7 @@ class Server:
                 self._ctx[srv["id"]] = None
         return self._ctx[srv["id"]]
 
-    def complete(self, system: str, user: str, schema: dict | None = None) -> tuple[str, dict]:
+    def complete(self, system: str, user, schema: dict | None = None) -> tuple[str, dict]:
         """Un encargo al modelo. `schema`: JSON Schema que la respuesta TIENE que cumplir (llama-server lo impone con
         una gramática: se acaban los planes y JSON mal formados)."""
         skills = self.worker().get("skills") or []
@@ -1125,7 +1422,8 @@ class Server:
                  "tps": round(timings["predicted_per_second"], 1) if timings.get("predicted_per_second") else None,
                  "model": _short(data.get("model")), "gen_seconds": round(time.monotonic() - t0, 1),
                  # el chat propio del trabajador local: lo que se le pidió, lo que contestó y lo que pensó
-                 "request": user[:MAX_LOG_REQUEST] + ("\n[…]" if len(user) > MAX_LOG_REQUEST else ""),
+                 "request": _as_text(user)[:MAX_LOG_REQUEST] + ("\n[…]" if len(_as_text(user)) > MAX_LOG_REQUEST
+                                                                 else ""),
                  "answer": text[:MAX_LOG_ANSWER], "skills": skills, "server": self.server_id}
         if msg.get("reasoning_content"):
             stats["thinking"] = msg["reasoning_content"][-MAX_LOG_THINKING:]
@@ -1318,6 +1616,62 @@ def page_text(raw: str) -> str:
     p.feed(raw)
     lines = (" ".join(ln.split()) for ln in "".join(p.parts).splitlines())
     return "\n".join(ln for ln in lines if ln)
+
+
+def _as_text(user) -> str:
+    """El texto de un mensaje (con imágenes, las partes de texto y cuántas imágenes llevaba)."""
+    if isinstance(user, str):
+        return user
+    texts = [p.get("text", "") for p in user if p.get("type") == "text"]
+    images = sum(1 for p in user if p.get("type") == "image_url")
+    return "\n".join(texts) + (f"\n[{images} imagen(es)]" if images else "")
+
+
+PLAN_SCHEMA = {
+    "type": "object",
+    "properties": {"blocks": {"type": "array", "minItems": 1, "maxItems": 12, "items": {
+        "type": "object",
+        "properties": {"id": {"type": "string"}, "title": {"type": "string"},
+                       "kind": {"type": "string", "enum": ["edit", "write", "ask"]},
+                       "path": {"type": "string"}, "instructions": {"type": "string"},
+                       "files": {"type": "array", "items": {"type": "string"}},
+                       "after": {"type": "array", "items": {"type": "string"}}},
+        "required": ["id", "kind", "instructions", "after"]}}},
+    "required": ["blocks"],
+}
+SYSTEM_PLAN = (
+    "Eres el planificador de un equipo de modelos locales. Parte la tarea en BLOQUES PEQUEÑOS: cada bloque cambia "
+    "UN archivo (`edit` si ya existe —solo los trozos que cambian—, `write` si es nuevo) o hace una pregunta "
+    "(`ask`). Instrucciones AUTOCONTENIDAS: quien haga el bloque solo verá sus instrucciones y los `files` que "
+    "pongas (no ve la tarea ni los demás bloques): di exactamente qué escribir, con nombres, textos y selectores. "
+    "`after`: ids de bloques anteriores de los que depende ([] si de ninguno): los tests dependen del código que "
+    "comprueban. Usa solo rutas que existan en el MAPA o archivos nuevos que crees tú. Responde SOLO con el JSON.")
+
+
+def validate_plan(blocks: list, root: Path) -> list[str]:
+    """Errores de un plan (vacío = vale): ids únicos, `after` solo hacia atrás, rutas dentro del repo, `edit` sobre
+    archivos que existen."""
+    errors, seen = [], []
+    for b in blocks if isinstance(blocks, list) else []:
+        bid = str(b.get("id") or "")
+        if not bid or bid in seen:
+            errors.append(f"bloque sin id o con id repetido: {bid!r}")
+        bad = [a for a in b.get("after") or [] if a not in seen]
+        if bad:
+            errors.append(f"el bloque {bid} depende de {bad}, que no son bloques anteriores")
+        path = str(b.get("path") or "")
+        if b.get("kind") in ("edit", "write"):
+            p = (root / path).resolve() if path else None
+            if not path or not p.is_relative_to(root) or ".git" in p.relative_to(root).parts:
+                errors.append(f"el bloque {bid} no tiene una ruta válida dentro del repo: {path!r}")
+            elif b.get("kind") == "edit" and not p.is_file():
+                errors.append(f"el bloque {bid} edita {path}, que no existe (usa write para crearlo)")
+        if not str(b.get("instructions") or "").strip():
+            errors.append(f"el bloque {bid} no tiene instrucciones")
+        seen.append(bid)
+    if not seen:
+        errors.append("el plan no tiene bloques")
+    return errors
 
 
 def short_diff(old: str, new: str, path: str, limit: int = 60) -> dict:
