@@ -68,7 +68,8 @@ Un **perfil** = GGUF + lo que sabe hacer + cómo arrancarlo.
 ### P5. Decodificación especulativa
 Perfil con modelo borrador (`-md`, `-ngld`, `-devd`, `--draft-max/--draft-min`). Combinación prometedora: el
 programador en la 3060 y un borrador de la misma familia (p. ej. Qwen2.5-Coder-0.5B/1.5B para Qwen2.5-Coder-14B) en
-la 1060 (`-devd CUDA1`). Tiene que compartir tokenizador; P1 avisa si no.
+la 1060 (`-devd CUDA1`). Tiene que compartir tokenizador; P1 avisa si no. Además, **MTP**: los GGUF «-MTP» de
+Qwen3.6 traen su propio borrador (`--spec-type draft-mtp`, 1,4–2,2× según unsloth): el perfil debe admitirlo.
 *Aceptación*: P4 muestra la mejora de tok/s en código (lo normal es 1,5–2,5×; medir).
 
 ### P6. Caché de prompts y ranuras
@@ -159,7 +160,8 @@ capacidad y si están unidas o separadas.
 | Luego | P12, P14, P15 | RAG, documentos y visión |
 | Al final | P16, P17 | Automatizar las decisiones cuando ya hay datos de P4 y del autopiloto |
 
-## Modelos candidatos (a comprobar tamaños y que existan en GGUF antes de descargar)
+## Modelos candidatos
+Lista completa, por GPU y con la batería de pruebas: `docs/MODELOS-A-PROBAR.md`. Resumen:
 - **Planificar** (~20B, modo unido): gpt-oss-20b; o un Qwen3 razonador de tamaño parecido.
 - **Programar**: Qwen2.5-Coder-14B (3060 sola, ya probado ~28 tok/s); Qwen3-Coder-30B-A3B en unido con
   `n_cpu_moe` si P4 dice que compensa.
