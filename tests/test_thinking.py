@@ -22,9 +22,14 @@ class ThinkingTests(unittest.TestCase):
         self.assertNotIn("--effort", cmd("normal")); self.assertNotIn("--effort", cmd(None))  # lo de siempre
 
     def test_local_template_switch(self):
-        self.assertEqual(thinking_body("apagado"), {"chat_template_kwargs": {"enable_thinking": False}})
-        self.assertEqual(thinking_body("profundo"), {"chat_template_kwargs": {"enable_thinking": True}})
+        self.assertEqual(thinking_body("apagado"),
+                         {"chat_template_kwargs": {"enable_thinking": False, "reasoning_effort": "low"}})
+        self.assertEqual(thinking_body("profundo"),
+                         {"chat_template_kwargs": {"enable_thinking": True, "reasoning_effort": "high"}})
         self.assertEqual(thinking_body("normal"), {}); self.assertEqual(thinking_body(None), {})
+        # el encargo pide poco razonamiento (gpt-oss) salvo que el servidor diga otra cosa
+        self.assertEqual(thinking_body("normal", "low"), {"chat_template_kwargs": {"reasoning_effort": "low"}})
+        self.assertEqual(thinking_body("apagado", "medium")["chat_template_kwargs"]["reasoning_effort"], "low")
 
     def test_plan_step_thinking_is_validated(self):
         agents = [{"id": 1, "name": "w"}]

@@ -143,7 +143,7 @@ class LocalAgentAdapter(LocalAdapter):
 
     def body(self, messages: list[dict], names: list[str]) -> dict:
         b: dict = {"messages": messages, "temperature": self.temperature, "max_tokens": self.max_tokens,
-                   **thinking_body(self.thinking)}
+                   **thinking_body(self.thinking, "low")}
         if self.tool_mode == "native":
             b["tools"] = [TOOLS[n] for n in names]
         else:

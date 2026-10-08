@@ -24,7 +24,9 @@ SYSTEM_EDIT = (
     "Para crear un archivo que no existe, un solo bloque con BUSCAR vacío. Nada de explicaciones fuera de los "
     "bloques.")
 
-_BLOCK = re.compile(r"^<{5,9} ?BUSCAR[^\n]*\n(.*?)^={5,9}[ \t]*\n(.*?)^>{5,9} ?REEMPLAZAR[^\n]*$", re.S | re.M)
+# las palabras BUSCAR/REEMPLAZAR no son obligatorias: gpt-oss con poco razonamiento escribe a veces
+# «<<<<<<< CHANGELOG.md … >>>>>>> CHANGELOG.md» (lo que manda es la forma <<<<<<< / ======= / >>>>>>>)
+_BLOCK = re.compile(r"^<{5,9}[^\n<]*\n(.*?)^={5,9}[ \t]*\n(.*?)^>{5,9}[^\n>]*$", re.S | re.M)
 
 
 class EditError(Exception):

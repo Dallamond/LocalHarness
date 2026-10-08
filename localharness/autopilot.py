@@ -32,6 +32,7 @@ OPEN = ("running", "pending")
 NOTE = ("\n\n(AUTOPILOTO: nadie va a contestar hasta dentro de horas. No hagas preguntas ni pidas permiso: decide tú, "
         "termina el parche y deja los tests pasando. Sigue ENCARGO.md. Termina con un informe corto: qué hizo cada "
         "modelo local, qué falló o repetiste y qué queda pendiente.)")
+LOAD_WAIT_S = 420  # lo que espera a un modelo que está cargando antes de lanzar un parche
 GRACE_S = 300  # margen sobre el tope de LocalHarness antes de que el autopiloto cancele él
 CLOSE_MIN = 10  # minutos para cerrar un parche al que se le acabó el tiempo
 CLOSE_MSG = ("Se te acabó el tiempo de este parche. NO empieces nada nuevo: en como mucho {minutes} minutos deja "
@@ -169,6 +170,36 @@ class Autopilot:
                                                      "options": last.get("options") or None})
             except ApiError as e:
                 self.say(f"  no pude: {e}")
+        self.wait_loaded()
+
+    def wait_loaded(self, limit: float = LOAD_WAIT_S) -> None:
+        """Si algún modelo está cargando, espera a que termine antes de lanzar el parche (gpt-oss-20b: ~3 min; el
+        08/10 un parche entero se fue en 503 «Loading model»)."""
+        t0 = self.clock()
+        told = False
+        while self.clock() - t0 < limit:
+            try:
+                servers = self.api("GET", "/api/llama").get("servers") or []
+            except ApiError:
+                return
+            loading = [s["name"] for s in servers if (s.get("status") or {}).get("state") in ("loading", "starting")]
+            if not loading:
+                return
+            if not told:
+                self.say(f"  espero a que termine de cargar: {', '.join(loading)}")
+                told = True
+            self.sleep(5)
+
+    def infra_failure(self, r: "Result") -> bool:
+        """¿Falló por la infraestructura (API, modelo cargando o caído) sin que los modelos llegaran a trabajar?
+        Esos parches se repiten una vez en vez de darlos por perdidos."""
+        if r.outcome.startswith("falló:"):
+            return True
+        if r.outcome != "sin cambios":
+            return False
+        tokens = sum((m.get("tokens") or 0) for m in (r.models or {}).values())
+        failed = sum((m.get("fallidos") or 0) for m in (r.models or {}).values())
+        return tokens == 0 and failed > 0
 
     # --- una tarea hasta que acaba (o se pasa de tiempo)
     def wait(self, tid: int, limit: float | None = None) -> dict:
@@ -334,10 +365,16 @@ class Autopilot:
                     break
                 self.say(f"[{datetime.now():%H:%M}] Parche {n:03d}/{len(self.items)}: {text}")
                 self.ensure_locals()
-                try:
-                    r = self.patch(n, text)
-                except ApiError as e:
-                    r = Result(n=n, text=text, outcome=f"falló: {e}")
+                for attempt in range(2):
+                    try:
+                        r = self.patch(n, text)
+                    except ApiError as e:
+                        r = Result(n=n, text=text, outcome=f"falló: {e}")
+                    if attempt or not self.infra_failure(r):
+                        break
+                    self.say(f"  → {r.outcome}: los modelos no llegaron a trabajar; lo repito una vez")
+                    self.sleep(30)
+                    self.ensure_locals()
                 self.results.append(r)
                 self.save()
                 self.say(f"  → {r.outcome} · {r.seconds / 60:.1f} min · {r.cost:.3f} $")

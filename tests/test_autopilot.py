@@ -16,6 +16,7 @@ class FakeApi:
         self.calls: list[tuple] = []
         self.llama = {"config": {"last": {"model": "D:/m/A.gguf"}}, "servers": [
             {"id": "principal", "name": "Fuerte", "status": {"state": "ready"}}]}
+        self.events = None  # eventos de todas las tareas (None = los de siempre)
 
     def __call__(self, method, path, body=None):
         self.calls.append((method, path, body))
@@ -37,6 +38,8 @@ class FakeApi:
             return self.tasks[tid]
         tid = int(path.split("/")[3]) if path.startswith("/api/tasks/") else None
         if path.endswith("/events"):
+            if self.events is not None:
+                return self.events
             return [{"kind": "delegate", "data": {"tool": "local_write_file", "server": "principal", "ok": True,
                                                   "completion_tokens": 100, "gen_seconds": 4, "model": "Qwen"}},
                     {"kind": "delegate", "data": {"tool": "local_ask", "server": "rapido", "ok": False,
@@ -181,6 +184,30 @@ class AutopilotTests(unittest.TestCase):
         pilot.run()
         start = next(c for c in api.calls if c[1] == "/api/llama/start")
         self.assertEqual(start[2]["path"], "D:/m/A.gguf")
+
+    def test_patch_lost_to_infrastructure_is_repeated_once(self):
+        # 08/10: el modelo estaba cargando, todos los encargos dieron 503 y el parche acabó «sin cambios»
+        api = FakeApi([("done", 0.3), ("review", 0.2)])
+        api.events = [{"kind": "delegate", "data": {"tool": "local_execute_plan/edit", "server": "principal",
+                                                    "ok": False, "error": "llama-server HTTP 503"}}]
+        pilot, _ = self.make(api, ["epílogo"])
+        rs = pilot.run()
+        self.assertEqual(len(rs), 1)
+        self.assertEqual(rs[0].outcome, "integrado")
+        self.assertEqual(sum(1 for c in api.calls if c[:2] == ("POST", "/api/tasks")), 2)
+
+    def test_real_no_change_is_not_repeated(self):
+        api = FakeApi([("done", 0.05), ("review", 0.2)])
+        pilot, _ = self.make(api, ["solo mirar"])
+        self.assertEqual([r.outcome for r in pilot.run()], ["sin cambios"])
+        self.assertEqual(sum(1 for c in api.calls if c[:2] == ("POST", "/api/tasks")), 1)
+
+    def test_waits_for_a_model_that_is_loading(self):
+        api = FakeApi([("done", 0.0)])
+        api.llama["servers"][0]["status"]["state"] = "loading"
+        pilot, _ = self.make(api, ["a"])
+        pilot.run()
+        self.assertGreaterEqual(sum(1 for c in api.calls if c[1] == "/api/llama"), 10)
 
     def test_unknown_agent(self):
         with self.assertRaises(ApiError):

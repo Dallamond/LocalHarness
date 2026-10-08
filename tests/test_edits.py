@@ -32,6 +32,34 @@ class EditsTests(unittest.TestCase):
         self.assertEqual(edits, [("b\n", "B\n"), ("d\n", "d\ne\n")])
         self.assertEqual(apply_edits("a\nb\nc\nd\n", edits), ("a\nB\nc\nd\ne\n", 2))
 
+    def test_markers_without_the_words(self):
+        # gpt-oss con poco razonamiento pone el nombre del archivo en vez de BUSCAR/REEMPLAZAR
+        text = "<<<<<<< CHANGELOG.md\n- 041\n=======\n- 041\n- 042\n>>>>>>> CHANGELOG.md"
+        self.assertEqual(parse_edits(text), [("- 041\n", "- 041\n- 042\n")])
+
+    def test_waits_while_the_model_is_loading(self):
+        import localharness.mcp_local as m
+        from localharness.mcp_local import ToolError
+        with tempfile.TemporaryDirectory() as d:
+            s = Server({"LH_ROOT": d, "LH_LOCAL_URL": "http://127.0.0.1:9"})
+            answers = [ToolError('llama-server HTTP 503: {"message":"Loading model"}')] * 2 + [{"ok": 1}]
+
+            def once(body):
+                a = answers.pop(0)
+                if isinstance(a, Exception):
+                    raise a
+                return a
+            s._post_once, s._live = once, lambda *a, **k: None
+            old = m.LOAD_POLL_S
+            m.LOAD_POLL_S = 0
+            try:
+                self.assertEqual(s._post({}), {"ok": 1})
+                answers[:] = [ToolError("llama-server HTTP 500: roto")]
+                with self.assertRaises(ToolError):
+                    s._post({})
+            finally:
+                m.LOAD_POLL_S = old
+
     def test_loose_match_ignores_indentation(self):
         new, _ = apply_edits("def f():\n    return 1\n", [("return 1\n", "    return 2\n")])
         self.assertEqual(new, "def f():\n    return 2\n")

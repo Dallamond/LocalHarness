@@ -392,11 +392,15 @@ SERVER_TOOLS = ("local_ask", "local_write_file", "local_edit_file", "local_execu
                 "local_agent", "local_plan", "local_read_documents", "local_look")
 
 
-def thinking_body(level: str | None) -> dict:
-    """Pensamiento del servidor (Ajustes → servidores locales) en cada petición; igual que adapters.local."""
-    if level in ("apagado", "profundo"):
-        return {"chat_template_kwargs": {"enable_thinking": level == "profundo"}}
-    return {}
+def thinking_body(level: str | None, effort: str | None = None) -> dict:
+    """Pensamiento del servidor (Ajustes → servidores locales) en cada petición; igual que adapters.local.
+    `effort`: lo que pide el encargo a los modelos con reasoning_effort (gpt-oss) si el servidor está en «normal»."""
+    from localharness.adapters.local import thinking_body as base
+    return base(level, effort)
+
+
+LOAD_WAIT_S = 420  # cuánto espera un encargo a un modelo que está cargando (gpt-oss-20b: ~185 s)
+LOAD_POLL_S = 5
 
 
 class ToolError(Exception):
@@ -855,7 +859,7 @@ class Server:
         for _ in range(2):
             raw, stats = self.complete(SYSTEM_PLAN, user + (
                 "\n\nTU PLAN ANTERIOR TENÍA ESTOS ERRORES, corrígelos:\n- " + "\n- ".join(errors) if errors else ""),
-                schema=PLAN_SCHEMA)
+                schema=PLAN_SCHEMA, effort="medium")
             try:
                 blocks = json.loads(strip_fence(raw)).get("blocks") or []
             except (ValueError, AttributeError):
@@ -1399,15 +1403,16 @@ class Server:
                 self._ctx[srv["id"]] = None
         return self._ctx[srv["id"]]
 
-    def complete(self, system: str, user, schema: dict | None = None) -> tuple[str, dict]:
+    def complete(self, system: str, user, schema: dict | None = None, effort: str = "low") -> tuple[str, dict]:
         """Un encargo al modelo. `schema`: JSON Schema que la respuesta TIENE que cumplir (llama-server lo impone con
-        una gramática: se acaban los planes y JSON mal formados)."""
+        una gramática: se acaban los planes y JSON mal formados). `effort`: razonamiento de gpt-oss y similares; el
+        08/10, con los mismos encargos, «low» escribió 3-4 veces más rápido que «medium» y el mismo código."""
         skills = self.worker().get("skills") or []
         system += self.skills_text()
         # cache_prompt: los bloques de un plan comparten prompt de sistema y archivos; llama-server reutiliza lo ya
         # procesado en la ranura en vez de leerlo otra vez
         body = {"messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                "temperature": 0.2, "max_tokens": self.max_tokens, "cache_prompt": True}
+                "temperature": 0.2, "max_tokens": self.max_tokens, "cache_prompt": True, "_effort": effort}
         if schema:
             body["response_format"] = {"type": "json_schema", "json_schema": {"name": "respuesta", "strict": True,
                                                                               "schema": schema}}
@@ -1438,16 +1443,18 @@ class Server:
 
     def _post_any(self, body: dict) -> dict:
         """Al servidor elegido; si está apagado, a los siguientes del orden (un 401 no: fallarían igual)."""
+        body = dict(body)
+        effort = body.pop("_effort", None)
         if self.transport:
             srv = next((x for x in self.servers if x["id"] == self.server_id), self.servers[0])
-            return self.transport({**body, **thinking_body(srv.get("thinking"))})
+            return self.transport({**body, **thinking_body(srv.get("thinking"), effort)})
         order = self.order or [next(srv for srv in self.servers if srv["id"] == self.server_id)]
         for i, srv in enumerate(order):
             self.use(srv)
             self.current["server"] = srv["id"]
             self._live("", "")  # ese modelo ya está con el encargo (la oficina lo pone a trabajar)
             try:
-                return self._post({**body, **thinking_body(srv.get("thinking"))})
+                return self._post({**body, **thinking_body(srv.get("thinking"), effort)})
             except Exception as e:
                 self._live("", "", done=True)
                 if not isinstance(e, NoModel) or i == len(order) - 1 or "401" in str(e):
@@ -1455,6 +1462,19 @@ class Server:
         raise NoModel("no hay ningún modelo local arrancado; hazlo tú")
 
     def _post(self, body: dict) -> dict:
+        """Si el modelo aún está cargando (503 «Loading model»), espera a que acabe en vez de fallar: el 08/10 se
+        perdió un parche entero porque gpt-oss tarda 3 min en cargar y cada encargo fallaba al instante."""
+        deadline = time.monotonic() + LOAD_WAIT_S
+        while True:
+            try:
+                return self._post_once(body)
+            except ToolError as e:
+                if "HTTP 503" not in str(e) or time.monotonic() > deadline:
+                    raise
+                self._live("", "esperando a que el modelo termine de cargar…")
+                time.sleep(LOAD_POLL_S)
+
+    def _post_once(self, body: dict) -> dict:
         headers = {"Content-Type": "application/json"}
         if self.key:
             headers["Authorization"] = f"Bearer {self.key}"

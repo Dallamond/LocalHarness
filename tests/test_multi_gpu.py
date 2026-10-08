@@ -321,8 +321,10 @@ class RoutingTests(unittest.TestCase):
         s = self.server(eps)
         call(s, "local_ask", {"task": "rápido"})
         call(s, "local_write_file", {"path": "c.py", "instructions": "z = 3"})
-        self.assertEqual(self.seen_small[0]["chat_template_kwargs"], {"enable_thinking": False})
-        self.assertNotIn("chat_template_kwargs", self.seen_big[0])
+        self.assertEqual(self.seen_small[0]["chat_template_kwargs"], {"enable_thinking": False, "reasoning_effort": "low"})
+        # en «normal» no se toca enable_thinking; solo se pide poco razonamiento a quien lo entienda (gpt-oss)
+        self.assertEqual(self.seen_big[0]["chat_template_kwargs"], {"reasoning_effort": "low"})
+        self.assertNotIn("_effort", self.seen_big[0])
 
     def test_tools_offer_server_choice_only_with_several(self):
         one = Server({"LH_ROOT": self.tmp.name, "LH_LOCAL_URL": f"http://127.0.0.1:{self.big.server_port}"})

@@ -204,8 +204,20 @@ def split_for(devices: list[dict], margin_mb: int = 700) -> str:
     return ",".join(str(p) for p in parts)
 
 
+def wait_idle(ids: list[str], busy=server_busy, idle_wait_s: float = 600, say=lambda text: None) -> None:
+    """Hasta que ninguno de esos servidores tenga encargos en curso (o pase `idle_wait_s`)."""
+    deadline = time.monotonic() + idle_wait_s
+    told = False
+    while any(busy(i) for i in ids) and time.monotonic() < deadline:
+        if not told:
+            say("Hay encargos en curso: espero a que terminen antes de cambiar")
+            told = True
+        time.sleep(2)
+
+
 def set_topology(store: Store, pool: "llama.LlamaPool", mode: str, model: Path | None = None,
-                 devices: list[dict] | None = None, say=lambda text: None) -> dict:
+                 devices: list[dict] | None = None, say=lambda text: None, busy=server_busy,
+                 idle_wait_s: float = 600) -> dict:
     """`unido`: apaga los demás servidores y arranca `model` en el principal repartido entre todas las GPU
     (-dev CUDA0,CUDA1 -sm layer -ts según VRAM libre). `separado`: vuelve a un servidor por GPU con lo último que
     tuvo cada uno. OJO: unido solo compensa para modelos que no caben en una GPU (la 1060 va a la mitad de
@@ -221,6 +233,8 @@ def set_topology(store: Store, pool: "llama.LlamaPool", mode: str, model: Path |
         model = model or Path(last_of(store, main).get("model") or "")
         if not model.is_file():
             raise LookupError("Elige qué modelo cargar con las GPU unidas")
+        # el 08/10 «Unir» paró los servidores a mitad de un plan del autopiloto y se perdió el parche
+        wait_idle([s["id"] for s in servers], busy, idle_wait_s, say)
         for srv in servers:
             if srv["id"] != llama.PRINCIPAL:
                 pool.get(srv["id"], srv["port"]).stop()
@@ -230,6 +244,7 @@ def set_topology(store: Store, pool: "llama.LlamaPool", mode: str, model: Path |
         settings.save(store, {"llama": {"topology": "unido"}})
         state = swap(store, pool, {**main, "device": ""}, model, opts, busy=lambda _: False)
         return {"topology": "unido", "options": opts, "status": state}
+    wait_idle([s["id"] for s in servers], busy, idle_wait_s, say)
     settings.save(store, {"llama": {"topology": "separado"}})
     started = []
     for srv in servers:

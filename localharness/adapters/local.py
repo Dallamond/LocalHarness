@@ -169,14 +169,15 @@ class LocalAdapter(Adapter):
         return _out("done", time.monotonic() - t0, text, structured)
 
 
-def thinking_body(level: str | None) -> dict:
+def thinking_body(level: str | None, effort: str | None = None) -> dict:
     """llama-server con --jinja pasa chat_template_kwargs a la plantilla: los modelos que razonan (Qwen3…) lo
-    encienden o apagan con enable_thinking. Los demás modelos lo ignoran. «normal» = lo que haga el modelo."""
+    encienden o apagan con enable_thinking, y gpt-oss lo gradúa con reasoning_effort (low/medium/high). Cada
+    plantilla ignora lo que no usa. «normal» = lo que haga el modelo, salvo que el encargo pida un `effort`."""
     if level == "apagado":
-        return {"chat_template_kwargs": {"enable_thinking": False}}
+        return {"chat_template_kwargs": {"enable_thinking": False, "reasoning_effort": "low"}}
     if level == "profundo":
-        return {"chat_template_kwargs": {"enable_thinking": True}}
-    return {}
+        return {"chat_template_kwargs": {"enable_thinking": True, "reasoning_effort": "high"}}
+    return {"chat_template_kwargs": {"reasoning_effort": effort}} if effort else {}
 
 
 def _rate(tokens: int, seconds: float) -> float | None:
