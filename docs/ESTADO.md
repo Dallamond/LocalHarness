@@ -8,6 +8,27 @@ Decisión de Lucas: **se trabaja siempre en `main`**. Se integraron en `main` la
 editable), `claude/cool-dirac-vmw6s0` (análisis de Paperclip) y `claude/youthful-edison-bi67hm` (Modelos locales +
 rediseño de la oficina). Las secciones de abajo son el historial de cada una; donde digan «rama X», ya está en `main`.
 
+### Autopiloto del 08/10/2026 y lo que se cambió con sus datos (08/10, mañana)
+- **El autopiloto se quedó «parado» en el parche 1**: no paró, se congeló en un `print` porque la consola tenía la
+  edición rápida (QuickEdit) y un clic en la ventana bloquea el proceso. Ahora la desactiva al empezar. Además relee
+  la lista antes de cada parche (se puede alargar en marcha), adopta la tarea viva si se reinicia y cuenta como
+  integrada/descartada la que decidas tú a mano. Lista de `poeta` ampliada a 48 parches, tope nominal 15 $.
+- **Análisis de los 7 primeros parches** (7/7 integrados, 1,32 $, 81 encargos locales, 0 líneas de Claude): el 4B
+  de la 1060 va a ~25 tok/s y el 14B de la 3060 a 27–31 (el «rápido» no es más rápido); 47 % del tiempo en el primer
+  plan, 25 % en `local_agent` atascado (1 de 6 bien), 12 % en rondas de arreglo, 15 % Claude. 5 de 7 primeras rondas
+  fallaron por tests que adivinaban el marcado (iban en paralelo con el HTML). En el parche 005 Claude mandó 12 de 13
+  bloques al rápido y el fuerte estuvo 5 min parado.
+- **Cambios en `mcp_local`** (commit c32a22c): reparto por cola (`claim`/`release`: el modelo con menos encargos en
+  curso; `server` y papel desempatan), tests después de su código (`tests_after_code`), arreglo automático sin Claude
+  (`auto_fix`, `AUTO_FIX_ROUNDS = 2`), `local_agent` desaconsejado para arreglos, checks con
+  `PYTHONDONTWRITEBYTECODE`. Informe del autopiloto con tiempo generando real (tokens ÷ tok/s). 220 pruebas.
+- **README nuevo** con capturas reales (`docs/capturas/`, Chrome headless contra la GUI abierta durante el autopiloto).
+- **Ideas para gastar menos Claude** (sin hacer): planificar por tandas (un Claude para 4–5 parches), revisión
+  periódica del diff de la tanda, `MAPA.md` del proyecto mantenido por el modelo local, bloques de edición
+  (buscar/reemplazar) en vez de reescribir archivos enteros (styles.css se reescribe entero en cada parche),
+  probar Qwen2.5-Coder-7B en la 1060, y medir con la Comparativa si Qwen-14B planifica bien los parches de plantilla.
+- Bug visto en las capturas: Modelos locales → «Velocidad de la última respuesta … hace 20714 días» (fecha 0).
+
 ### ▶ MAÑANA 08/10/2026, 7:00 — Lucas lanza el autopiloto antes de irse a clase (6 h) — leer primero
 1. Reiniciar LocalHarness (`LocalHarness.bat`) y Ctrl+F5: así carga todo lo de abajo (Job Object, MCP arreglado…).
 2. Modelos locales: si sale el aviso de llama-server sueltos → «Apagarlos». Arrancar **Qwen-2.5-Coder-14B Q4_K_M
