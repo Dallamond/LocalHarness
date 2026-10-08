@@ -202,14 +202,15 @@ class Autopilot:
 
     def adoptable(self, n: int) -> dict | None:
         """Si el autopiloto se cerró a mitad de un parche, su tarea sigue viva: se retoma en vez de lanzar otra
-        (que chocaría con ella en el mismo repo y repetiría el parche)."""
+        (que chocaría con ella en el mismo repo y repetiría el parche). Una que se quedó sin tiempo también: se le
+        pide que cierre con lo que tiene."""
         try:
             tasks = self.api("GET", "/api/tasks")
         except ApiError:
             return None
         return next((t for t in tasks if t.get("project_id") == self.project["id"]
                      and str(t.get("title") or "").startswith(f"Autopiloto {n}/")
-                     and t.get("status") in (*OPEN, "review")), None)
+                     and t.get("status") in (*OPEN, "review", "timeout")), None)
 
     def models_of(self, tids: list[int]) -> dict:
         out: dict = {}

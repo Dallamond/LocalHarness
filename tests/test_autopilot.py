@@ -129,6 +129,20 @@ class AutopilotTests(unittest.TestCase):
         self.assertEqual((r.outcome, r.task_ids), ("integrado", [7]))
         self.assertFalse(any(c[:2] == ("POST", "/api/tasks") for c in api.calls))
 
+    def test_adopts_a_task_that_ran_out_of_time_and_asks_it_to_close(self):
+        api = FakeApi([])
+        api.tasks[52] = {"id": 52, "project_id": 3, "title": "Autopiloto 1/48: rimas", "status": "timeout",
+                         "cost_usd": 0.0, "worktree": "/wt/52", "final": ""}
+        orig = api.__call__
+
+        def call(method, path, body=None):
+            if method == "GET" and path == "/api/tasks":
+                return list(api.tasks.values())
+            return orig(method, path, body)
+        pilot, _ = self.make(call, ["rimas"])
+        r = pilot.run()[0]
+        self.assertEqual((r.outcome, r.task_ids, r.rescued), ("integrado", [52], True))
+
     def test_hung_task_is_cancelled_and_three_failures_stop(self):
         api = FakeApi([("hang", 0.0)] * 3 + [("review", 0.1)])
         pilot, _ = self.make(api, ["a", "b", "c", "d"], task_minutes=1)
