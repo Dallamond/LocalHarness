@@ -1383,6 +1383,8 @@ class Server:
         archivo existente grande (reescribirlo entero era lo más lento y lo que perdía líneas); si no, como venga."""
         if it["kind"] not in WRITES or not it["path"]:
             return "ask"
+        if it["b"].get("rewrite"):  # el jefe pide reescribirlo entero (un modelo que no sabe editar por trozos)
+            return "write"
         try:
             target = self.safe(it["path"])
         except ToolError:

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from localharness.boss import SYSTEM_REVIEW, SYSTEM_SELECT
 from localharness.cerebro import (SYSTEM_DIAG, Cerebro, api_map, exports_of, first_failure, fix_duplicate_exports,
-                                  fix_imports)
+                                  fix_duplicate_functions, fix_imports, in_order)
 from localharness.mcp_local import SYSTEM_PLAN, SYSTEM_WRITE, Server, ToolError
 
 NODE = shutil.which("node")
@@ -113,6 +113,45 @@ class PiezasTests(unittest.TestCase):
         text = "import { nada } from './dinero.js';"
         self.assertEqual(fix_imports(root, "src/a.js", text, exported), (text, []))
 
+    def test_import_de_un_modulo_que_no_existe(self):
+        root = repo()
+        exported = {"src/dinero.js": {"aCentimos": ""}, "src/fechas.js": {"mesDe": ""}}
+        # el mapa.js copiado de un ejemplo: crearMapa no se usa, mesDe está en fechas.js
+        text = ("import { crearMapa, mesDe } from './mapa.js';\nexport function f(x) { return mesDe(x); }\n")
+        new, notes = fix_imports(root, "src/resumen.js", text, exported)
+        self.assertEqual(new, "import { mesDe } from './fechas.js';\nexport function f(x) { return mesDe(x); }\n")
+        self.assertIn("mapa.js, que no existe", notes[0])
+        # el nombre ya lo define el propio archivo: el import sobra entero
+        text = "import { nombreMes } from './mapa.js';\nexport function nombreMes(m) { return m; }\n"
+        self.assertEqual(fix_imports(root, "src/fechas.js", text, exported)[0],
+                         "\nexport function nombreMes(m) { return m; }\n")
+        # se usa y nadie lo exporta: no se toca
+        text = "import { nada } from './mapa.js';\nnada();\n"
+        self.assertEqual(fix_imports(root, "src/a.js", text, exported), (text, []))
+
+    def test_funcion_declarada_dos_veces(self):
+        text = ("function formatear(c) {\n  const s = '}';\n  return s + c;\n}\n\nexport function aCentimos(v) {"
+                " return v; }\n\nexport function formatear(c) {\n  return `${c} €`;\n}\n")
+        new, removed = fix_duplicate_functions(text)
+        self.assertEqual(removed, ["formatear"])
+        self.assertEqual(new.count("function formatear"), 1)
+        self.assertIn("export function formatear", new)  # se queda la exportada
+        self.assertIn("export function aCentimos", new)
+        if NODE:
+            ok = subprocess.run([NODE, "--input-type=module", "-e", new], capture_output=True)
+            self.assertEqual(ok.returncode, 0, ok.stderr)
+
+    def test_orden_de_bloques(self):
+        # el plan del parche 2: el CHANGELOG espera a los tests (5, 6), que van detrás del código
+        blocks = [{"id": "1", "path": "src/a.js", "after": []}, {"id": "7", "path": "CHANGELOG.md", "after": ["1", "5", "6"]},
+                  {"id": "5", "path": "tests/a.test.mjs", "after": ["1"]}, {"id": "6", "path": "tests/b.test.mjs",
+                                                                           "after": ["9"]}]
+        out = in_order(blocks)
+        self.assertEqual([b["id"] for b in out], ["1", "5", "6", "7"])
+        self.assertEqual(out[2]["after"], [])  # el 9 no existe
+        ciclo = in_order([{"id": "a", "after": ["b"]}, {"id": "b", "after": ["a"]}])
+        self.assertEqual([(b["id"], b["after"]) for b in ciclo], [("a", []), ("b", ["a"])])
+
     def test_primer_fallo(self):
         out = ("código de salida 1\n✔ uno\n✖ dos\n  AssertionError: 1 !== 2\n" + "x\n" * 2000
                + "✖ failing tests:\n\ntest at tests/a.test.mjs:5:1\n✖ dos\n  AssertionError: 1 !== 2\n")
@@ -193,6 +232,27 @@ class VueltaCompletaTests(unittest.TestCase):
         self.assertIn("`npm test` pasa", report)
         self.assertFalse(c.rejected)  # la revisión ya no rechaza con los tests en verde
         self.assertIn("* 100", (root / "src" / "dinero.js").read_text(encoding="utf-8"))
+
+    def test_plan_en_bucle_usa_el_plan_de_reserva(self):
+        fake = Fake({"src/dinero.js": [GOOD], "tests/dinero.test.mjs": [TEST]}, diag=[])
+        original = Fake.__call__
+
+        def call(self, body):  # el planificador entra en bucle siempre (el parche 3 del 10/10)
+            if body["messages"][0]["content"].startswith(SYSTEM_PLAN[:40]):
+                self.order.append("plan")
+                return {"choices": [{"message": {"content": "{\"blocks\": [{\"id\""}, "finish_reason": "loop"}],
+                        "usage": {}, "model": "q.gguf"}
+            return original(self, body)
+        Fake.__call__ = call
+        try:
+            c, report, root = self.run_cerebro(fake)
+        finally:
+            Fake.__call__ = original
+        self.assertEqual(fake.order.count("plan"), 2)  # dos intentos y luego la reserva
+        self.assertIn("plan de reserva desde la tarea", report)
+        self.assertIn("`npm test` pasa", report)
+        self.assertEqual([o for o in fake.order if o.startswith("write")],
+                         ["write src/dinero.js", "write tests/dinero.test.mjs"])
 
     def test_en_rojo_sube_la_escalera_hasta_reescribir(self):
         bad = GOOD.replace("* 100)", "* 7)")

@@ -101,6 +101,8 @@ SYSTEM_REVIEW = (
 
 
 class Boss:
+    rewrite_under = REWRITE_UNDER  # un `edit` de un archivo más pequeño que esto se hace reescribiéndolo
+
     def __init__(self, server, check: str = "", say: Callable[[str], None] = lambda text: None,
                  deadline: float | None = None):
         self.s = server
@@ -326,7 +328,7 @@ class Boss:
                     dropped.append(path)
                     gone.add(str(b.get("id")))
                     continue
-                if kind == "edit" and exists and (self.root / path).stat().st_size < REWRITE_UNDER:
+                if kind == "edit" and exists and (self.root / path).stat().st_size < self.rewrite_under:
                     b["kind"] = "write"
                 if path in named_tests:
                     b["spec"] = True

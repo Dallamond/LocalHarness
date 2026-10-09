@@ -29,7 +29,7 @@ import re
 import time
 from pathlib import Path
 
-from localharness.boss import REWRITE_UNDER, SKIP_DIRS, Boss
+from localharness.boss import SKIP_DIRS, Boss
 from localharness.mcp_local import ToolError, check_failed, is_test_path, strip_fence
 
 # papel → {tipo: a qué clase de servidor va (route de mcp_local), servidor: id concreto (opcional), effort:
@@ -52,6 +52,11 @@ EXPORT_DECL = re.compile(r"^[ \t]*export[ \t]+(?:default[ \t]+)?(?:async[ \t]+)?
                          r"([A-Za-z_$][\w$]*)[ \t]*\(([^)]*)\)|(?:const|let|var|class)[ \t]+([A-Za-z_$][\w$]*))",
                          re.M)
 EXPORT_LIST = re.compile(r"^[ \t]*export[ \t]*\{([^}]*)\}[ \t]*(from[ \t]*['\"][^'\"]+['\"])?[ \t]*;?[ \t]*\n?", re.M)
+# nombres que un archivo define él mismo (función, clase o variable), con export o sin él
+DECL = re.compile(r"^[ \t]*(?:export[ \t]+)?(?:async[ \t]+)?(?:function[ \t]*\*?[ \t]*([A-Za-z_$][\w$]*)|"
+                  r"class[ \t]+([A-Za-z_$][\w$]*)|(?:const|let|var)[ \t]+([A-Za-z_$][\w$]*))", re.M)
+FUNC_DECL = re.compile(r"^[ \t]*(export[ \t]+)?(?:async[ \t]+)?function[ \t]*\*?[ \t]*([A-Za-z_$][\w$]*)[ \t]*\(",
+                       re.M)
 IMPORT_NAMED = re.compile(r"^([ \t]*)import[ \t]*\{([^}]*)\}[ \t]*from[ \t]*(['\"])(\.{1,2}/[^'\"]+)\3[ \t]*;?",
                           re.M)
 
@@ -174,7 +179,7 @@ def fix_imports(root: Path, rel: str, text: str, exported: dict[str, dict[str, s
             stem = target.rsplit(".", 1)[0]
             alt = next((t for t in (f"{stem}.js", f"{stem}.mjs") if t in exported), None)
             if not alt:
-                return m.group(0)
+                return missing_module(m, rel, target, text, exported, notes)
             notes.append(f"{rel}: {spec} → {rel_import(rel, alt)} (la extensión no era la del archivo)")
             target, spec, ext_fixed = alt, rel_import(rel, alt), True
         have = exported[target]
@@ -200,6 +205,85 @@ def fix_imports(root: Path, rel: str, text: str, exported: dict[str, dict[str, s
     return IMPORT_NAMED.sub(repl, text), notes
 
 
+def missing_module(m: re.Match, rel: str, target: str, text: str, exported: dict[str, dict[str, str]],
+                   notes: list[str]) -> str:
+    """Un import de un archivo que no existe (el `mapa.js` que copiaban de un ejemplo): cada nombre se quita si el
+    archivo lo define él mismo o no lo usa, o se importa del único módulo que lo exporta. Si alguno no tiene arreglo
+    claro, no se toca (lo ve el depurador)."""
+    indent, names, quote, _ = m.groups()
+    rest = text.replace(m.group(0), "", 1)
+    local = {g for x in DECL.finditer(rest) for g in x.groups() if g}
+    dropped, moved = [], {}
+    for s in (x.strip() for x in names.split(",") if x.strip()):
+        name, alias = s.split(" as ")[0].strip(), s.split(" as ")[-1].strip()
+        if alias in local or not re.search(rf"(?<![\w$.]){re.escape(alias)}(?![\w$])", rest):
+            dropped.append(alias)
+            continue
+        owners = [t for t, ex in exported.items() if name in ex and t != rel]
+        if len(owners) != 1:
+            return m.group(0)
+        moved.setdefault(owners[0], []).append(s)
+    lines = [f"{indent}import {{ {', '.join(ss)} }} from {quote}{rel_import(rel, owner)}{quote};"
+             for owner, ss in moved.items()]
+    notes.append(f"{rel}: fuera el import de {target}, que no existe"
+                 + (f" ({', '.join(dropped)}: no se usan o ya están en el archivo)" if dropped else "")
+                 + (f"; {', '.join(o for o in moved)} exporta el resto" if moved else ""))
+    return "\n".join(lines)
+
+
+def fix_duplicate_functions(text: str) -> tuple[str, list[str]]:
+    """Una función declarada dos veces (`Identifier 'formatear' has already been declared`): se queda la exportada
+    o, si ninguna lo está, la última, y se quitan las demás enteras (contando llaves)."""
+    found: dict[str, list[re.Match]] = {}
+    for m in FUNC_DECL.finditer(text):
+        found.setdefault(m.group(2), []).append(m)
+    cuts, removed = [], []
+    for name, ms in found.items():
+        if len(ms) < 2:
+            continue
+        keep = next((x for x in ms if x.group(1)), ms[-1])
+        for x in ms:
+            if x is keep:
+                continue
+            end = _block_end(text, text.index("{", x.end()))
+            if end is None:
+                return text, []
+            cuts.append((x.start(), end))
+            removed.append(name)
+    for a, b in sorted(cuts, reverse=True):
+        text = text[:a] + text[b:].lstrip("\n")
+    return text, removed
+
+
+def _block_end(text: str, start: int) -> int | None:
+    """Fin (exclusivo) del bloque `{…}` que abre en `start`, saltando cadenas y comentarios."""
+    depth, i, n = 0, start, len(text)
+    while i < n:
+        c = text[i]
+        if c in "'\"`":
+            j = i + 1
+            while j < n and text[j] != c:
+                j += 2 if text[j] == "\\" else 1
+            i = j + 1
+            continue
+        if text.startswith("//", i):
+            i = text.find("\n", i)
+            i = n if i < 0 else i
+            continue
+        if text.startswith("/*", i):
+            i = text.find("*/", i)
+            i = n if i < 0 else i + 2
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return None
+
+
 # --- salida de los tests
 def first_failure(output: str) -> str:
     """Lo útil para diagnosticar: las guardias (si las hay) y el PRIMER fallo, no 3.000 letras del final."""
@@ -217,17 +301,41 @@ def first_failure(output: str) -> str:
     return "\n\n".join(parts).strip()
 
 
+def in_order(blocks: list) -> list:
+    """Los bloques en un orden en que cada `after` apunta a bloques anteriores (estable: a igualdad, como venían).
+    Las dependencias de bloques que no están, o que cerrarían un ciclo, se quitan."""
+    ids = {str(b.get("id")) for b in blocks}
+    for b in blocks:
+        b["after"] = [str(a) for a in (b.get("after") or []) if str(a) in ids and str(a) != str(b.get("id"))]
+    out, done, pending = [], set(), list(blocks)
+    while pending:
+        ready = next((b for b in pending if all(a in done for a in b["after"])), None)
+        if ready is None:  # ciclo: el primero que quede, sin lo que aún no está hecho
+            ready = pending[0]
+            ready["after"] = [a for a in ready["after"] if a in done]
+        pending.remove(ready)
+        out.append(ready)
+        done.add(str(ready.get("id")))
+    return out
+
+
 def numbered(text: str) -> str:
     return "\n".join(f"{i:4} | {line}" for i, line in enumerate(text.splitlines(), 1))
 
 
 class Cerebro(Boss):
     RULE_LIKE = {"ENCARGO.md", "AGENTS.md", "CLAUDE.md", "README.md", "CHANGELOG.md", "package.json"}
+    # el 10/10 el Qwen3.5-9B no respetó el formato BUSCAR/REEMPLAZAR y un arreglo quirúrgico «no encajó»; a ~45 tok/s
+    # reescribir un archivo de 15.000 caracteres sale por ~1-2 min y no falla
+    rewrite_under = 15_000
+    CODE_SUFFIXES = (".js", ".mjs", ".cjs", ".ts", ".py", ".html", ".css", ".json")
 
     def __init__(self, server, check: str = "", say=lambda text: None, deadline: float | None = None,
                  roles: dict | None = None):
         super().__init__(server, check=check, say=say, deadline=deadline)
         self.last_diag: str | None = None  # el último archivo que señaló el depurador
+        self._main = False  # planificando el plan principal (no una ronda de arreglo)
+        self._plan_fails = 0
         self.roles = {k: {**v, **((roles or {}).get(k) or {})} for k, v in ROLES.items()}
 
     # --- sistema de pensamiento
@@ -277,6 +385,47 @@ class Cerebro(Boss):
     def plan_check(self) -> str:
         return ""  # sin el arreglo automático a ciegas de execute_plan: los arreglos son de la escalera
 
+    def plan_and_run(self, task: str, files: list[str], rules: str, label: str, scope: set[str] | None = None,
+                     spec: str | None = None) -> dict:
+        self._main, self._plan_fails = label == "Plan" and scope is None, 0
+        try:
+            return super().plan_and_run(task, files, rules, label, scope, spec)
+        finally:
+            self._main = False
+
+    def _plan(self, task: str, files: list[str], rules: str) -> tuple[list, dict]:
+        """El plan del modelo; si en el plan principal falla dos veces (el 10/10 el Qwen3.5-9B entró en bucle dos
+        veces y el parche 3 acabó «sin cambios»), un plan de reserva sacado de la tarea: un bloque por archivo."""
+        try:
+            return super()._plan(task, files, rules)
+        except ToolError as e:
+            self._plan_fails += 1
+            backup = self.skeleton(task) if self._main and self._plan_fails >= 2 else []
+            if not backup:
+                raise
+            self.notes.append(f"- El plan del modelo no salió ({str(e).split(';')[0]}): plan de reserva desde la "
+                              "tarea, un bloque por archivo")
+            self.say("Plan de reserva: un bloque por archivo que nombra la tarea")
+            return backup, {"plan": [{k: b.get(k) for k in ("id", "kind", "path", "after")} for b in backup],
+                            "fallback": True}
+
+    def skeleton(self, task: str) -> list[dict]:
+        """Un bloque por archivo de código que nombra la tarea (los tests los añade shape_plan) y la línea del
+        CHANGELOG si existe. Sin archivos nombrados, nada."""
+        paths = [p for p in self.task_paths(task) if not is_test_path(p) and Path(p).suffix in self.CODE_SUFFIXES
+                 and Path(p).name not in self.RULE_LIKE]
+        blocks = [{"id": f"s{i}", "kind": "edit" if (self.root / p).is_file() else "write", "path": p, "after": [],
+                   "title": p, "instructions": (
+                       f"Haz en {p} todo lo que la TAREA pide para ESTE archivo: funciones con sus nombres, parámetros "
+                       "y comportamiento exactos (lo de los demás archivos lo hacen otros).\n\nTAREA:\n" + task)}
+                  for i, p in enumerate(paths, 1)]
+        if blocks and (self.root / "CHANGELOG.md").is_file():
+            blocks.append({"id": "changelog", "kind": "edit", "path": "CHANGELOG.md", "after": [], "title": "CHANGELOG",
+                           "instructions": ("Añade al final una línea para este parche, con el número siguiente y el "
+                                            "mismo formato que las anteriores, que resuma en una frase esta tarea: "
+                                            + task[:400])})
+        return blocks
+
     def code_for_test(self, test: str, blocks: list) -> tuple[list[str], list[str]]:
         """(ids de los bloques de código del plan, rutas) que comprueba un test: el del mismo nombre
         (tests/dinero.test.mjs → src/dinero.js); si no hay, los módulos que nombran sus instrucciones; si no, todos."""
@@ -304,6 +453,11 @@ class Cerebro(Boss):
                     self.notes.append(f"- {path} → {same[0]} (la ruta que da la tarea)")
                     b["path"] = same[0]
         out = super().shape_plan(task, blocks, scope)
+        for b in out:  # reescribir entero lo que no sea enorme (execute_plan editaría por trozos desde 6.000)
+            target = self.root / str(b.get("path") or "")
+            if b.get("kind") == "write" and b.get("path") and target.is_file() \
+                    and target.stat().st_size < self.rewrite_under:
+                b["rewrite"] = True
         api = api_map(self.root)
         tests = [b for b in out if is_test_path(str(b.get("path") or ""))]
         rest = [b for b in out if b not in tests]
@@ -328,8 +482,9 @@ class Cerebro(Boss):
             else:
                 b["instructions"] = (f"{b.get('instructions') or ''}\n\nEl código que se prueba YA ESTÁ ESCRITO (en "
                                      "ARCHIVOS DE CONTEXTO): importa cada función del archivo que la exporta.")
-        # los tests al final: `after` solo puede apuntar a bloques anteriores
-        return rest + tests
+        # el código, luego los tests, y lo que dependa de algo, detrás (el 10/10 el CHANGELOG esperaba a los tests y,
+        # con los tests al final, el plan entero falló: «el bloque 7 depende de 5, 6, que no es un bloque anterior»)
+        return in_order(rest + tests)
 
     # --- arreglos sin modelo
     def mechanical(self) -> list[str]:
@@ -342,9 +497,13 @@ class Cerebro(Boss):
                 continue
             path = self.root / rel
             text = path.read_text(encoding="utf-8", errors="replace")
-            new, removed = fix_duplicate_exports(text)
-            if removed:
+            new, twice = fix_duplicate_functions(text)
+            new, removed = fix_duplicate_exports(new)
+            if twice or removed:
                 path.write_text(new, encoding="utf-8", newline="\n")
+            if twice:
+                notes.append(f"{rel}: {', '.join(dict.fromkeys(twice))} estaba declarada dos veces: queda una")
+            if removed:
                 notes.append(f"{rel}: fuera el export duplicado de {', '.join(dict.fromkeys(removed))}")
         exported = {}
         for rel in js_modules(self.root):
@@ -416,7 +575,8 @@ class Cerebro(Boss):
         size = (self.root / path).stat().st_size if (self.root / path).is_file() else 0
         if Path(path).suffix in JS and not is_test_path(path):
             instructions += self.skill("modulos-es")
-        return {"id": bid, "kind": "write" if size < REWRITE_UNDER else "edit", "path": path, "after": [],
+        return {"id": bid, "kind": "write" if size < self.rewrite_under else "edit", "rewrite": size < self.rewrite_under,
+                "path": path, "after": [],
                 "title": f"{bid}: {path}", "instructions": instructions,
                 "files": list(dict.fromkeys(files or self.related(path)))[:5]}
 
