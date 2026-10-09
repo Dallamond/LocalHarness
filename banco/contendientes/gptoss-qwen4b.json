@@ -1,0 +1,6 @@
+{
+  "descripcion": "Pareja de referencia: gpt-oss-20b en la 3060 planifica y revisa; Qwen3.5-4B en la 1060 elige archivos y escribe. Jefe local, 0 $.",
+  "agente": "Jefe local",
+  "modelos": {"principal": "gpt-oss-20b-UD-Q4_K_XL", "rapido": "Qwen_Qwen3.5-4B-Q4_K_M"},
+  "horas": 12, "minutos_tarea": 45, "presupuesto": 1
+}

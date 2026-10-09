@@ -1,0 +1,11 @@
+{
+  "titulo": "Cuentas claras",
+  "tipo": "web",
+  "descripcion": "Web de una página para llevar ingresos y gastos: resumen del mes con gráfico, filtros, presupuestos por categoría e importar/exportar CSV. Módulos ES, hash router y localStorage, sin dependencias.",
+  "check": "npm test",
+  "abrir": "index.html",
+  "modalidades": {
+    "guiada": {"parches": "parches-guiada.md", "descripcion": "18 parches con la especificación y los casos de test. Mide ejecución."},
+    "libre": {"parches": "parches-libre.md", "semilla_extra": "semilla-libre", "descripcion": "6 hitos y un contrato sin casos de test. Mide planificación y tests propios."}
+  }
+}

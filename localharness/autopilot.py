@@ -124,6 +124,7 @@ class Result:
     final: str = ""
     models: dict = field(default_factory=dict)  # servidor → {encargos, fallidos, tokens, segundos, modelo}
     rescued: bool = False  # se le acabó el tiempo y se le pidió que cerrara con lo que tenía
+    extra: dict = field(default_factory=dict)  # lo que apunte `after` (p. ej. el banco: nota del examen oculto)
 
 
 class Autopilot:
@@ -132,8 +133,10 @@ class Autopilot:
                  report: Path, say: Callable[[str], None] = print, sleep: Callable[[float], None] = time.sleep,
                  clock: Callable[[], float] = time.monotonic, checker: Callable = run_check,
                  reload: Callable[[], list[str]] | None = None,
-                 propose: Callable[[list[str]], list[str]] | None = None):
+                 propose: Callable[[list[str]], list[str]] | None = None,
+                 after: Callable[[Result], None] | None = None):
         self.api, self.items, self.check, self.reload = api, items, check, reload
+        self.after = after  # se llama con cada parche terminado, antes de guardarlo (puede rellenar r.extra)
         # modo continuo: al acabarse la lista, pide parches nuevos (los propone el modelo local) y sigue
         self.propose = propose
         self.hours, self.budget, self.task_s = hours, budget, task_minutes * 60
@@ -398,6 +401,11 @@ class Autopilot:
                     self.say(f"  → {r.outcome}: los modelos no llegaron a trabajar; lo repito una vez")
                     self.sleep(30)
                     self.ensure_locals()
+                if self.after:
+                    try:
+                        self.after(r)
+                    except Exception as e:  # noqa: BLE001 — un fallo al apuntar no para el autopiloto
+                        self.say(f"  (no pude apuntar el parche: {e})")
                 self.results.append(r)
                 self.save()
                 self.say(f"  → {r.outcome} · {r.seconds / 60:.1f} min · {r.cost:.3f} $")

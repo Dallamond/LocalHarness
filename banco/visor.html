@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Banco de pruebas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  color-scheme: light;
+  --fondo: #f6f2ea; --tarjeta: #fcfcfb; --borde: #e6dfd2; --tinta: #1f1b16; --tinta-2: #57524a; --tinta-3: #8a8378;
+  --rejilla: #ece6da; --acento: #c2562b; --bien: #2e7d4f; --mal: #b3402e; --aviso: #a86b00; --chip: #efe8dc;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --s6: #008300; --s7: #4a3aa7; --s8: #e34948;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --fondo: #141210; --tarjeta: #1a1a19; --borde: #2e2a25; --tinta: #f3eee6; --tinta-2: #c3c2b7; --tinta-3: #8d877c;
+    --rejilla: #2a2723; --acento: #e07a4f; --bien: #6cc092; --mal: #e57c69; --aviso: #e0a640; --chip: #26231f;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --fondo: #141210; --tarjeta: #1a1a19; --borde: #2e2a25; --tinta: #f3eee6; --tinta-2: #c3c2b7; --tinta-3: #8d877c;
+  --rejilla: #2a2723; --acento: #e07a4f; --bien: #6cc092; --mal: #e57c69; --aviso: #e0a640; --chip: #26231f;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--fondo); color: var(--tinta); font: 15px/1.5 Figtree, system-ui, sans-serif; }
+.pagina { max-width: 1240px; margin: 0 auto; padding: 28px 16px 64px; }
+header { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+h1 { font-size: 28px; margin: 0; letter-spacing: -0.02em; }
+h2 { font-size: 17px; margin: 0 0 12px; }
+.sub { color: var(--tinta-2); margin: 4px 0 0; max-width: 70ch; }
+.grupos { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; }
+.grupo { border: 1px solid var(--borde); background: var(--tarjeta); color: var(--tinta); border-radius: 999px;
+  padding: 7px 14px; font: inherit; cursor: pointer; }
+.grupo[aria-pressed="true"] { background: var(--tinta); color: var(--fondo); border-color: var(--tinta); }
+.grupo small { color: inherit; opacity: .7; margin-left: 6px; }
+.tarjeta { background: var(--tarjeta); border: 1px solid var(--borde); border-radius: 18px; padding: 18px; margin-bottom: 16px; }
+.ficha { display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; align-items: start; }
+.ficha p { margin: 0; color: var(--tinta-2); max-width: 80ch; }
+.boton { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--borde); border-radius: 999px;
+  padding: 6px 12px; color: var(--tinta); text-decoration: none; background: var(--chip); font: inherit; font-size: 14px;
+  cursor: pointer; white-space: nowrap; }
+.boton:hover { border-color: var(--tinta-3); }
+.boton.principal { background: var(--acento); border-color: var(--acento); color: #fff; }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; font-weight: 500; color: var(--tinta-3); font-size: 13px; padding: 6px 8px; border-bottom: 1px solid var(--borde); }
+td { padding: 10px 8px; border-bottom: 1px solid var(--rejilla); vertical-align: middle; }
+tr.fila { cursor: pointer; }
+tr.fila:hover td { background: var(--fondo); }
+tr.fila.elegida td { background: color-mix(in srgb, var(--acento) 9%, transparent); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.nota { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.muestra { display: inline-block; width: 12px; height: 12px; border-radius: 4px; margin-right: 8px; vertical-align: -1px; }
+.nombre { font-weight: 600; }
+.desc { color: var(--tinta-3); font-size: 13px; max-width: 46ch; }
+.chip { display: inline-block; border-radius: 999px; padding: 2px 9px; font-size: 12.5px; background: var(--chip); color: var(--tinta-2); white-space: nowrap; }
+.chip.integrado { color: var(--bien); } .chip.mal { color: var(--mal); } .chip.vivo { color: var(--acento); }
+.chip.vivo::before { content: "● "; animation: latido 1.4s infinite; }
+@keyframes latido { 50% { opacity: .25; } }
+.grafica { position: relative; }
+.grafica svg { width: 100%; height: auto; display: block; overflow: visible; }
+.grafica text { fill: var(--tinta-3); font: 12px Figtree, system-ui, sans-serif; }
+.leyenda { display: flex; flex-wrap: wrap; gap: 14px; margin: 0 0 10px; font-size: 13.5px; color: var(--tinta-2); }
+.globo { position: absolute; pointer-events: none; background: var(--tarjeta); border: 1px solid var(--borde); border-radius: 12px;
+  padding: 8px 10px; font-size: 13px; box-shadow: 0 6px 20px rgb(0 0 0 / .12); min-width: 180px; display: none; z-index: 2; }
+.globo b { display: block; margin-bottom: 4px; }
+.globo div { display: flex; justify-content: space-between; gap: 12px; color: var(--tinta-2); }
+.globo div span:last-child { color: var(--tinta); font-variant-numeric: tabular-nums; }
+.columnas { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); }
+.cabecera-ej { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.meta { color: var(--tinta-2); font-size: 13.5px; margin: 0 0 12px; }
+.meta code { font-size: 12.5px; }
+.parche { border-top: 1px solid var(--rejilla); padding: 10px 0; }
+.parche-cab { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.parche-n { font-variant-numeric: tabular-nums; color: var(--tinta-3); font-size: 13px; min-width: 30px; }
+.parche-t { font-weight: 600; flex: 1 1 200px; }
+.delta { font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--tinta-3); }
+.delta.sube { color: var(--bien); } .delta.baja { color: var(--mal); }
+.cambios { margin: 6px 0 0 38px; font-size: 13.5px; color: var(--tinta-2); }
+.cambios ul { margin: 2px 0; padding-left: 18px; }
+.archivos { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.archivo { font: 12px ui-monospace, Consolas, monospace; background: var(--chip); border-radius: 6px; padding: 1px 6px; }
+.archivo.A { color: var(--bien); } .archivo.D { color: var(--mal); text-decoration: line-through; }
+details summary { cursor: pointer; color: var(--tinta-3); font-size: 13px; }
+pre { white-space: pre-wrap; font: 12.5px/1.5 ui-monospace, Consolas, monospace; background: var(--fondo); border-radius: 10px; padding: 10px; max-height: 420px; overflow: auto; }
+.examen-fila { display: flex; justify-content: space-between; font-size: 13.5px; padding: 2px 0; }
+.falla { color: var(--mal); font-size: 13px; margin-left: 12px; }
+.vacio { color: var(--tinta-3); padding: 24px 0; text-align: center; }
+.pista { color: var(--tinta-3); font-size: 13px; margin: 8px 0 0; }
+.tabla-scroll { overflow-x: auto; }
+@media (max-width: 640px) { .ocultar-movil { display: none; } .columnas { grid-template-columns: 1fr; } h1 { font-size: 23px; } }
+</style>
+</head>
+<body>
+<div class="pagina">
+  <header>
+    <div>
+      <h1>Banco de pruebas</h1>
+      <p class="sub">El mismo proyecto desde cero para cada contendiente (modelos, agente y flujo), corregido con un examen oculto
+        después de cada parche. Se lanza con <code>Banco.bat</code>.</p>
+    </div>
+    <a class="boton" href="/">Volver a LocalHarness</a>
+  </header>
+  <nav class="grupos" id="grupos" aria-label="Prueba y modalidad"></nav>
+  <div id="contenido"><p class="vacio">Cargando…</p></div>
+</div>
+<script type="module">
+const $ = (s) => document.querySelector(s);
+const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const COLORES = 8;
+let datos = null;
+let grupo = null;
+const elegidas = [];
+const detalles = new Map();
+
+const horas = (s) => (s >= 3600 ? `${(s / 3600).toFixed(1)} h` : `${Math.round(s / 60)} min`);
+const miles = (n) => (n || 0).toLocaleString("es-ES");
+const fecha = (iso) => (iso ? new Date(iso).toLocaleString("es-ES", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—");
+const claseResultado = (r) => (r === "integrado" ? "integrado" : /descartado|falló|tiempo|no se pudo/.test(r || "") ? "mal" : "");
+
+async function cargar() {
+  datos = await (await fetch("/api/banco")).json();
+  const grupos = gruposDe();
+  if (!grupo || !grupos.some((g) => g.id === grupo)) grupo = (grupos.find((g) => g.ejecuciones.length) || grupos[0])?.id;
+  pintar();
+  if (datos.ejecuciones.some((e) => e.estado === "en marcha")) setTimeout(recargar, 30000);
+}
+
+async function recargar() {
+  for (const id of [...detalles.keys()]) if (datos.ejecuciones.find((e) => e.id === id)?.estado === "en marcha") detalles.delete(id);
+  await cargar();
+}
+
+function gruposDe() {
+  const out = [];
+  for (const p of datos.pruebas) {
+    for (const [m, c] of Object.entries(p.modalidades)) {
+      const id = `${p.nombre}-${m}`;
+      out.push({ id, prueba: p, modalidad: m, info: c, ejecuciones: datos.ejecuciones.filter((e) => e.id.split("/")[0] === id) });
+    }
+  }
+  return out;
+}
+
+function pintar() {
+  const grupos = gruposDe();
+  $("#grupos").innerHTML = grupos.map((g) => `<button class="grupo" data-grupo="${g.id}" aria-pressed="${g.id === grupo}">`
+    + `${esc(g.prueba.titulo)} · ${esc(g.modalidad)}<small>${g.ejecuciones.length}</small></button>`).join("");
+  const g = grupos.find((x) => x.id === grupo);
+  if (!g) { $("#contenido").innerHTML = '<p class="vacio">Todavía no hay pruebas en banco/pruebas.</p>'; return; }
+  // el color sigue a la ejecución (por orden de inicio), nunca a su puesto en la clasificación
+  const porInicio = [...g.ejecuciones].sort((a, b) => (a.inicio || "").localeCompare(b.inicio || ""));
+  porInicio.forEach((e, i) => { e.color = i < COLORES ? `var(--s${i + 1})` : "var(--tinta-3)"; });
+  const clasif = [...g.ejecuciones].sort((a, b) => (b.totales?.nota ?? -1) - (a.totales?.nota ?? -1));
+  $("#contenido").innerHTML = ficha(g) + clasificacion(g, clasif) + (g.ejecuciones.length ? curva(g, porInicio) : "")
+    + '<div id="detalle"></div>';
+  pintarDetalle(g);
+}
+
+function ficha(g) {
+  const ref = g.prueba.referencia ? `<a class="boton" href="/banco/abrir/ref/${g.prueba.nombre}/" target="_blank">Abrir la referencia</a>` : "";
+  return `<section class="tarjeta ficha"><div><h2>${esc(g.prueba.titulo)} <span class="chip">${esc(g.prueba.tipo)}</span>`
+    + ` <span class="chip">${esc(g.modalidad)} · ${g.info.parches} parches</span></h2><p>${esc(g.prueba.descripcion)}</p>`
+    + `<p class="pista">${esc(g.info.descripcion)}</p></div>${ref}</section>`;
+}
+
+function clasificacion(g, filas) {
+  if (!filas.length) {
+    return `<section class="tarjeta"><h2>Clasificación</h2><p class="vacio">Nadie ha corrido esta prueba todavía.<br>`
+      + `<code>Banco.bat</code> → ${esc(g.prueba.nombre)} → ${esc(g.modalidad)} → los contendientes que quieras.</p></section>`;
+  }
+  const cuerpo = filas.map((e) => {
+    const t = e.totales || {};
+    const mods = Object.values(t.modelos || {});
+    const tok = mods.reduce((s, m) => s + m.tokens, 0);
+    const seg = mods.reduce((s, m) => s + m.segundos, 0);
+    const estado = e.estado === "en marcha" ? '<span class="chip vivo">en marcha</span>' : `<span class="chip">${esc(e.estado)}</span>`;
+    return `<tr class="fila${elegidas.includes(e.id) ? " elegida" : ""}" data-id="${esc(e.id)}">`
+      + `<td><span class="muestra" style="background:${e.color}"></span><span class="nombre">${esc(e.contendiente)}</span>`
+      + `<div class="desc">${esc(e.modelos_cargados || e.descripcion)}</div></td>`
+      + `<td class="num nota">${t.nota == null ? "—" : `${t.nota}<small> %</small>`}</td>`
+      + `<td class="num">${t.integrados ?? 0} / ${e.parches_total}</td>`
+      + `<td class="num ocultar-movil">${horas(t.segundos || 0)}</td>`
+      + `<td class="num ocultar-movil">${miles(t.tokens)}</td>`
+      + `<td class="num ocultar-movil">${seg ? (tok / seg).toFixed(1) : "—"}</td>`
+      + `<td class="num ocultar-movil">${(t.coste || 0).toFixed(2)} $</td>`
+      + `<td>${estado}<div class="desc">${fecha(e.inicio)}</div></td></tr>`;
+  }).join("");
+  return `<section class="tarjeta"><h2>Clasificación</h2><div class="tabla-scroll"><table><thead><tr><th>Contendiente</th>`
+    + `<th class="num">Nota</th><th class="num">Integrados</th><th class="num ocultar-movil">Tiempo</th>`
+    + `<th class="num ocultar-movil">Tokens</th><th class="num ocultar-movil">tok/s</th><th class="num ocultar-movil">Coste</th>`
+    + `<th>Estado</th></tr></thead><tbody>${cuerpo}</tbody></table></div>`
+    + `<p class="pista">Toca una fila para ver su changelog; toca dos para compararlas lado a lado.</p></section>`;
+}
+
+// --- curva de nota del examen oculto tras cada parche
+const ANCHO = 900, ALTO = 300, M = { izq: 40, der: 120, arr: 12, aba: 30 };
+function curva(g, series) {
+  const total = Math.max(g.info.parches, ...series.map((e) => e.curva.length ? e.curva.at(-1)[0] : 0), 1);
+  const x = (n) => M.izq + ((n - 1) / Math.max(total - 1, 1)) * (ANCHO - M.izq - M.der);
+  const y = (v) => M.arr + (1 - v / 100) * (ALTO - M.arr - M.aba);
+  let svg = "";
+  for (const v of [0, 25, 50, 75, 100]) {
+    svg += `<line x1="${M.izq}" x2="${ANCHO - M.der}" y1="${y(v)}" y2="${y(v)}" stroke="var(--rejilla)" stroke-width="1"/>`
+      + `<text x="${M.izq - 8}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
+  }
+  const paso = Math.max(1, Math.ceil(total / 10));
+  for (let n = 1; n <= total; n += paso) svg += `<text x="${x(n)}" y="${ALTO - 8}" text-anchor="middle">${n}</text>`;
+  const etiquetas = series.length <= 4;
+  for (const e of series) {
+    const pts = e.curva.filter((p) => p[1] != null);
+    if (!pts.length) continue;
+    svg += `<polyline fill="none" stroke="${e.color}" stroke-width="2" stroke-linejoin="round" points="${pts.map((p) => `${x(p[0])},${y(p[1])}`).join(" ")}"/>`;
+    for (const [n, v, r] of pts) {
+      svg += r === "integrado"
+        ? `<circle cx="${x(n)}" cy="${y(v)}" r="3.5" fill="${e.color}" stroke="var(--tarjeta)" stroke-width="2"/>`
+        : `<circle cx="${x(n)}" cy="${y(v)}" r="4" fill="var(--tarjeta)" stroke="${e.color}" stroke-width="2"/>`;
+    }
+    if (etiquetas) {
+      const [n, v] = pts.at(-1);
+      svg += `<text x="${x(n) + 8}" y="${y(v) + 4}" style="fill:var(--tinta-2)">${esc(e.contendiente)} ${v}</text>`;
+    }
+  }
+  svg += `<line id="cruz" y1="${M.arr}" y2="${ALTO - M.aba}" stroke="var(--tinta-3)" stroke-width="1" stroke-dasharray="3 3" visibility="hidden"/>`;
+  svg += `<rect id="zona" x="${M.izq}" y="0" width="${ANCHO - M.izq - M.der}" height="${ALTO}" fill="transparent"/>`;
+  const leyenda = series.map((e) => `<span><span class="muestra" style="background:${e.color}"></span>${esc(e.contendiente)}</span>`).join("")
+    + '<span>● integrado · ○ descartado o fallido</span>';
+  curvaActual = { series, total, x };
+  return `<section class="tarjeta"><h2>Nota del examen oculto tras cada parche (%)</h2><div class="leyenda">${leyenda}</div>`
+    + `<div class="grafica"><svg viewBox="0 0 ${ANCHO} ${ALTO}" role="img" aria-label="Nota del examen por parche y contendiente">${svg}</svg>`
+    + `<div class="globo" id="globo"></div></div></section>`;
+}
+let curvaActual = null;
+
+function moverCruz(ev) {
+  const svg = ev.currentTarget.ownerSVGElement;
+  const caja = svg.getBoundingClientRect();
+  const px = ((ev.clientX - caja.left) / caja.width) * ANCHO;
+  const { series, total, x } = curvaActual;
+  let n = 1;
+  for (let i = 1; i <= total; i++) if (Math.abs(x(i) - px) < Math.abs(x(n) - px)) n = i;
+  const cruz = svg.querySelector("#cruz");
+  cruz.setAttribute("x1", x(n)); cruz.setAttribute("x2", x(n)); cruz.setAttribute("visibility", "visible");
+  const filas = series.map((e) => {
+    const p = e.curva.find((c) => c[0] === n);
+    return p ? `<div><span><span class="muestra" style="background:${e.color}"></span>${esc(e.contendiente)}</span>`
+      + `<span>${p[1] ?? "—"} % · ${esc(p[2])}</span></div>` : "";
+  }).join("");
+  const globo = $("#globo");
+  globo.innerHTML = `<b>Parche ${n}</b>${filas || '<div><span>sin datos</span></div>'}`;
+  globo.style.display = "block";
+  const izq = (x(n) / ANCHO) * caja.width;
+  globo.style.left = `${Math.min(izq + 12, caja.width - globo.offsetWidth)}px`;
+  globo.style.top = "8px";
+}
+
+// --- detalle de una o dos ejecuciones
+async function pintarDetalle(g) {
+  const ids = elegidas.filter((id) => g.ejecuciones.some((e) => e.id === id));
+  const caja = $("#detalle");
+  if (!caja) return;
+  if (!ids.length) { caja.innerHTML = ""; return; }
+  for (const id of ids) if (!detalles.has(id)) detalles.set(id, await (await fetch(`/api/banco/ejecucion/${id}`)).json());
+  caja.innerHTML = `<div class="columnas">${ids.map((id) => columna(detalles.get(id), g.ejecuciones.find((e) => e.id === id))).join("")}</div>`;
+}
+
+function columna(d, e) {
+  const ex = d.examen_final;
+  const examen = ex ? (ex.filas || []).map((f) => `<div class="examen-fila"><span>${esc(f.archivo)}</span><span>${f.pasan} / ${f.tests}</span></div>`
+    + f.fallan.map((n) => `<div class="falla">✖ ${esc(n)}</div>`).join("")).join("") : '<p class="pista">El examen final se pasa al terminar.</p>';
+  let anterior = 0;
+  const parches = d.parches.map((p) => {
+    const nota = p.examen?.nota;
+    const delta = nota == null ? "" : nota - anterior;
+    if (nota != null) anterior = nota;
+    const dtxt = delta === "" ? "" : `<span class="delta ${delta > 0 ? "sube" : delta < 0 ? "baja" : ""}">${nota} %${delta ? ` (${delta > 0 ? "+" : ""}${Math.round(delta * 10) / 10})` : ""}</span>`;
+    const archivos = (p.archivos || []).map((a) => `<span class="archivo ${esc(a.estado)}">${esc(a.ruta)}</span>`).join("");
+    const cl = (p.changelog || []).map((l) => `<li>${esc(l.replace(/^- /, ""))}</li>`).join("");
+    return `<div class="parche"><div class="parche-cab"><span class="parche-n">${String(p.n).padStart(3, "0")}</span>`
+      + `<span class="parche-t">${esc(p.titulo)}</span><span class="chip ${claseResultado(p.resultado)}">${esc(p.resultado)}${p.reintento ? " · reintento" : ""}</span>`
+      + `${dtxt}</div><div class="cambios">${Math.round(p.segundos / 60)} min · ${miles(p.tokens)} tokens${p.coste ? ` · ${p.coste.toFixed(3)} $` : ""}`
+      + `${cl ? `<ul>${cl}</ul>` : ""}${archivos ? `<div class="archivos">${archivos}</div>` : ""}`
+      + `${p.final ? `<details><summary>Informe del agente</summary><pre>${esc(p.final)}</pre></details>` : ""}</div></div>`;
+  }).join("");
+  const id = d.id.split("/");
+  return `<section class="tarjeta"><div class="cabecera-ej"><h2><span class="muestra" style="background:${e.color}"></span>${esc(d.contendiente?.nombre)}</h2>`
+    + `<a class="boton principal" href="/banco/abrir/${id[0]}/${id[1]}/" target="_blank">Abrir el proyecto</a></div>`
+    + `<p class="meta">${esc(d.agente)} · ${esc(d.modelos_cargados || "")}<br>${fecha(d.inicio)} → ${fecha(d.fin)} · <code>${esc(d.repo)}</code></p>`
+    + `<details open><summary>Examen final: ${ex ? `${ex.pasan} de ${ex.total} = ${ex.nota} %` : "pendiente"}</summary>${examen}</details>`
+    + `<h2 style="margin-top:14px">Changelog e incorporaciones</h2>${parches || '<p class="vacio">Aún no ha terminado ningún parche.</p>'}`
+    + `<details><summary>CHANGELOG.md del proyecto</summary><pre>${esc(d.changelog_md)}</pre></details>`
+    + `<details><summary>Informe del autopiloto</summary><pre>${esc(d.informe_md)}</pre></details></section>`;
+}
+
+document.addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-grupo]");
+  if (b) { grupo = b.dataset.grupo; elegidas.length = 0; pintar(); return; }
+  const fila = ev.target.closest("tr.fila");
+  if (fila) {
+    const id = fila.dataset.id;
+    const i = elegidas.indexOf(id);
+    if (i >= 0) elegidas.splice(i, 1);
+    else { elegidas.push(id); if (elegidas.length > 2) elegidas.shift(); }
+    document.querySelectorAll("tr.fila").forEach((f) => f.classList.toggle("elegida", elegidas.includes(f.dataset.id)));
+    pintarDetalle(gruposDe().find((g) => g.id === grupo));
+  }
+});
+document.addEventListener("pointermove", (ev) => { if (ev.target.id === "zona") moverCruz({ ...ev, clientX: ev.clientX, currentTarget: ev.target }); });
+document.addEventListener("pointerout", (ev) => {
+  if (ev.target.id !== "zona") return;
+  $("#globo") && ($("#globo").style.display = "none");
+  document.querySelector("#cruz")?.setAttribute("visibility", "hidden");
+});
+cargar().catch((e) => { $("#contenido").innerHTML = `<p class="vacio">No pude leer /api/banco: ${esc(e.message)}</p>`; });
+</script>
+</body>
+</html>

@@ -385,6 +385,48 @@ def cmd_sandbox(args, store: Store) -> int:
     return 0
 
 
+def cmd_banco(args) -> int:
+    """Banco de pruebas: el mismo proyecto desde cero por contendiente, con examen oculto (ver localharness/banco.py)."""
+    from localharness import autopilot, banco
+    if args.accion == "lista":
+        for pr in banco.pruebas():
+            mods = ", ".join(f"{m} ({c['parches']} parches)" for m, c in pr.ficha()["modalidades"].items())
+            print(f"Prueba {pr.nombre}: {pr.titulo} · {mods}")
+        for c in banco.contendientes():
+            print(f"Contendiente {c['nombre']}: {c.get('descripcion', '')} · agente {c['agente']}")
+        for e in banco.ejecuciones():
+            t = e["totales"] or {}
+            print(f"Ejecución {e['id']}: {e['estado']} · {t.get('hechos', 0)}/{e['parches_total']} parches · "
+                  f"nota {t.get('nota')}")
+        return 0
+    api = autopilot.http(args.url)
+    if args.accion == "seguir":
+        if not args.carpeta:
+            return _fail("banco seguir necesita la carpeta de la ejecución (data/banco/<prueba>-<modalidad>/<...>)")
+        try:
+            ej = banco.Ejecucion(Path(args.carpeta))
+            print(f"Sigo {args.carpeta} · {len(ej.datos['parches'])}/{ej.datos['parches_total']} parches hechos")
+            ej.correr(api)
+        except (OSError, ValueError, autopilot.ApiError) as e:
+            return _fail(str(e))
+        return 0
+    if not (args.prueba and args.modalidad and args.contendiente):
+        return _fail("banco correr necesita --prueba, --modalidad y --contendiente")
+    fallos = 0
+    for nombre in args.contendiente:  # uno detrás de otro: así una noche entera de comparativas sale sola
+        try:
+            prueba = banco.cargar_prueba(args.prueba)
+            ej = banco.Ejecucion.nueva(api, prueba, args.modalidad, banco.cargar_contendiente(nombre))
+            print(f"\n=== {prueba.titulo} ({args.modalidad}) · {nombre} · {ej.carpeta}")
+            d = ej.correr(api)
+            print(f"=== {nombre}: nota {(d.get('examen_final') or {}).get('nota')} % · "
+                  f"{d['totales'].get('integrados')}/{d['parches_total']} integrados")
+        except (OSError, ValueError, RuntimeError, autopilot.ApiError) as e:
+            print(f"=== {nombre}: no pudo correr: {e}")
+            fallos += 1
+    return 1 if fallos == len(args.contendiente) else 0
+
+
 def cmd_autopilot(args) -> int:
     """Lista de parches que se hacen solos durante horas (ver localharness/autopilot.py)."""
     from datetime import datetime
@@ -633,6 +675,14 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("probar-delegacion", help="prueba gratis la mitad local de la delegación (sin Claude)") \
         .set_defaults(fn=cmd_delegation_test)
 
+    p = sub.add_parser("banco", help="banco de pruebas: mismo proyecto desde cero por contendiente, con nota")
+    p.add_argument("accion", choices=["lista", "correr", "seguir"])
+    p.add_argument("carpeta", nargs="?", help="seguir: carpeta de la ejecución en data/banco")
+    p.add_argument("--prueba"); p.add_argument("--modalidad", default="guiada")
+    p.add_argument("--contendiente", nargs="+", help="uno o varios (se corren uno tras otro)")
+    p.add_argument("--url", default="http://127.0.0.1:8095")
+    p.set_defaults(fn=cmd_banco)
+
     p = sub.add_parser("autopilot", help="hace sola una lista de parches durante horas (LocalHarness abierto)")
     p.add_argument("--project", required=True); p.add_argument("--agent", required=True)
     p.add_argument("--list", required=True, help="Markdown con una línea «- texto» por parche")
@@ -659,7 +709,7 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("falta el nombre")
     if args.cmd == "project" and args.action == "add" and not args.path:
         ap.error("falta la ruta del repo")
-    if args.cmd in ("doctor", "serve", "start", "llama", "skills", "autopilot"):
+    if args.cmd in ("doctor", "serve", "start", "llama", "skills", "autopilot", "banco"):
         return args.fn(args)
     store = _store(args)
     try:

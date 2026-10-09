@@ -1,0 +1,6 @@
+{
+  "descripcion": "Otro flujo: Claude (Jefe de obra) dirige y delega en gpt-oss + Qwen 4B. GASTA PLAN DE CLAUDE: el presupuesto es el tope en $ nominales.",
+  "agente": "Jefe de obra",
+  "modelos": {"principal": "gpt-oss-20b-UD-Q4_K_XL", "rapido": "Qwen_Qwen3.5-4B-Q4_K_M"},
+  "horas": 8, "minutos_tarea": 30, "presupuesto": 3
+}

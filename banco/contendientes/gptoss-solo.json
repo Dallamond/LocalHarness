@@ -1,0 +1,6 @@
+{
+  "descripcion": "Modelo grande en solitario: gpt-oss-20b hace todo y la 1060 queda apagada. Mide si la pareja aporta o estorba.",
+  "agente": "Jefe local",
+  "modelos": {"principal": "gpt-oss-20b-UD-Q4_K_XL", "rapido": null},
+  "horas": 12, "minutos_tarea": 45, "presupuesto": 1
+}

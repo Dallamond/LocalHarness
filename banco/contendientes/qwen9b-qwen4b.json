@@ -1,0 +1,6 @@
+{
+  "descripcion": "Pareja Qwen: Qwen3.5-9B de fuerte y Qwen3.5-4B de rápido, mismo flujo que la pareja de referencia.",
+  "agente": "Jefe local",
+  "modelos": {"principal": "Qwen3.5-9B-Q4_K_M", "rapido": "Qwen_Qwen3.5-4B-Q4_K_M"},
+  "horas": 12, "minutos_tarea": 45, "presupuesto": 1
+}

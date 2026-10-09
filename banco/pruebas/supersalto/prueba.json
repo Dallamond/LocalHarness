@@ -1,0 +1,11 @@
+{
+  "titulo": "Supersalto",
+  "tipo": "juego",
+  "descripcion": "Un Mario Bros casero en canvas 256×224: física, colisiones, enemigos, champiñón, koopas, bandera y dos niveles. JavaScript con módulos ES, sin dependencias.",
+  "check": "npm test",
+  "abrir": "index.html",
+  "modalidades": {
+    "guiada": {"parches": "parches-guiada.md", "descripcion": "39 parches con la especificación y los casos de test exactos. Mide ejecución."},
+    "libre": {"parches": "parches-libre.md", "semilla_extra": "semilla-libre", "descripcion": "8 hitos y un contrato sin casos de test. Mide planificación y tests propios."}
+  }
+}

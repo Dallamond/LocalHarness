@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 from localharness.local_servers import autostart_llama, servers_status, start_on, suggest_servers  # noqa: F401
 from localharness import bench, local_servers, profiles
-from localharness import compare
+from localharness import banco, compare
 from localharness import (actions, analytics, catalog, context, designer, hardware, hf, library, llama, maintenance, mcp_local,
                           modelinfo, orchestrator, roles, settings, usage, workspace)
 from localharness.adapters import ADAPTERS
@@ -1542,6 +1542,33 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
 
         return StreamingResponse(stream(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+    # --- banco de pruebas: página /banco y el proyecto de cada ejecución servido para abrirlo (localharness/banco.py)
+    @app.get("/api/banco")
+    def banco_lista() -> dict:
+        return {"pruebas": [p.ficha() for p in banco.pruebas()], "contendientes": banco.contendientes(),
+                "ejecuciones": banco.ejecuciones(banco.DATOS)}
+
+    @app.get("/api/banco/ejecucion/{grupo}/{nombre}")
+    def banco_ejecucion(grupo: str, nombre: str) -> dict:
+        try:
+            return banco.ejecucion(f"{grupo}/{nombre}", banco.DATOS)
+        except FileNotFoundError:
+            raise HTTPException(404, "No existe esa ejecución del banco") from None
+
+    @app.get("/banco", include_in_schema=False)
+    def banco_pagina() -> FileResponse:
+        return FileResponse(banco.BANCO / "visor.html", headers={"Cache-Control": "no-cache"})
+
+    @app.get("/banco/abrir/{grupo}/{nombre}/{ruta:path}", include_in_schema=False)
+    def banco_abrir(grupo: str, nombre: str, ruta: str = "") -> FileResponse:
+        try:
+            # /banco/abrir/ref/<prueba>/... abre la solución de referencia de esa prueba
+            base = banco.raiz_de(f"ref:{nombre}" if grupo == "ref" else f"{grupo}/{nombre}", banco.DATOS)
+            f, tipo = banco.archivo(base, ruta)
+        except (FileNotFoundError, ValueError):
+            raise HTTPException(404) from None
+        return FileResponse(f, media_type=tipo, headers={"Cache-Control": "no-cache"})
 
     # --- web compilada (web/dist) con retorno a index.html para las rutas de la SPA
     if web_dist and (web_dist / "index.html").exists():
