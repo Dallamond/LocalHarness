@@ -461,6 +461,48 @@ export class Office {
     this.buildLinks();
   }
 
+  /** Coloca todo ordenado: tú al fondo, las mesas en una cuadrícula centrada y repartida por la sala (el director
+   *  delante en el centro, luego por nombre; la última fila, centrada) y las torres en fila contra la pared. Devuelve
+   *  las posiciones nuevas para guardarlas. */
+  autoArrange(): Record<string, Placement> {
+    const out: Record<string, Placement> = {};
+    const all = [...this.stations.values()];
+    const you = all.find((st) => st.spec.kind === "you");
+    if (you) out[you.spec.id] = [YOU_POS[0], YOU_POS[1], 2];
+    const desks = all.filter((st) => st.spec.kind !== "you").sort((a, b) =>
+      Number(b.spec.kind === "director") - Number(a.spec.kind === "director") || a.spec.name.localeCompare(b.spec.name));
+    // zona de mesas: sin la pared de las torres (izquierda), sin tu puesto (fondo) y con paso por delante
+    const x0 = LEFT + 3.4, x1 = RX - 1.8, z0 = -1.2, z1 = FZ - 1.6;
+    const GAP_X = 4.2, GAP_Z = 3.2; // mesa con PC y dos pantallas + silla + pasillo
+    const n = desks.length;
+    const maxCols = Math.max(1, Math.floor((x1 - x0) / GAP_X) + 1);
+    const cols = Math.min(maxCols, Math.max(1, Math.ceil(Math.sqrt(n * 1.6))));
+    const rows = Math.max(1, Math.ceil(n / cols));
+    const dx = cols > 1 ? Math.min(5.2, (x1 - x0) / (cols - 1)) : 0;
+    const dz = rows > 1 ? Math.min(3.6, Math.max(GAP_Z, (z1 - z0) / (rows - 1))) : 0;
+    const cx = (x0 + x1) / 2;
+    const zStart = Math.max(z0, (z0 + z1) / 2 - (dz * (rows - 1)) / 2);
+    const snap = (v: number) => Math.round(v * 4) / 4;
+    desks.forEach((st, i) => {
+      const r = Math.floor(i / cols), c = i % cols;
+      const inRow = Math.min(cols, n - r * cols);
+      out[st.spec.id] = [snap(cx + (c - (inRow - 1) / 2) * dx), snap(zStart + r * dz), 2];
+    });
+    [...this.towers.keys()].forEach((id, i) => {
+      const xz = RACK_SLOTS[Math.min(i, RACK_SLOTS.length - 1)];
+      out[`rack:${id}`] = [xz[0], xz[1], 0];
+    });
+    for (const [id, p] of Object.entries(out)) {
+      const o = this.objOf(id);
+      if (o) this.place(o, p);
+    }
+    // «rack» a secas era la primera torre antes de haber varias: fuera, para que no pise a la nueva posición
+    const { rack: _old, ...rest } = this.layout;
+    this.layout = { ...rest, ...out };
+    this.buildLinks();
+    return { ...this.layout };
+  }
+
   /** El grupo de un puesto o de una torre («rack:<servidor>»; «rack» a secas = la primera torre). */
   private objOf(id: string): THREE.Object3D | undefined {
     if (id === "rack") return this.towers.values().next().value?.group;

@@ -17,9 +17,12 @@ class LocalBossAdapter(Adapter):
     name = "local_boss"
     is_cli = False
 
-    def __init__(self, binary: str | None = None, check: str | None = None, **_):
+    def __init__(self, binary: str | None = None, check: str | None = None, cerebro: int | None = None,
+                 roles: dict | None = None, **_):
         super().__init__(binary)
         self.check = check
+        self.cerebro = cerebro  # 2 = cerebro.Cerebro (diagnóstico, escalera de arreglo, pensamiento por papel)
+        self.roles = roles  # cambios a cerebro.ROLES para este agente
 
     def build_command(self, spec: RunSpec) -> list[str]:  # no es una CLI
         raise NotImplementedError
@@ -41,8 +44,15 @@ class LocalBossAdapter(Adapter):
         server = Server(env)
         check = self.check if self.check is not None else detect_check(Path(spec.cwd))
         # el jefe para entre pasos un poco antes del tope, para que dé tiempo al informe
-        boss = Boss(server, check=check, say=say, deadline=t0 + max(60.0, timeout_s - 120))
-        on_event(Event("progress", text="Jefe local: planifican, reparten, comprueban y revisan los modelos locales"))
+        deadline = t0 + max(60.0, timeout_s - 120)
+        v2 = str(self.cerebro or "") == "2"
+        if v2:
+            from localharness.cerebro import Cerebro
+            boss = Cerebro(server, check=check, say=say, deadline=deadline, roles=self.roles)
+        else:
+            boss = Boss(server, check=check, say=say, deadline=deadline)
+        on_event(Event("progress", text=f"Jefe local{' (cerebro 2)' if v2 else ''}: planifican, reparten, "
+                                        "comprueban y revisan los modelos locales"))
         try:
             final = await asyncio.to_thread(boss.run, spec.prompt)
         except (NoModel, ToolError) as e:

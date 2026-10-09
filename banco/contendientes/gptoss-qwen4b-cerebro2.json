@@ -1,0 +1,7 @@
+{
+  "descripcion": "Los obreros de la pareja de referencia (gpt-oss-20b en la 3060, Qwen3.5-4B en la 1060) con el Jefe local 2: diagnóstico del primer fallo, escalera de arreglo, tests después del código y mapa de la API.",
+  "agente": "Jefe local 2",
+  "modelos": {"principal": "gpt-oss-20b-UD-Q4_K_XL", "rapido": "Qwen_Qwen3.5-4B-Q4_K_M"},
+  "pensamiento": {"principal": "normal", "rapido": "apagado"},
+  "horas": 12, "minutos_tarea": 45, "presupuesto": 1
+}

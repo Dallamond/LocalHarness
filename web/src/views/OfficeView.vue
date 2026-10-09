@@ -716,6 +716,11 @@ async function loadLayout() {
     office?.setLayout(layout.value);
   } catch { /* sin ajustes: posiciones por defecto */ }
 }
+function arrangeLayout() {
+  if (!office) return;
+  layout.value = office.autoArrange();
+  saveLayout();
+}
 function resetLayout() {
   if (!confirm("¿Volver a colocar todos los puestos en su sitio por defecto?")) return;
   layout.value = {};
@@ -899,6 +904,7 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
           <button :class="{ on: !locked }" :title="locked ? 'Desbloquear: arrastra los puestos para moverlos' : 'Arrastra un puesto para moverlo. Pulsa para bloquear.'" @click="locked = !locked">
             <i class="fa-solid" :class="locked ? 'fa-lock' : 'fa-up-down-left-right'" /> {{ locked ? "Bloqueado" : "Mover" }}
           </button>
+          <button title="Ordenar: coloca todas las mesas repartidas y separadas, y las torres en fila" @click="arrangeLayout"><i class="fa-solid fa-table-cells" /> Ordenar</button>
           <button v-if="Object.keys(layout).length" title="Volver a la colocación por defecto" @click="resetLayout"><i class="fa-solid fa-rotate-left" /></button>
           <button title="Traer agentes a la oficina desde el Catálogo" @click="openCatalog('agents')"><i class="fa-solid fa-user-plus" /> Agentes</button>
           <button :class="{ on: cinema }" title="Modo cine: si no tocas la oficina en 20 s, la cámara se mueve sola" @click="cinema = !cinema"><i class="fa-solid fa-video" /> Cine</button>

@@ -3,6 +3,38 @@
 Última actualización: 09/10/2026, noche (banco de pruebas: resultados y qué sigue; oficina y GUI nuevas). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
 
 
+## ▶ 09/10/2026 23:30 — Cerebro 2 del jefe local (sin medir aún) y pareja Qwen relanzada
+**Análisis (eventos 173–190 contra 200–217):** los 13 descartes del jefe local tenían `npm test` en ROJO; la revisión
+nunca fue la única que bloqueó (corrige la hipótesis 3 de abajo). Lo que fallaba era ARREGLAR: el jefe replanificaba a
+ciegas con el final de la salida; Claude leía el archivo, señalaba la línea y daba el cambio exacto, y si no salía,
+contenido literal. Parche 1: el 4B escribió los tests a la vez que el código e importó las funciones de fechas desde
+dinero.js → el arreglo «añadió export {…}» → `Duplicate export` durante 5 rondas → cascada (7 de 13 descartes con
+`Cannot find module`). Planificar se comió 44 de 129 min; las ediciones del arreglo automático fallan 21 de 37.
+
+**Hecho (sin reiniciar LocalHarness: entra en vigor al reiniciar):**
+- `localharness/cerebro.py` — `Cerebro(Boss)`, se elige por agente con `config.cerebro = 2`. Agente **«Jefe local 2»**
+  (id 16) y contendiente `banco/contendientes/gptoss-qwen4b-cerebro2.json` (mismos obreros que la línea base).
+  Mapa de la API (qué exporta cada módulo) al planificador y a los bloques; tests DESPUÉS del código con el código
+  delante y en la ruta que da la tarea; arreglos mecánicos sin modelo (export duplicado, import del módulo
+  equivocado, .js↔.mjs); escalera de arreglo: diagnóstico del PRIMER fallo con números de línea → cambio quirúrgico
+  ×2 → reescritura entera → quirúrgico, con «ya probado»; revisión solo en verde y consultiva (si su corrección rompe
+  los tests, se deshace); rechazan los tests en rojo y las guardias.
+- Sistema de pensamiento por papel (`cerebro.ROLES`: elegir_archivos, planificar, diagnosticar, revisar → tipo de
+  servidor, servidor concreto, effort, pensar, max_tokens; se cambia por agente con `config.roles`). Si un papel «se
+  queda pensando», se repite una vez sin razonar. `Server.overrides` (por hilo) en mcp_local.
+- Banco: el contendiente puede fijar `pensamiento` por servidor y, si apaga uno, se quita `autostart_on_task` mientras
+  corre (arregla `gptoss-solo`). Se restauran los ajustes al acabar.
+- Oficina: botón **Ordenar** (mesas en cuadrícula repartida, torres en fila) y `office_layout` acepta `rack:<id>`
+  (antes la posición de una torre arrastrada no se guardaba: el PUT entero daba 422).
+
+**Pareja Qwen:** la primera (22:46) no valía: el Qwen3.5-9B en «normal» razonaba sin tope (el `effort: low` solo lo
+entiende gpt-oss) y 3 encargos murieron «pensando». Parada y relanzada a las 23:12 con los dos servidores en
+«apagado» (`qwen9b-qwen4b-20261009-2312`).
+
+**Siguiente:** cuando acabe la pareja Qwen, reiniciar LocalHarness y correr `gptoss-qwen4b-cerebro2` (línea base:
+`gptoss-qwen4b` 20,7 %). Banco de diagnóstico con los fallos que arregló Claude (para elegir modelo del papel
+«diagnosticar», p. ej. en la M40). Reintento con memoria y sin cascada en el autopiloto (pendiente).
+
 ## ▶ 09/10/2026 noche — Banco de pruebas: el cuello de botella es el JEFE LOCAL, no los modelos
 **Dónde lo dejamos (23:00).** El banco (`banco/`, página `http://127.0.0.1:8095/banco`, resultados en `data/banco/`)
 está corriendo `qwen9b-qwen4b` en Cuentas claras guiada (empezó 22:46; Qwen3.5-9B en la 3060 + Qwen3.5-4B en la 1060).

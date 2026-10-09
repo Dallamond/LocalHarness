@@ -126,6 +126,10 @@ class OfficeTests(unittest.TestCase):
         self.assertEqual(settings.load(s)["office_layout"]["a3"], [2.5, -1.0, 1])  # giro en cuartos de vuelta
         with self.assertRaises(ValueError):
             settings.save(s, {"office_layout": {"../x": [0, 0, 0]}})
+        settings.save(s, {"office_layout": {"a3": [2.5, -1, 1], "rack:principal": [-8.5, -1.4, 0]}})  # torres
+        self.assertEqual(settings.load(s)["office_layout"]["rack:principal"], [-8.5, -1.4, 0])
+        with self.assertRaises(ValueError):
+            settings.save(s, {"office_layout": {"rack:../x": [0, 0, 0]}})
         settings.reset(s)
         self.assertIn("a3", settings.load(s)["office_layout"])  # restablecer no deshace tu oficina
 

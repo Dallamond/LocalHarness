@@ -487,6 +487,17 @@ class Server:
     def use(self, srv: dict) -> None:
         self.url, self.key, self.server_id = srv["url"], srv.get("key") or "", srv["id"]
 
+    @property
+    def overrides(self) -> dict:
+        """Lo que fija el «sistema de pensamiento» del jefe (cerebro.ROLES) para los encargos de ESTE hilo: effort,
+        max_tokens y pensar (apagado|normal|profundo, manda sobre el del servidor). Por hilo: los obreros de un plan,
+        que van en otros hilos, siguen con lo suyo."""
+        return getattr(self._tl, "overrides", None) or {}
+
+    @overrides.setter
+    def overrides(self, value: dict) -> None:
+        self._tl.overrides = dict(value or {})
+
     def route(self, kind: str, wanted=None) -> list[dict]:
         """Orden en que probar los servidores para un encargo: el que pidió Claude (`server`) o el de papel más
         adecuado primero; los demás detrás por si el primero no contesta."""
@@ -1414,13 +1425,16 @@ class Server:
         """Un encargo al modelo. `schema`: JSON Schema que la respuesta TIENE que cumplir (llama-server lo impone con
         una gramática: se acaban los planes y JSON mal formados). `effort`: razonamiento de gpt-oss y similares; el
         08/10, con los mismos encargos, «low» escribió 3-4 veces más rápido que «medium» y el mismo código."""
+        ov = self.overrides
+        effort = ov.get("effort") or effort
+        max_tokens = ov.get("max_tokens") or max_tokens
         skills = self.worker().get("skills") or []
         system += self.skills_text()
         # cache_prompt: los bloques de un plan comparten prompt de sistema y archivos; llama-server reutiliza lo ya
         # procesado en la ranura en vez de leerlo otra vez
         body = {"messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
                 "temperature": 0.2, "max_tokens": max_tokens or self.max_tokens, "cache_prompt": True,
-                "_effort": effort}
+                "_effort": effort, "_thinking": ov.get("pensar")}
         if schema:
             body["response_format"] = {"type": "json_schema", "json_schema": {"name": "respuesta", "strict": True,
                                                                               "schema": schema}}
@@ -1455,16 +1469,17 @@ class Server:
         """Al servidor elegido; si está apagado, a los siguientes del orden (un 401 no: fallarían igual)."""
         body = dict(body)
         effort = body.pop("_effort", None)
+        forced = body.pop("_thinking", None)
         if self.transport:
             srv = next((x for x in self.servers if x["id"] == self.server_id), self.servers[0])
-            return self.transport({**body, **thinking_body(srv.get("thinking"), effort)})
+            return self.transport({**body, **thinking_body(forced or srv.get("thinking"), effort)})
         order = self.order or [next(srv for srv in self.servers if srv["id"] == self.server_id)]
         for i, srv in enumerate(order):
             self.use(srv)
             self.current["server"] = srv["id"]
             self._live("", "")  # ese modelo ya está con el encargo (la oficina lo pone a trabajar)
             try:
-                return self._post({**body, **thinking_body(srv.get("thinking"), effort)})
+                return self._post({**body, **thinking_body(forced or srv.get("thinking"), effort)})
             except Exception as e:
                 self._live("", "", done=True)
                 if not isinstance(e, NoModel) or i == len(order) - 1 or "401" in str(e):

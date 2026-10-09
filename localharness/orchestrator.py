@@ -158,7 +158,7 @@ async def execute_task(store: Store, task_id: int, *, binaries: dict[str, str] |
         extra.update({k: cfg[k] for k in ("tool_mode", "max_tool_chars", "max_context_chars", "web", "commands",
                                           "command_timeout_s") if k in cfg})
     if agent["provider"] == "local_boss":  # jefe local: su orden de tests (vacío = la detecta en el repo)
-        extra = {"check": cfg.get("check")}
+        extra = {"check": cfg.get("check"), "cerebro": cfg.get("cerebro"), "roles": cfg.get("roles")}
     adapter = get_adapter(agent["provider"], binary=(binaries or {}).get(agent["provider"]) or cfg.get("binary"),
                           **extra)
 

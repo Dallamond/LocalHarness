@@ -368,6 +368,10 @@ class Boss:
                 out.append(rel.as_posix())
         return out
 
+    def plan_check(self) -> str:
+        """La comprobación que corre execute_plan tras el plan (con su arreglo automático)."""
+        return self.check
+
     def run_check(self) -> str:
         if not self.check:
             return ""
@@ -439,7 +443,7 @@ class Boss:
             return {"ok": False, "text": "", "written": [], "check": ""}
         self.say(f"{label}: {len(blocks)} bloques — " + "; ".join(
             f"{b.get('kind')} {b.get('path') or b.get('title') or ''}" for b in blocks)[:300])
-        text, stats = self.s.execute_plan(blocks, self.check)
+        text, stats = self.s.execute_plan(blocks, self.plan_check())
         self.s._log({"tool": "local_execute_plan", "at": time.time(), "task": f"plan: {stats['ok']} de "
                      f"{stats['blocks']} bloques", **stats, "blocks_ok": stats["ok"], "ok": True})
         written = [b["path"] for b in blocks if b.get("kind") in ("edit", "write") and b.get("path")]

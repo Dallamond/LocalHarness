@@ -58,6 +58,8 @@ class FakeApi:
             return [self.project]
         if path == "/api/agents":
             return [{"id": 14, "name": "Jefe local"}]
+        if path == "/api/settings":
+            return {"values": {"llama": {"autostart_on_task": True, "servers": []}}}
         if path == "/api/llama":
             return {"config": {}, "servers": self.servers, "models": [
                 {"name": "Grande-Q4", "file": "Grande-Q4.gguf", "path": "D:/m/Grande-Q4.gguf"}]}
@@ -125,6 +127,23 @@ class BancoTest(unittest.TestCase):
         self.assertFalse(any(c[1] == "/api/llama/start" for c in api.calls[n:]))
         with self.assertRaisesRegex(ValueError, "No encuentro"):
             banco.cargar_modelos(api, {"principal": "Nada"})
+
+    def test_ajustar_llama(self):
+        llama = {"autostart_on_task": True, "servers": [{"id": "principal", "thinking": "normal"},
+                                                        {"id": "rapido", "thinking": "apagado"}]}
+        calls = []
+
+        def api(method, path, body=None):
+            calls.append((method, path, body))
+            return {"values": {"llama": llama}}
+        self.assertIsNone(banco.ajustar_llama(api, {"modelos": {"principal": "X"}}, say=lambda _: None))
+        self.assertEqual(calls, [])
+        previo = banco.ajustar_llama(api, {"modelos": {"principal": "X", "rapido": None},
+                                           "pensamiento": {"principal": "apagado"}}, say=lambda _: None)
+        cambio = calls[-1][2]["llama"]
+        self.assertEqual([s["thinking"] for s in cambio["servers"]], ["apagado", "apagado"])
+        self.assertIs(cambio["autostart_on_task"], False)
+        self.assertEqual(previo, {"servers": llama["servers"], "autostart_on_task": True})
 
     @unittest.skipUnless(NODE, "hace falta node para el examen")
     def test_ejecucion_completa_con_curva_de_nota(self):

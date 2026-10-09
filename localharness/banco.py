@@ -162,6 +162,31 @@ def cargar_modelos(api: Callable, modelos: dict | None, say: Callable[[str], Non
     return cargados(api)
 
 
+def ajustar_llama(api: Callable, cont: dict, say: Callable[[str], None] = print) -> dict | None:
+    """Ajustes de llama que pide el contendiente mientras corre; devuelve los de antes para dejarlos igual al acabar
+    (None si no cambia nada). `pensamiento` {servidor: normal|apagado|profundo}: el 09/10 el Qwen3.5-9B en «normal»
+    razonaba sin tope (el `effort: low` del jefe solo lo entiende gpt-oss) y 3 encargos murieron «pensando». Y si
+    deja un servidor apagado (null), se quita `autostart_on_task`: si no, cada tarea lo volvía a encender
+    (gptoss-solo usó el 4B 46 veces)."""
+    pensamiento = cont.get("pensamiento") or {}
+    apaga = any(v is None for v in (cont.get("modelos") or {}).values())
+    if not pensamiento and not apaga:
+        return None
+    llama = api("GET", "/api/settings")["values"]["llama"]
+    cambio: dict = {}
+    if pensamiento:
+        cambio["servers"] = [{**s, "thinking": pensamiento.get(s["id"], s.get("thinking", "normal"))}
+                             for s in llama.get("servers") or []]
+    if apaga and llama.get("autostart_on_task"):
+        cambio["autostart_on_task"] = False
+    if not cambio:
+        return None
+    say("  ajustes de llama: " + ", ".join(f"{k}={v}" for k, v in pensamiento.items())
+        + (" · sin autoarranque" if "autostart_on_task" in cambio else ""))
+    api("PUT", "/api/settings", {"llama": cambio})
+    return {k: llama.get(k) for k in cambio}
+
+
 def cargados(api: Callable) -> str:
     try:
         servers = api("GET", "/api/llama").get("servers") or []
@@ -250,18 +275,23 @@ class Ejecucion:
         cont = self.datos["contendiente"]
         modalidad = self.datos["modalidad"]
         self.datos["estado"] = "en marcha"
-        self.datos["modelos_cargados"] = cargar_modelos(api, cont.get("modelos"), say)
-        self.guardar()
-        say(f"Modelos: {self.datos['modelos_cargados']}")
-        items = self.prueba.lista(modalidad)
-        p = piloto(api, self.datos["proyecto"], cont["agente"], items, hours=cont["horas"],
-                   budget=cont["presupuesto"], task_minutes=cont["minutos_tarea"], check=self.prueba.check,
-                   state=self.carpeta / "estado.json", report=self.carpeta / "informe.md", say=say, after=self.apuntar,
-                   **kw)
+        previo = ajustar_llama(api, cont, say)
         try:
-            p.run()
+            self.datos["modelos_cargados"] = cargar_modelos(api, cont.get("modelos"), say)
+            self.guardar()
+            say(f"Modelos: {self.datos['modelos_cargados']}")
+            items = self.prueba.lista(modalidad)
+            p = piloto(api, self.datos["proyecto"], cont["agente"], items, hours=cont["horas"],
+                       budget=cont["presupuesto"], task_minutes=cont["minutos_tarea"], check=self.prueba.check,
+                       state=self.carpeta / "estado.json", report=self.carpeta / "informe.md", say=say,
+                       after=self.apuntar, **kw)
+            try:
+                p.run()
+            finally:
+                self.cerrar(len(self.datos["parches"]) >= len(items))
         finally:
-            self.cerrar(len(self.datos["parches"]) >= len(items))
+            if previo is not None:
+                api("PUT", "/api/settings", {"llama": previo})
         return self.datos
 
     def cerrar(self, completa: bool) -> None:

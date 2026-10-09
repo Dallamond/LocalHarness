@@ -74,7 +74,8 @@ def clean_office_layout(v: Any) -> dict[str, list[float]]:
         raise ValueError("office_layout debe ser un objeto {puesto: [x, z, giro]}")
     out = {}
     for k, p in v.items():
-        if not re.match(r"^(you|rack|[aw]\d{1,9})$", str(k)) or not isinstance(p, list) or len(p) != 3 \
+        # rack:<servidor> = una torre de modelo local (la oficina las guarda así desde que hay una por servidor)
+        if not re.match(r"^(you|rack|rack:[a-z0-9][a-z0-9_-]{0,23}|[aw]\d{1,9})$", str(k)) or not isinstance(p, list) or len(p) != 3 \
                 or not all(isinstance(n, (int, float)) and not isinstance(n, bool) for n in p):
             raise ValueError(f"Posición no válida para {k!r}")
         out[k] = [max(-20.0, min(20.0, float(p[0]))), max(-20.0, min(20.0, float(p[1]))), int(p[2]) % 4]
