@@ -4,7 +4,9 @@
 # Uso: powershell -File scripts\prueba-mario.ps1 -Nombre qwen36  (lo llama Prueba-mario.bat)
 # -Seguir: la copia y el proyecto ya existen (p. ej. la prueba se cortó porque LocalHarness estaba cerrado): no los
 # vuelve a crear y archiva el estado anterior del autopiloto para empezar la lista desde el principio.
-param([Parameter(Mandatory = $true)][string]$Nombre, [double]$Horas = 12, [switch]$Seguir)
+# -Continuar: como -Seguir, pero conserva el estado (sigue por donde iba y adopta la tarea que siga viva).
+param([Parameter(Mandatory = $true)][string]$Nombre, [double]$Horas = 12, [switch]$Seguir, [switch]$Continuar)
+if ($Continuar) { $Seguir = $true }
 $ErrorActionPreference = "Stop"
 $raiz = Split-Path -Parent $PSScriptRoot
 $base = "D:\LocalHarness-proyectos\mario"
@@ -27,7 +29,7 @@ if (-not $listo) { throw "LocalHarness no contesta en 4 minutos: abre LocalHarne
 $lista = Join-Path $raiz "autopilot\mario-$Nombre.md"  # el estado del autopiloto va por nombre de lista
 if ($Seguir) {
     $estado = Join-Path $raiz "data\autopilot\mario-$Nombre-estado.json"
-    if (Test-Path $estado) {
+    if ((Test-Path $estado) -and -not $Continuar) {
         Rename-Item $estado "mario-$Nombre-estado-$(Get-Date -Format 'yyyyMMdd-HHmm').json"
         Write-Host "Estado anterior archivado: la lista empieza desde el parche 1"
     }

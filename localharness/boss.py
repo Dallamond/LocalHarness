@@ -550,6 +550,10 @@ class Boss:
                     break
         # lo que impide integrar: guardias que siguen fallando o una revisión en contra (el 09/10 se integraron 22
         # parches con la revisión en contra, y el juego no arrancaba)
+        # sin ningún cambio no hay nada que rechazar: casi siempre es que los modelos no contestaron (el 09/10, un
+        # 401 de un llama-server de antes del reinicio) y el autopiloto, al verlo «sin cambios», lo repite una vez
+        if not self.changed():
+            return self.report(verdict, check_out)
         if "GUARDIAS DEL JEFE" in (check_out or ""):
             self.rejected.append("guardias: " + "; ".join(ln[2:] for ln in check_out.splitlines()
                                                            if ln.startswith("- ")))

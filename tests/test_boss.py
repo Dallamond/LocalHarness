@@ -11,7 +11,7 @@ from pathlib import Path
 from localharness.boss import (REJECTED, SYSTEM_PROPOSE, SYSTEM_REVIEW, SYSTEM_SELECT, Boss, detect_check,
                                propose_patches)
 from localharness.edits import SYSTEM_EDIT, apply_edits, parse_edits
-from localharness.mcp_local import SYSTEM_PLAN, SYSTEM_WRITE, Server, check_failed
+from localharness.mcp_local import SYSTEM_PLAN, SYSTEM_WRITE, Server, ToolError, check_failed
 
 CALC = "def suma(a, b):\n    return a - b\n"
 TEST = ("import unittest\nfrom calc import suma\n\n\nclass T(unittest.TestCase):\n"
@@ -178,6 +178,15 @@ class BossTests(unittest.TestCase):
         self.assertTrue(boss.rejected)
         self.assertTrue(report.startswith(REJECTED))
         self.assertIn("comprueba los tipos", report.split("\n")[0])
+
+    def test_no_changes_at_all_is_not_a_rejection(self):
+        # 09/10: un 401 dejó el parche sin plan ni cambios; no es la revisión la que lo tumba, son los modelos
+        def models(body):
+            raise ToolError("llama-server rechaza la clave (401)")
+        boss, _ = self.boss(models)
+        report = boss.run("Arregla suma")
+        self.assertEqual(boss.rejected, [])
+        self.assertFalse(report.startswith(REJECTED))
 
     def test_edit_markers_left_in_a_file_are_a_gate_that_blocks(self):
         # el 09/10: un bloque con dos «=======» dejó media edición dentro de render.js con los tests en verde
