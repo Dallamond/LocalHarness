@@ -788,6 +788,24 @@ export function agentColor(a: Agent | undefined): string {
   return ROLE_HEX[a.role ?? ""] ?? EXTRA_HEX[a.id % EXTRA_HEX.length];
 }
 
+/** Iconos de Font Awesome (nombre y código para dibujarlo en un canvas) entre los que sale el de cada agente. */
+export const AGENT_ICONS: [string, string][] = [
+  ["robot", "f544"], ["bolt", "f0e7"], ["rocket", "f135"], ["flask", "f0c3"], ["brain", "f5dc"], ["compass", "f14e"],
+  ["satellite-dish", "f7c0"], ["shield-halved", "f3ed"], ["hammer", "f6e3"], ["feather", "f52d"], ["eye", "f06e"],
+  ["magnet", "f076"], ["atom", "f5d2"], ["dragon", "f6d5"], ["ghost", "f6e2"], ["cat", "f6be"], ["crow", "f520"],
+  ["fish", "f578"], ["leaf", "f06c"], ["fire", "f06d"], ["anchor", "f13d"], ["chess-knight", "f441"],
+  ["puzzle-piece", "f12e"], ["bug", "f188"], ["cube", "f1b2"], ["gear", "f013"], ["wrench", "f0ad"], ["microchip", "f2db"],
+];
+
+/** Icono único de un agente (chat, oficina, ajustes): el de `config.icon` si lo tiene; si no, uno fijo por su id, así que
+ *  hasta 28 agentes seguidos no repiten. */
+export function agentIcon(a: Agent | undefined): { name: string; code: string } {
+  if (!a) return { name: "user", code: "f007" };
+  const own = AGENT_ICONS.find(([n]) => n === (a.config as { icon?: string } | undefined)?.icon);
+  const [name, code] = own ?? AGENT_ICONS[a.id % AGENT_ICONS.length];
+  return { name, code };
+}
+
 export const PROVIDER_TEXT: Record<string, string> = {
   claude: "Suscripción", local: "Local · GPU", local_agent: "Local · agente", local_boss: "Local · jefe", codex: "Codex", human: "Humano",
 };

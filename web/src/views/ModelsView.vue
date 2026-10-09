@@ -1060,16 +1060,13 @@ async function setAgentServer(id: number, server: string) {
 .server--ready .dot,
 .server--external .dot {
   background: var(--ok);
-  box-shadow: 0 0 0 4px var(--ok-weak);
 }
 .server--loading .dot {
   background: var(--info);
-  box-shadow: 0 0 0 4px var(--info-weak);
   animation: pulse 1.2s infinite;
 }
 .server--failed .dot {
   background: var(--crit);
-  box-shadow: 0 0 0 4px var(--crit-weak);
 }
 @keyframes pulse {
   50% {
@@ -1157,7 +1154,7 @@ async function setAgentServer(id: number, server: string) {
   place-items: center;
   width: 40px;
   height: 40px;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   font-weight: 800;
   font-size: 16px;
   flex-shrink: 0;
@@ -1412,7 +1409,6 @@ async function setAgentServer(id: number, server: string) {
 }
 .model--on {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-weak);
   background: var(--panel);
 }
 .model__head {
@@ -1425,7 +1421,7 @@ async function setAgentServer(id: number, server: string) {
   place-items: center;
   width: 36px;
   height: 36px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: var(--panel);
   font-size: 18px;
   flex-shrink: 0;

@@ -535,7 +535,7 @@ async function save() {
 .icon-btn {
   width: 34px;
   height: 34px;
-  border-radius: 11px;
+  border-radius: var(--radius-sm);
   background: var(--panel-raised);
   border: 1px solid var(--line);
   display: grid;
@@ -609,7 +609,7 @@ h4 {
   text-align: left;
   border: 1px solid var(--line);
   border-top: 3px solid var(--c);
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   background: var(--panel-raised);
   color: var(--ink);
   cursor: pointer;
@@ -645,7 +645,7 @@ h4 {
   align-items: center;
   padding: 10px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   background: var(--panel-raised);
   cursor: pointer;
 }
@@ -667,7 +667,7 @@ h4 {
   flex-shrink: 0;
   display: grid;
   place-items: center;
-  border-radius: 11px;
+  border-radius: var(--radius-sm);
   background: #d97706;
   color: #fff;
 }
@@ -687,7 +687,7 @@ h4 {
   flex-direction: column;
   padding: 7px 10px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: var(--panel-raised);
   color: var(--ink);
   cursor: pointer;
@@ -713,7 +713,7 @@ h4 {
   align-items: center;
   padding: 7px 9px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 .mrow input {
@@ -744,7 +744,7 @@ h4 {
   flex-shrink: 0;
   display: grid;
   place-items: center;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   font-weight: 800;
   background: var(--meter);
 }
@@ -857,7 +857,7 @@ textarea.input {
 }
 .pv-card {
   padding: 14px;
-  border-radius: 16px;
+  border-radius: var(--radius);
   background: var(--panel);
   border: 1px solid var(--line);
   border-top: 5px solid var(--c);
@@ -880,7 +880,7 @@ textarea.input {
   height: 46px;
   display: grid;
   place-items: center;
-  border-radius: 14px;
+  border-radius: var(--radius);
   background: var(--c);
   color: #fff;
   font-size: 20px;
@@ -913,7 +913,7 @@ dd {
 .pv-ins {
   margin-top: 10px;
   padding: 8px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: var(--panel-raised);
   font-size: 11.5px;
   color: var(--ink-dim);
@@ -934,7 +934,7 @@ dd {
 .warns li {
   font-size: 12px;
   padding: 7px 9px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: #fef3c7;
   color: #92400e;
 }

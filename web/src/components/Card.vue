@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Tarjeta: superficie suave con título opcional y acciones a la derecha.
+// Tarjeta: panel plano de borde fino, con título opcional y acciones a la derecha.
 defineProps<{
   title?: string;
   subtitle?: string;
@@ -27,32 +27,32 @@ defineProps<{
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  padding: 18px 20px 20px;
+  padding: 14px 16px 16px;
   min-width: 0;
 }
 .card--dense {
-  padding: 12px 14px 14px;
+  padding: 10px 12px 12px;
 }
 .card--warn {
-  border-color: var(--warn);
-  box-shadow: 0 0 0 3px var(--warn-weak), var(--shadow);
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+  border-left: 3px solid var(--warn);
 }
 .card--crit {
-  border-color: var(--crit);
-  box-shadow: 0 0 0 3px var(--crit-weak), var(--shadow);
+  border-color: color-mix(in srgb, var(--crit) 45%, var(--line));
+  border-left: 3px solid var(--crit);
 }
 .card__head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
 .card__titles {
   min-width: 0;
 }
 .card__title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 650;
 }
 .card__sub {

@@ -262,22 +262,22 @@ const BY: Record<string, string> = { Claude: "Las eligió Claude", "tú": "Las c
 .insp-h small { color: var(--ink-dim); font-weight: 600; }
 .insp-h .prov { margin-left: auto; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .avatar {
-  width: 44px; height: 44px; flex-shrink: 0; border-radius: 14px; display: grid; place-items: center;
-  font-size: 19px; color: #fff; background: var(--c); box-shadow: 0 8px 16px -8px var(--c);
+  width: 44px; height: 44px; flex-shrink: 0; border-radius: var(--radius); display: grid; place-items: center;
+  font-size: 19px; color: #fff; background: var(--c);
 }
-.state { font-size: 12px; font-weight: 600; color: var(--ink-dim); padding: 6px 10px; border-radius: 10px; background: var(--panel-raised); }
+.state { font-size: 12px; font-weight: 600; color: var(--ink-dim); padding: 6px 10px; border-radius: var(--radius-sm); background: var(--panel-raised); }
 .state.on { background: rgba(14, 165, 233, 0.14); color: #0284c7; }
 .state i { display: inline-block; width: 1.1em; text-align: center; }
 .tabs { display: flex; gap: 4px; margin: 10px 0 8px; }
 .tabs button {
-  flex: 1; min-width: 0; border: 0; border-radius: 10px; padding: 6px 4px; font: inherit; font-size: 11px; font-weight: 700;
+  flex: 1; min-width: 0; border: 0; border-radius: var(--radius-sm); padding: 6px 4px; font: inherit; font-size: 11px; font-weight: 700;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   background: var(--panel-raised); color: var(--ink-dim); cursor: pointer;
 }
 .tabs button.on { background: #0ea5e9; color: #fff; }
 .tabs em { font-style: normal; opacity: 0.8; margin-left: 2px; }
 .chat { display: grid; gap: 6px; max-height: 46vh; overflow: auto; padding-right: 2px; }
-.msg { display: grid; gap: 3px; padding: 7px 9px; border-radius: 12px; font-size: 12px; max-width: 94%; }
+.msg { display: grid; gap: 3px; padding: 7px 9px; border-radius: var(--radius-sm); font-size: 12px; max-width: 94%; }
 .msg b { font-size: 11px; }
 .msg--claude { background: var(--accent-weak); justify-self: start; }
 .msg--local { background: rgba(14, 165, 233, 0.13); justify-self: end; }
@@ -292,7 +292,7 @@ pre {
   white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; margin: 4px 0 0; max-height: 260px; overflow: auto;
   background: var(--panel-raised); padding: 6px 8px; border-radius: 8px;
 }
-.thought { padding: 6px 8px; border-radius: 10px; background: var(--panel-raised); }
+.thought { padding: 6px 8px; border-radius: var(--radius-sm); background: var(--panel-raised); }
 .thought.now { background: rgba(14, 165, 233, 0.12); }
 .thought.now b { font-size: 11px; }
 .loaded { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 8px; font-size: 11px; color: var(--ink-dim); }

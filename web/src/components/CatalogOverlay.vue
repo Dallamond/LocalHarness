@@ -729,7 +729,7 @@ const EXAMPLES: Record<string, string> = {
   gap: 4px;
   background: var(--panel-raised);
   padding: 3px;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
 }
 .cat-tabs button {
   display: flex;
@@ -764,7 +764,7 @@ const EXAMPLES: Record<string, string> = {
 .icon-btn {
   width: 34px;
   height: 34px;
-  border-radius: 11px;
+  border-radius: var(--radius-sm);
   background: var(--panel-raised);
   border: 1px solid var(--line);
   display: grid;
@@ -801,7 +801,7 @@ const EXAMPLES: Record<string, string> = {
   background: var(--panel-raised);
   border: 1px solid var(--line);
   border-left: 4px solid var(--c, #868b96);
-  border-radius: 14px;
+  border-radius: var(--radius);
 }
 .cc--new {
   align-items: flex-start;
@@ -834,7 +834,7 @@ const EXAMPLES: Record<string, string> = {
   width: 38px;
   height: 38px;
   flex-shrink: 0;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   display: grid;
   place-items: center;
   color: #fff;
@@ -844,7 +844,7 @@ const EXAMPLES: Record<string, string> = {
   width: 34px;
   height: 34px;
   font-size: 14px;
-  border-radius: 11px;
+  border-radius: var(--radius-sm);
 }
 .cc p {
   margin: 0;
@@ -925,7 +925,6 @@ const EXAMPLES: Record<string, string> = {
 }
 .dotst.on {
   background: #22c55e;
-  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.2);
 }
 .edit {
   display: grid;
@@ -975,7 +974,7 @@ const EXAMPLES: Record<string, string> = {
   flex-direction: column;
   gap: 10px;
   padding: 16px;
-  border-radius: 18px;
+  border-radius: var(--radius);
   background: var(--panel);
   box-shadow: 0 30px 60px -20px rgba(0, 0, 0, 0.5);
 }
@@ -1021,7 +1020,7 @@ const EXAMPLES: Record<string, string> = {
   gap: 4px;
   background: var(--panel-raised);
   padding: 3px;
-  border-radius: 11px;
+  border-radius: var(--radius-sm);
 }
 .seg button,
 .cats button {
@@ -1174,7 +1173,7 @@ const EXAMPLES: Record<string, string> = {
 }
 .md-box {
   padding: 10px 12px;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   background: var(--panel-raised);
   border: 1px solid var(--line);
   font-size: 12.5px;
@@ -1182,7 +1181,7 @@ const EXAMPLES: Record<string, string> = {
 .cfg {
   margin: 0;
   padding: 8px 10px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: #262b35;
   color: #d7dae0;
   font-size: 11px;

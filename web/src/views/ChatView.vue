@@ -758,14 +758,14 @@ const placeholder = computed(() => {
 .bubble--jefe { border-left: 3px solid #7c3aed; }
 .bubble--ask {
   padding: 7px 12px;
-  border-radius: 14px;
+  border-radius: var(--radius);
   background: color-mix(in srgb, #7c3aed 9%, var(--panel));
   font-size: 14px;
   overflow-wrap: anywhere;
 }
 .bubble--model {
   padding: 8px 12px;
-  border-radius: 14px;
+  border-radius: var(--radius);
   font-size: 14px;
   overflow-wrap: anywhere;
   display: grid;
@@ -790,7 +790,7 @@ const placeholder = computed(() => {
 .tag--rapido { background: #0f766e; }
 .plan {
   padding: 10px 12px;
-  border-radius: 14px;
+  border-radius: var(--radius);
   border: 1px solid color-mix(in srgb, #7c3aed 35%, var(--line));
   background: color-mix(in srgb, #7c3aed 6%, var(--panel));
   font-size: 14px;
@@ -879,7 +879,7 @@ const placeholder = computed(() => {
 .bubble {
   max-width: min(720px, 88%);
   padding: 10px 14px;
-  border-radius: 16px;
+  border-radius: var(--radius);
   line-height: 1.55;
 }
 .bubble--me {
@@ -1164,7 +1164,6 @@ const placeholder = computed(() => {
 }
 .pickcard.on {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-weak);
 }
 .pickcard__txt {
   display: grid;
@@ -1191,7 +1190,7 @@ const placeholder = computed(() => {
   min-height: 46px;
   max-height: 200px;
   padding: 11px 14px;
-  border-radius: 14px;
+  border-radius: var(--radius);
   border: 1px solid var(--line-strong);
   background: var(--panel);
   color: var(--ink);
@@ -1201,7 +1200,6 @@ const placeholder = computed(() => {
 .composer textarea:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-weak);
 }
 .composer textarea:disabled {
   opacity: 0.6;

@@ -1,6 +1,73 @@
 # Estado y traspaso — leer primero al retomar (también desde Claude Code en la web)
 
-Última actualización: 09/10/2026, tarde (modo 100 % local con el Mario «Supersalto»: ver la sección de abajo). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
+Última actualización: 09/10/2026, noche (banco de pruebas: resultados y qué sigue; oficina y GUI nuevas). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
+
+
+## ▶ 09/10/2026 noche — Banco de pruebas: el cuello de botella es el JEFE LOCAL, no los modelos
+**Dónde lo dejamos (23:00).** El banco (`banco/`, página `http://127.0.0.1:8095/banco`, resultados en `data/banco/`)
+está corriendo `qwen9b-qwen4b` en Cuentas claras guiada (empezó 22:46; Qwen3.5-9B en la 3060 + Qwen3.5-4B en la 1060).
+Al retomar: abrir `/banco` o pedir «analiza el banco» y compararlo parche a parche.
+
+**Resultados — Cuentas claras, modalidad guiada (18 parches, examen oculto de 29 tests):**
+
+| Contendiente | Quién dirige | Obreros | Integrados | Nota final | Tiempo | Coste |
+|---|---|---|---|---|---|---|
+| `claude-dirige` | Claude Sonnet, modo coordinador (NO escribe código) | gpt-oss-20b + Qwen3.5-4B | **18/18** | **96,6 %** | 39 min | 2,87 $ nominales (plan) |
+| `gptoss-qwen4b` | Jefe local (`boss.py`) | gpt-oss-20b + Qwen3.5-4B | 5/18 | 20,7 % | 129 min | 0 $ |
+| `gptoss-solo` | Jefe local | gpt-oss-20b (+ el 4B se coló, ver abajo) | 2/11, parada | 17,2 % | 86 min | 0 $ |
+| `qwen9b-qwen4b` | Jefe local | Qwen3.5-9B + Qwen3.5-4B | en marcha | — | — | 0 $ |
+
+Curva de Claude: 20,7 → 31 → 37,9 → 44,8 → 55,2 → 62,1 → 69 → 79,3 → 82,8 → 89,7 (p10) → 96,6 (p12, ya no sube), 0
+reintentos. Curva del jefe local: 0 en los parches 1–4, 13,8 en el 5, 20,7 desde el 10.
+**Conclusión:** con los MISMOS modelos obreros, cambiar solo quién dirige pasa de 20,7 % a 96,6 %. Hay que mejorar el
+orquestador local antes que cambiar de modelos.
+
+**Qué hace mal el jefe local (de `data/banco/cuentas-claras-guiada/gptoss-qwen4b-*/resultado.json`):**
+1. **Cascada:** los parches 1–4 (dinero, fechas, movimientos, filtros, resumen = la base) se descartan y el autopiloto
+   sigue; casi todo lo de después muere en la guardia de módulos con `Cannot find module fechas.js/html.js`. Integra
+   solo lo que no depende de nada (CSV, HTML/CSS, vistas sueltas).
+2. **Exportaciones duplicadas** (`Duplicate export of 'formatear'`): añade la función en vez de sustituirla, o dos
+   bloques escriben el mismo archivo (hipótesis: falta mirarlo en los encargos).
+3. **La revisión contradice a los tests** («los tests esperan otra cosa») y bloquea; `npm test` sigue fallando tras 3
+   rondas de arreglo.
+4. **Reintento sin memoria:** el reintento empieza de cero, sin el diff anterior ni el motivo del rechazo.
+
+**Cambios propuestos al jefe local, en orden (medir cada uno en el banco contra el 20,7 %):**
+(1) no avanzar si se cae un parche del que dependen los siguientes: reintentarlo con el error concreto, o parar;
+(2) reintento con memoria (diff anterior + motivo); (3) un archivo = un bloque y sustituir funciones, no añadir;
+(4) en guiada los tests son la especificación: si `npm test` pasa, la revisión solo bloquea por algo comprobable;
+(5) escalar el arreglo: tras 2 rondas fallidas, reescribir el archivo entero desde la especificación;
+(6) mirar cómo planifica Claude (eventos de la ejecución `claude-dirige`: tareas desde la #200) y copiarle lo que funciona.
+
+**Fallo del banco por arreglar:** `gptoss-solo` NO es válido. El banco apaga el servidor `rapido`, pero
+`llama.autostart_on_task` (Ajustes, encendido por defecto) lo vuelve a arrancar con cada tarea (46 encargos del 4B).
+Arreglo: que `banco.Ejecucion.correr` desactive ese ajuste mientras corre un contendiente con algún servidor a `null`
+y lo restaure al acabar; después repetir `gptoss-solo`.
+
+**Montado esta sesión para el banco:** agente «Jefe Claude (banco)» (id 15: Sonnet, `coordinator` + `delegate_local`,
+solo Read/Glob/Grep + herramientas `mcp__local__*`, 40 turnos, 1 $/tarea) y contendiente
+`banco/contendientes/claude-dirige.json` (tope 25 $; Lucas autorizó el gasto). El «Jefe de obra» antiguo (id 13) no
+sirve para el banco: sus instrucciones son las del proyecto del poema.
+
+**Prueba del juego (Supersalto / «mario», autopiloto de la tarde, antes del banco):** examen oculto de 35 tests:
+proyecto `mario` (tras la lista de reparar) **37,1 %**; `mario-gptoss-qwen4b` (40 parches con el jefe local mejorado)
+se quedó en el parche ~5 con **11,4 %** (la CLI `banco lista` interrumpió su tarea #168; se paró). Notas en
+`data/examenes/`. Supersalto en el banco aún no se ha corrido (no tiene `referencia/`). `mario-chatgptoss-qwen4b` es un
+intento fallido: se puede borrar. `examenes/puntuar.mjs` (sin versionar) era un puente para esa prueba: borrar.
+
+**GUI (todo en `web/`, compilado en `web/dist`):** quitado el aire «IA» (sin degradados ni brillos, acento azul sobrio
+#2f62b0, radios 10/7 px, bordes finos); barra fija arriba a todo lo ancho con logo plano; Analíticas con la paleta
+validada (Claude naranja, local azul) y arreglo del tema oscuro del gráfico. Oficina (`office3d.ts` + `OfficeView.vue`):
+sala más pequeña (19×14), una torre de servidores por modelo local encendido (LEDs = VRAM de su GPU, placa con el
+modelo), PC con GPU y dos pantallas por mesa, pantalla de GPUs en la pared, los muñecos libres pasean (café, impresora,
+agua, sofá, ventana, estanterías; A* sobre rejilla de 0,5 m) y vuelven al recibir trabajo, modo cine tras 20 s sin
+tocar, androides con el mismo chasis y casco/pieza ciborg por tipo, icono único por agente (`agentIcon` en `api.ts`,
+también en el avatar del chat). Misión y Aprobaciones pasaron a pestañas abajo, junto a Timeline/Modelos (menús en
+L); fuera la barra «Nuevo agente / Fuera de la oficina» (los agentes se traen desde el Catálogo); worktrees: solo los
+vivos, máx. 6. Sin probar en navegador todavía: Lucas lo revisa.
+
+**Siguiente (por orden):** analizar `qwen9b-qwen4b`; arreglar el autoarranque y repetir `gptoss-solo`; cambios (1)–(2)
+del jefe local y medirlos; pestaña Banco dentro de la GUI (hoy `/banco` es `banco/visor.html` suelto); `Banco.bat` a CRLF.
 
 ## ▶ 09/10/2026 — Modo 100 % local con «Supersalto»: qué pasó, qué se cambió y qué sigue
 **Dónde lo dejamos (18:00):** corre la prueba base de la comparativa (`scripts\prueba-mario.ps1 -Nombre

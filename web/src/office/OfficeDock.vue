@@ -195,7 +195,7 @@ defineExpose({ show: (t: Tab) => { tab.value = t; min.value = false; } });
 
 <style scoped>
 .mgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; }
-.mcard { border: 1px solid var(--line); border-left: 4px solid var(--c); border-radius: 10px; padding: 8px 10px; min-width: 0; }
+.mcard { border: 1px solid var(--line); border-left: 4px solid var(--c); border-radius: var(--radius-sm); padding: 8px 10px; min-width: 0; }
 .mcard.busy { background: color-mix(in srgb, var(--c) 7%, transparent); }
 .mcard header { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }
 .mcard header .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
@@ -240,7 +240,7 @@ defineExpose({ show: (t: Tab) => { tab.value = t; min.value = false; } });
   gap: 6px;
   padding: 5px 11px;
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: none;
   color: var(--ink-dim);
   font-weight: 700;

@@ -15,9 +15,7 @@ body {
 }
 
 body {
-  background: radial-gradient(1200px 600px at 20% -10%, var(--bg-glow-a) 0%, transparent 60%),
-    radial-gradient(900px 500px at 100% 110%, var(--bg-glow-b) 0%, transparent 55%), var(--bg);
-  background-attachment: fixed;
+  background: var(--bg);
   color: var(--ink);
   font-family: var(--font-sans);
   font-size: 14px;
@@ -61,7 +59,7 @@ input[type="checkbox"] {
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 6px;
+  border-radius: 4px;
 }
 
 /* cifras que cambian: cifras tabulares, misma fuente (nada de monoespaciada por todas partes) */
@@ -93,13 +91,13 @@ h4.label {
   align-items: center;
   justify-content: center;
   gap: 7px;
-  padding: 7px 13px;
+  padding: 6px 12px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   background: var(--panel-raised);
   color: var(--ink-dim);
   font-size: 13.5px;
-  font-weight: 700;
+  font-weight: 600;
   text-decoration: none;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, transform 0.05s;
@@ -118,7 +116,6 @@ h4.label {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-ink);
-  box-shadow: 0 8px 16px -8px color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
 .btn--primary:hover {
@@ -133,12 +130,12 @@ h4.label {
 }
 
 .btn--small {
-  padding: 5px 9px;
-  border-radius: 10px;
+  padding: 4px 8px;
+  border-radius: 6px;
   font-size: 12px;
 }
 
-/* tarjeta del prototipo: panel redondeado con sombra suave */
+/* tarjeta: panel plano con borde fino */
 .card {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -171,10 +168,10 @@ h4.label {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 3px 8px;
-  border-radius: 99px;
+  padding: 2px 7px;
+  border-radius: 5px;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   background: var(--panel-raised);
   border: 1px solid var(--line);
   color: var(--ink-dim);
@@ -199,15 +196,15 @@ h4.label {
 
 .meter {
   display: block;
-  height: 9px;
-  border-radius: 9px;
+  height: 6px;
+  border-radius: 3px;
   background: var(--meter);
   overflow: hidden;
 }
 .meter > span {
   display: block;
   height: 100%;
-  border-radius: 9px;
+  border-radius: 3px;
   transition: width 0.4s, background 0.4s;
 }
 

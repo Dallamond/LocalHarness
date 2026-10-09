@@ -1,5 +1,6 @@
 /*
- * Estilo «oficina» (prototipo v2.1 de Lucas): piedra cálida, tarjetas redondeadas, índigo de acento.
+ * Estilo «oficina» (prototipo v2.1 de Lucas): piedra cálida, paneles finos y planos, azul sobrio de acento
+ * (sin degradados ni brillos: el índigo con degradado cian era lo que daba el aire «IA»).
  * Claro y oscuro; por defecto sigue al sistema (Ajustes → Apariencia lo fija con data-theme).
  */
 :root {
@@ -12,14 +13,14 @@
   --line: #cbc6ba;
   --ink: #1e232d;
   --ink-dim: #4a505c;
-  --ink-faint: #868b96;
+  --ink-faint: #6c717c;
   --data-ink: var(--ink);
   --meter: #cfcbc0;
 
-  --accent: #5b5bf0;
-  --accent-2: #22c1c3;
+  --accent: #2f62b0;
+  --accent-2: #2f8f8a;
   --accent-ink: #ffffff;
-  --accent-weak: #dcdcf6;
+  --accent-weak: #dbe4f2;
   --ok: #16a34a;
   --ok-weak: #dcfce7;
   --warn: #d97706;
@@ -41,15 +42,15 @@
   --role-otro: #8b5cf6;
   --you: #eab308;
 
-  --shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px -12px rgba(15, 23, 42, 0.12);
+  --shadow: 0 1px 1px rgba(15, 23, 42, 0.04);
   --font-sans: "Plus Jakarta Sans Variable", "Segoe UI", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
   --font-data: var(--font-sans);
 
-  --radius: 18px;
-  --radius-sm: 12px;
+  --radius: 10px;
+  --radius-sm: 7px;
   --gap: 16px;
-  --top-h: 56px;
+  --top-h: 50px;
   --zoom: 1;
 }
 :root { --line-strong: #b5afa2; }
@@ -66,11 +67,11 @@
     --line-strong: #474d5c;
     --ink: #e8e6e1;
     --ink-dim: #aab0bb;
-    --ink-faint: #7e8491;
+    --ink-faint: #8d93a0;
     --meter: #343946;
-    --accent: #8d8dfa;
-    --accent-ink: #11122a;
-    --accent-weak: #2b2c55;
+    --accent: #7fa8e6;
+    --accent-ink: #0d1626;
+    --accent-weak: #1f2c42;
     --ok: #4ade80;
     --ok-weak: #18301f;
     --warn: #fbbf24;
@@ -79,7 +80,7 @@
     --crit-weak: #3d1d25;
     --info: #7cc4f0;
     --info-weak: #18303f;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px -12px rgba(0, 0, 0, 0.5);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
   }
 }
 
@@ -94,11 +95,11 @@
   --line-strong: #474d5c;
   --ink: #e8e6e1;
   --ink-dim: #aab0bb;
-  --ink-faint: #7e8491;
+  --ink-faint: #8d93a0;
   --meter: #343946;
-  --accent: #8d8dfa;
-  --accent-ink: #11122a;
-  --accent-weak: #2b2c55;
+  --accent: #7fa8e6;
+  --accent-ink: #0d1626;
+  --accent-weak: #1f2c42;
   --ok: #4ade80;
   --ok-weak: #18301f;
   --warn: #fbbf24;
@@ -107,12 +108,12 @@
   --crit-weak: #3d1d25;
   --info: #7cc4f0;
   --info-weak: #18303f;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px -12px rgba(0, 0, 0, 0.5);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 
 /* Densidad compacta: menos aire entre bloques */
 :root[data-density="compacta"] {
   --gap: 10px;
-  --radius: 12px;
-  --radius-sm: 9px;
+  --radius: 8px;
+  --radius-sm: 6px;
 }

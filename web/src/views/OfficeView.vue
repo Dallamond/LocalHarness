@@ -7,11 +7,11 @@ import { useRouter } from "vue-router";
 import StatusChip from "../components/StatusChip.vue";
 import LocalWorkerPanel from "../office/LocalWorkerPanel.vue";
 import OfficeDock from "../office/OfficeDock.vue";
-import { MAX_STATIONS, Office, type BoardStep, type GitRow, type Placement, type StationKind, type StationSpec, type StationState } from "../office/office3d";
+import { MAX_STATIONS, Office, type BoardStep, type GitRow, type Placement, type RackSpec, type StationKind, type StationSpec, type StationState } from "../office/office3d";
 import {
   PLAN_TEXT, PROVIDER_TEXT, ROLE_TEXT, STATUS_TEXT, agentColor, agentName, api, describeActivity, duration, live,
   modelText, onTaskEvent, openCatalog, putTask, openWizard, parseTs, pct, planChip, planList, post, projectName, refreshAll, speedText,
-  statusChip, tps, ui, usd, localModelsText, refreshLocals, SERVER_ROLE_LABEL,
+  statusChip, tps, ui, usd, refreshLocals, SERVER_ROLE_LABEL, agentIcon,
   type Agent, type Gpu, type InboxItem, type Review, type Task, type TaskEvent, type Worktree,
 } from "../api";
 
@@ -46,7 +46,6 @@ const present = computed(() => agentsSorted.value.filter((a) => runningOf(a.id) 
     (a.config.generated ? generatedOpen(a) : now.value - lastSeen(a.id) < PRESENCE_MS)))));
 const shown = computed(() => present.value.slice(0, MAX_STATIONS));
 const hidden = computed(() => present.value.slice(MAX_STATIONS));
-const away = computed(() => agentsSorted.value.filter((a) => !present.value.includes(a)));
 const kindOf = (a: Agent): StationKind =>
   (["director", "jefe", "trabajador", "consultas"].includes(a.role ?? "") ? a.role : "otro") as StationKind;
 const ICON: Record<string, string> = {
@@ -54,12 +53,12 @@ const ICON: Record<string, string> = {
   consultas: "fa-magnifying-glass", local: "fa-robot", otro: "fa-user-astronaut",
 };
 const specs = computed<StationSpec[]>(() => [
-  { id: "you", name: "Tú", color: YOU, kind: "you" },
-  ...shown.value.map((a) => ({ id: `a${a.id}`, name: a.name, color: agentColor(a), kind: kindOf(a) })),
+  { id: "you", name: "Tú", color: YOU, kind: "you", icon: "f007" },
+  ...shown.value.map((a) => ({ id: `a${a.id}`, name: a.name, color: agentColor(a), kind: kindOf(a), icon: agentIcon(a).code })),
   // el trabajador del modelo local entra en cuanto un Claude le encarga algo, con su línea hacia ese Claude
   // con dos GPU, uno por modelo («Local · Fuerte», «Local · Rápido»), cada uno con sus encargos y su directo
   ...workers.value.map((w) => ({ id: wid(w.task.id, w.srv), name: serverLabel(w.srv), color: serverColor(w.srv),
-    kind: "local" as StationKind, boss: `a${w.task.agent_id}` })),
+    kind: "local" as StationKind, boss: `a${w.task.agent_id}`, icon: "f2db" })),
 ]);
 const agentOf = (sid: string) => (sid.startsWith("a") ? live.agents.find((a) => `a${a.id}` === sid) : undefined);
 
@@ -533,7 +532,15 @@ const localState = computed(() => {
     : states.includes("loading") ? "loading" : live.local.state;
 });
 const localsOn = computed(() => live.locals.filter((l) => l.state !== "off"));
+// una torre por modelo local encendido; sus LEDs siguen la GPU en la que corre (CUDA1 → GPU 1)
+const gpuIdx = (device: string) => Number(/(\d+)/.exec(device ?? "")?.[1] ?? 0);
+const racks = computed<RackSpec[]>(() => localsOn.value.filter((l) => l.state !== "failed" || l.model).map((l) => ({
+  id: l.id, name: l.name, model: l.model ?? (l.state === "loading" ? "cargando…" : "sin modelo"), state: l.state,
+  gpu: gpuIdx(l.device), gpuName: gpus.value.find((g) => g.index === gpuIdx(l.device))?.name ?? "", color: serverColor(l.id),
+})));
 let resTimer: ReturnType<typeof setInterval>;
+// los worktrees que importan ahora (trabajando, listos o fallidos), no los cientos ya integrados
+const liveTrees = computed(() => worktrees.value.filter((w) => wtState(w) !== "merged" && wtState(w) !== "clean"));
 const gpuFrac = (g: Gpu) => (g.mem_used_mb && g.mem_total_mb ? g.mem_used_mb / g.mem_total_mb : 0);
 const gpuColor = (v: number) => (v > 0.85 ? "#ef4444" : v > 0.6 ? "#f59e0b" : "#22c55e");
 const LOCAL_TEXT: Record<string, string> = { off: "apagado", loading: "cargando…", ready: "listo", failed: "falló al arrancar", external: "arrancado fuera" };
@@ -557,7 +564,7 @@ function drawSpark() {
     const x = (i / (series.value.length - 1)) * w, y = h - 2 - (v / max) * (h - 6);
     if (i) g.lineTo(x, y); else g.moveTo(x, y);
   });
-  g.strokeStyle = "#5b5bf0"; g.lineWidth = 2; g.lineJoin = "round"; g.stroke();
+  g.strokeStyle = "#2a78d6"; g.lineWidth = 2; g.lineJoin = "round"; g.stroke();
   g.lineTo(w, h); g.lineTo(0, h); g.fillStyle = "rgba(91,91,240,.12)"; g.fill();
 }
 const weekCost = computed(() => {
@@ -631,6 +638,16 @@ const labelsEl = ref<HTMLElement>();
 const dock = ref<InstanceType<typeof OfficeDock>>();
 let office: Office | null = null;
 let stopFocus: (() => void) | null = null;
+// panel de abajo a la izquierda: Misión o Aprobaciones (salta solo a Aprobaciones cuando llega una nueva)
+const ltab = ref<"mision" | "bandeja">("mision");
+// modo cine de la oficina (se recuerda en este navegador)
+const cinema = ref(true);
+try { cinema.value = localStorage.getItem("lh-office-cine") !== "0"; } catch { /* sin almacenamiento */ }
+watch(cinema, (v) => {
+  if (office) office.cinematic = v;
+  try { localStorage.setItem("lh-office-cine", v ? "1" : "0"); } catch { /* sin almacenamiento */ }
+});
+watch(() => live.inbox.length, (n, before) => { if (n > (before ?? 0)) ltab.value = "bandeja"; });
 const view = ref("iso");
 function goView(k: string) {
   view.value = k;
@@ -659,7 +676,7 @@ async function dismiss(a: Agent) {
   const run = runningOf(a.id);
   const msg = run
     ? `${a.name} está trabajando en #${run.id} «${run.title}».\n\nAceptar: cancelar esa tarea y sacarlo de la oficina.\nCancelar: no hacer nada.`
-    : `¿Quitar a ${a.name} de la oficina?\n\nQueda fuera de servicio: el Director no le encargará nada hasta que lo vuelvas a llamar (abajo, «Fuera de la oficina»).`;
+    : `¿Quitar a ${a.name} de la oficina?\n\nQueda fuera de servicio: el Director no le encargará nada hasta que lo vuelvas a traer (Catálogo → En la oficina).`;
   if (!confirm(msg)) return;
   removing.value = true;
   try {
@@ -705,23 +722,21 @@ function resetLayout() {
   saveLayout();
   location.reload();
 }
-const localOn = computed(() => localState.value !== "off");
 
 // ---------- tamaño de los paneles: arrastrar las asas entre columnas y sobre el panel de abajo
-const SIZE_DEFAULT = { left: 330, right: 330, dock: 230 };
+const SIZE_DEFAULT = { left: 420, right: 330, dock: 290 }; // left: ancho de Misión/Aprobaciones (abajo)
 const sizes = reactive({ ...SIZE_DEFAULT });
-try { Object.assign(sizes, JSON.parse(localStorage.getItem("lh-office-sizes") ?? "{}")); } catch { /* sin almacenamiento */ }
+try { Object.assign(sizes, JSON.parse(localStorage.getItem("lh-office-sizes-2") ?? "{}")); } catch { /* sin almacenamiento */ }
 const officeEl = ref<HTMLElement>();
 const drag = ref<{ which: "left" | "right" | "dock"; x: number; y: number; start: number } | null>(null);
 function clampSizes() {
   const w = officeEl.value?.clientWidth ?? 1400, h = officeEl.value?.clientHeight ?? 900;
-  const maxSide = Math.max(260, (w - 320) / 2); // la oficina nunca baja de ~320 px
-  sizes.left = Math.round(Math.min(maxSide, Math.max(220, sizes.left)));
-  sizes.right = Math.round(Math.min(maxSide, Math.max(220, sizes.right)));
+  sizes.right = Math.round(Math.min(Math.max(260, w - 420), Math.max(220, sizes.right))); // la oficina nunca baja de ~400 px
+  sizes.left = Math.round(Math.min(Math.max(280, w - sizes.right - 380), Math.max(260, sizes.left)));
   sizes.dock = Math.round(Math.min(h - 160, Math.max(40, sizes.dock)));
 }
 function saveSizes() {
-  try { localStorage.setItem("lh-office-sizes", JSON.stringify(sizes)); } catch { /* sin almacenamiento */ }
+  try { localStorage.setItem("lh-office-sizes-2", JSON.stringify(sizes)); } catch { /* sin almacenamiento */ }
 }
 function onDrag(e: PointerEvent) {
   const d = drag.value;
@@ -767,6 +782,7 @@ onMounted(() => {
   try {
     office = new Office(host.value!, labelsEl.value!, pick);
     office.movable = !locked.value;
+    office.cinematic = cinema.value;
     office.onMove = (id, p) => {
       layout.value = { ...layout.value, [id]: p };
       saveLayout();
@@ -801,7 +817,7 @@ onMounted(() => {
       const tool = String(ev.text).replace(/^mcp__local__/, "");
       const inp = (ev.data?.input ?? {}) as Record<string, unknown>;
       const to = tool === "local_execute_plan" ? serversOf(t.id) : [String(inp.server ?? guessServer(tool))];
-      for (const srv of to) setTimeout(() => office?.packet(wid(t.id, srv), "rack", serverColor(srv)), 900);
+      for (const srv of to) setTimeout(() => office?.packet(wid(t.id, srv), `rack:${srv}`, serverColor(srv)), 900);
     }
     if (ev.kind === "delegate") {
       const srv = String(ev.data?.server ?? defaultServer.value);
@@ -834,178 +850,24 @@ function syncScene() {
   for (const w of workers.value) office.setState(wid(w.task.id, w.srv), workerBusy(w.task.id, w.srv) ? "working" : "idle");
   office.setState("you", live.inbox.length ? "waiting" : "idle");
   office.pending = live.inbox.length > 0;
-  office.setRackVisible(localOn.value);
+  office.setRacks(racks.value);
   office.selected = sel.value;
 }
-watch(() => [specs.value.map((s) => `${s.id}${s.color}${s.kind}`).join(), live.inbox.length, sel.value, localOn.value,
+watch(() => [specs.value.map((s) => `${s.id}${s.color}${s.kind}`).join(), live.inbox.length, sel.value, JSON.stringify(racks.value),
   shown.value.map((a) => stateOf(a)).join(), workers.value.map((w) => `${w.task.id}${w.srv}${workerBusy(w.task.id, w.srv)}`).join()], syncScene);
 watch(() => [missionTitle.value, JSON.stringify(steps.value.map((s) => [s.label, s.who, s.state])), progress.value],
   () => office?.drawBoard(missionTitle.value, steps.value, progress.value), { immediate: true, flush: "post" });
 watch(worktrees, (w) => office?.drawGit(w.map((x) => ({ name: x.branch, status: wtState(x) }))));
-watch(() => [gpus.value, localState.value, tpsNow.value > 0], () =>
-  office?.setGpu(gpus.value.map(gpuFrac), Math.max(0, ...gpus.value.map((g) => (g.util ?? 0) / 100)), localState.value));
+watch(gpus, (list) => {
+  const mem: number[] = [], util: number[] = [];
+  for (const g of list) { mem[g.index] = gpuFrac(g); util[g.index] = (g.util ?? 0) / 100; }
+  office?.setGpu(mem, util);
+});
 watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) / 100));
 </script>
 
 <template>
   <div ref="officeEl" class="office" :class="{ dragging: !!drag }" :style="{ '--lw': `${sizes.left}px`, '--rw': `${sizes.right}px`, '--dockh': `${sizes.dock}px` }">
-    <!-- izquierda: misión + bandeja -->
-    <aside class="col">
-      <section class="card pad mission">
-        <h3 class="card-title">
-          Misión <em>{{ curKey ? duration(missionEnd - missionStart) : "" }}</em>
-        </h3>
-        <div class="msel">
-          <select v-model="chosen" class="input" title="Misión" :disabled="!missions.length">
-            <option :value="null">Seguir la actual{{ autoKey ? ` (#${autoKey.slice(1)})` : "" }}</option>
-            <option v-for="m in missions" :key="m.key" :value="m.key">{{ m.kind === "plan" ? "Plan" : "Tarea" }} #{{ m.id }} · {{ m.title.slice(0, 60) }}</option>
-          </select>
-          <button class="btn btn--primary btn--small" :class="{ on: composing }" title="Nueva misión" @click="composing = !composing">
-            <i class="fa-solid" :class="composing ? 'fa-xmark' : 'fa-plus'" /> Nueva
-          </button>
-        </div>
-
-        <form v-if="composing || !missions.length" class="compose" @submit.prevent="launch">
-          <p v-if="!live.projects.length" class="muted small">
-            Primero vincula una carpeta: <RouterLink to="/chat">Chat → Vincular carpeta</RouterLink>.
-          </p>
-          <div class="two">
-            <select v-model="form.project_id" class="input" title="Proyecto">
-              <option v-for="p in live.projects" :key="p.id" :value="p.id">{{ p.name }}</option>
-            </select>
-            <select v-model="form.agent_id" class="input" title="Agente" @change="proposal = null">
-              <option :value="0">✨ Agente a medida</option>
-              <option v-for="a in agentsSorted" :key="a.id" :value="a.id">{{ a.name }} · {{ a.provider }}</option>
-            </select>
-          </div>
-          <textarea
-            v-model="form.prompt" class="input" rows="3" placeholder="¿Qué hay que hacer? (Enter para ejecutar)"
-            @keydown.enter.exact.prevent="launch"
-          />
-          <!-- propuesta del diseñador: qué agente se va a crear y por qué (quita lo que no quieras) -->
-          <div v-if="proposal" class="prop">
-            <div class="prop-h">
-              <i class="fa-solid fa-wand-magic-sparkles" />
-              <b>{{ proposal.name }}</b>
-              <span class="prov" :class="`prov--${proposal.provider}`">{{ proposal.provider === "claude" ? `Claude ${proposal.model}` : "Modelo local" }}</span>
-            </div>
-            <div class="chips">
-              <span v-if="proposal.coordinator" class="pill pill--ok" title="Claude planifica y el modelo local hace el trabajo"><i class="fa-solid fa-user-tie" />coordina al local</span>
-              <span v-if="proposal.read_only" class="pill"><i class="fa-solid fa-eye" />solo lectura</span>
-              <span v-if="proposal.web" class="pill pill--active"><i class="fa-solid fa-globe" />internet</span>
-              <span v-if="proposal.thinking !== 'normal'" class="pill"><i class="fa-solid fa-brain" />pensar {{ proposal.thinking }}</span>
-              <span class="pill"><i class="fa-solid fa-repeat" />{{ proposal.max_turns }} turnos</span>
-            </div>
-            <div v-if="proposal.skills.length" class="prop-row"><span>Skills</span>
-              <button v-for="x in proposal.skills" :key="x" type="button" class="pill pill--active" title="Quitar" @click="dropFrom('skills', x)"><i class="fa-solid fa-bolt" />{{ x }} ×</button>
-            </div>
-            <div v-if="proposal.local_skills.length" class="prop-row"><span>Su modelo local</span>
-              <button v-for="x in proposal.local_skills" :key="x" type="button" class="pill pill--active" title="Quitar" @click="dropFrom('local_skills', x)"><i class="fa-solid fa-robot" />{{ x }} ×</button>
-            </div>
-            <div v-if="proposal.mcps.length" class="prop-row"><span>MCP</span>
-              <button v-for="x in proposal.mcps" :key="x" type="button" class="pill pill--active" title="Quitar" @click="dropFrom('mcps', x)"><i class="fa-solid fa-plug" />{{ x }} ×</button>
-            </div>
-            <p v-if="proposal.reason" class="small muted">{{ proposal.reason }}</p>
-            <p class="small muted">Diseñado por {{ proposal.designed_by === "claude" ? `Claude Haiku (${usd(proposal.design_cost_usd)})` : "reglas (sin Claude)" }}</p>
-          </div>
-          <p v-if="formError" class="error small">{{ formError }}</p>
-          <div class="row">
-            <button class="btn btn--primary" :disabled="sending || designing || !form.prompt.trim() || !form.project_id || form.agent_id === null">
-              <i class="fa-solid" :class="designing ? 'fa-spinner fa-spin' : form.agent_id === 0 && !proposal ? 'fa-wand-magic-sparkles' : 'fa-play'" />
-              {{ designing ? "Diseñando el agente…" : form.agent_id === 0 && !proposal ? "Diseñar agente" : form.agent_id === 0 ? "Crear agente y ejecutar" : "Ejecutar" }}
-            </button>
-            <button v-if="proposal" type="button" class="btn btn--small" :disabled="designing" @click="design">
-              <i class="fa-solid fa-rotate" /> Otra propuesta
-            </button>
-          </div>
-        </form>
-
-        <template v-if="curKey && !composing">
-          <div class="m-title">{{ missionTitle }}</div>
-          <div class="m-brief">
-            <template v-if="curTask">
-              {{ projectName(curTask.project_id) }} · {{ agentName(curTask.agent_id) }}
-              <StatusChip :state="statusChip(curTask.status)" :text="STATUS_TEXT[curTask.status] ?? curTask.status" />
-              <span v-if="curTask.cost_usd" class="muted">{{ usd(curTask.cost_usd) }}</span>
-            </template>
-            <template v-else-if="curPlan">
-              {{ projectName(curPlan.project_id) }} · plan #{{ curPlan.id }}
-              <StatusChip :state="planChip(curPlan.status)" :text="PLAN_TEXT[curPlan.status] ?? curPlan.status" />
-            </template>
-          </div>
-          <!-- el encargo entero (recortado) y, si el agente es a medida, por qué es así -->
-          <div v-if="curTask" class="m-sum" :class="{ open: briefOpen }" title="Pulsa para ver el encargo entero" @click="briefOpen = !briefOpen">
-            <p>{{ curTask.prompt }}</p>
-            <small v-if="curAgent?.config.generated && curAgent.config.design_reason"><i class="fa-solid fa-wand-magic-sparkles" /> {{ curAgent.config.design_reason }}</small>
-          </div>
-          <div class="m-prog"><span :style="{ width: `${progress * 100}%` }" /></div>
-          <!-- qué está haciendo el modelo local, encargo a encargo -->
-          <div v-if="curTask && (localJobs.length || curLive)" class="ljobs">
-            <div class="ljobs__h"><i class="fa-solid fa-robot" /> Modelo local <em>{{ localJobs.filter((j) => j.state === "ok").length }}/{{ localJobs.length }} hechos</em>
-              <button v-for="w in workers.filter((x) => x.task.id === curTask!.id)" :key="w.srv" class="linkish" @click="pick(wid(w.task.id, w.srv))">{{ live.locals.length > 1 ? `${serverOf(w.srv)?.name ?? w.srv} →` : "ver →" }}</button>
-            </div>
-            <div v-for="j in localJobs.slice(-8)" :key="j.key" class="ljob" :class="j.state">
-              <i class="fa-solid" :class="j.state === 'run' ? 'fa-gear fa-spin' : j.state === 'ok' ? 'fa-check' : 'fa-xmark'" />
-              <div>
-                <b><span class="tag">{{ j.kind }}</span> {{ j.title.length > 110 ? j.title.slice(0, 110) + "…" : j.title }}</b>
-                <small v-if="j.meta">{{ j.meta }}</small>
-                <small v-for="(c, k) in j.children" :key="k" :class="{ bad: !c.ok }">{{ c.ok ? "✓" : "✗" }} {{ c.title }}</small>
-                <small v-if="j.state === 'run' && curLive" class="livetxt">{{ curLive.text ? `✍️ ${curLive.text.slice(-140)}` : curLive.thinking ? `💭 ${curLive.thinking.slice(-140)}` : "leyendo…" }}</small>
-              </div>
-            </div>
-          </div>
-          <div class="steps">
-            <div v-for="(s, i) in steps" :key="i" class="step" :class="s.state" :style="{ '--c': s.color }">
-              <div class="dot"><i class="fa-solid" :class="s.state === 'wait' ? 'fa-lock' : s.icon" /></div>
-              <div class="step__txt"><b>{{ s.label }}</b><small>{{ s.sub ?? s.who }}</small></div>
-              <div class="st">
-                <i v-if="s.state === 'done'" class="fa-solid fa-check" />
-                <i v-else-if="s.state === 'failed'" class="fa-solid fa-xmark" />
-                <template v-else-if="s.state === 'wait'">espera</template>
-                <template v-else-if="s.state === 'active'">en curso</template>
-              </div>
-            </div>
-          </div>
-          <div class="m-acts">
-            <RouterLink v-if="curTask" class="btn btn--small" :to="`/chat/${curTask.id}`"><i class="fa-solid fa-comments" /> Abrir chat</RouterLink>
-            <RouterLink v-if="curPlan" class="btn btn--small" :to="`/planes/${curPlan.id}`"><i class="fa-solid fa-diagram-project" /> Ver plan</RouterLink>
-            <button v-if="curTask?.status === 'running' || (curPlan && ['planning', 'running'].includes(curPlan.status))" class="btn btn--small btn--danger" @click="stopMission">
-              <i class="fa-solid fa-stop" /> Parar
-            </button>
-          </div>
-        </template>
-      </section>
-
-      <section class="card pad grow">
-        <h3 class="card-title">Bandeja de aprobaciones <em>{{ live.inbox.length }} pendiente{{ live.inbox.length === 1 ? "" : "s" }}</em>
-          <RouterLink to="/trabajo" class="tolink" title="Revisar con el diff archivo a archivo">Revisar →</RouterLink></h3>
-        <p v-if="actError" class="error small">{{ actError }}</p>
-        <div v-if="!live.inbox.length" class="empty-box">
-          <i class="fa-regular fa-circle-check" />
-          Sin aprobaciones pendientes.<br>Lo de riesgo bajo lo resuelven solos los agentes.
-        </div>
-        <div v-for="i in live.inbox" :key="keyOf(i)" class="ask">
-          <div class="ask-h">
-            <span class="from"><i :style="{ background: agentColor(fromOf(i)) }" />{{ fromOf(i)?.name ?? "Agente" }} solicita</span>
-            <span class="risk" :class="`risk-${riskOf(i)}`">{{ i.level }} · riesgo {{ riskOf(i) }}</span>
-          </div>
-          <h4>{{ INBOX_TEXT[i.type] ?? i.type }}: {{ i.title }}</h4>
-          <ul v-if="i.reasons.length"><li v-for="r in i.reasons.slice(0, 4)" :key="r">{{ r }}</li></ul>
-          <div class="ask-actions">
-            <button
-              v-for="c in choices(i)" :key="c.label" class="btn btn--small" :class="`btn--${c.tone}`"
-              :disabled="acting === keyOf(i)" @click="decide(i, c)"
-            ><i class="fa-solid" :class="c.icon" /> {{ c.label }}</button>
-            <button class="btn btn--small" title="Ver la misión y su diff" @click="showInbox(i)"><i class="fa-solid fa-code-compare" /> Ver</button>
-          </div>
-        </div>
-        <div v-for="(h, k) in history" :key="k" class="hist">
-          <i class="fa-solid" :class="h.ok ? 'fa-circle-check ok' : 'fa-circle-xmark no'" />
-          <span>{{ h.label }}: {{ h.title }}</span>
-        </div>
-      </section>
-    </aside>
-    <div class="gutter" title="Arrastra para cambiar el ancho (doble clic: por defecto)" @pointerdown="startDrag('left', $event)" @dblclick="resetSizes('left')" />
 
     <!-- centro: oficina 3D + dock -->
     <main class="stage">
@@ -1014,14 +876,14 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
           <div v-for="s in specs" :key="s.id" class="lbl" :data-lbl="s.id" :style="{ '--c': s.color }">
             <div class="bubble" :class="{ off: !bubbleOf(s.id) }">{{ bubbleOf(s.id) }}</div>
             <button class="plate" :class="{ sel: sel === s.id }" @click="pick(s.id)">
-              <span class="lv"><i class="fa-solid" :class="ICON[s.kind]" /></span>
+              <span class="lv"><i class="fa-solid" :class="agentOf(s.id) ? `fa-${agentIcon(agentOf(s.id)).name}` : ICON[s.kind]" /></span>
               <span class="nm">{{ s.name }}<small :class="stateText(s.id).cls">{{ stateText(s.id).text }}</small></span>
               <span v-if="agentOf(s.id)" class="pdot" :class="`pdot--${agentOf(s.id)!.provider}`" :title="PROVIDER_TEXT[agentOf(s.id)!.provider] ?? agentOf(s.id)!.provider" />
             </button>
           </div>
-          <div v-if="localOn" class="lbl" data-lbl="rack">
-            <button class="tag tag--btn" @click="pick('rack')">
-              <i class="fa-solid fa-server" /> {{ localsOn.length > 1 ? "Modelos locales" : "Modelo local" }} · {{ localModelsText(LOCAL_TEXT[localState] ?? localState) }}
+          <div v-for="r in racks" :key="r.id" class="lbl" :data-lbl="`rack:${r.id}`">
+            <button class="tag tag--btn" :class="{ sel: sel === `rack:${r.id}` }" :style="{ '--c': r.color }" @click="pick(`rack:${r.id}`)">
+              <i class="fa-solid fa-server" /> {{ r.name }} · {{ LOCAL_TEXT[r.state] ?? r.state }}
             </button>
           </div>
           <div class="lbl" data-lbl="wb"><span class="tag">Misión</span></div>
@@ -1032,33 +894,192 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
           <button v-for="s in specs" :key="s.id" :class="{ on: view === s.id }" :style="{ '--c': s.color }" @click="goView(s.id)">
             <i class="d" />{{ s.name }}
           </button>
-          <button v-if="localOn" :class="{ on: view === 'rack' }" :style="{ '--c': LOCAL }" @click="goView('rack')"><i class="d" />Modelo local</button>
+          <button v-for="r in racks" :key="r.id" :class="{ on: view === `rack:${r.id}` }" :style="{ '--c': r.color }" @click="goView(`rack:${r.id}`)"><i class="d" />{{ r.name }}</button>
           <span class="sep" />
           <button :class="{ on: !locked }" :title="locked ? 'Desbloquear: arrastra los puestos para moverlos' : 'Arrastra un puesto para moverlo. Pulsa para bloquear.'" @click="locked = !locked">
             <i class="fa-solid" :class="locked ? 'fa-lock' : 'fa-up-down-left-right'" /> {{ locked ? "Bloqueado" : "Mover" }}
           </button>
           <button v-if="Object.keys(layout).length" title="Volver a la colocación por defecto" @click="resetLayout"><i class="fa-solid fa-rotate-left" /></button>
+          <button title="Traer agentes a la oficina desde el Catálogo" @click="openCatalog('agents')"><i class="fa-solid fa-user-plus" /> Agentes</button>
+          <button :class="{ on: cinema }" title="Modo cine: si no tocas la oficina en 20 s, la cámara se mueve sola" @click="cinema = !cinema"><i class="fa-solid fa-video" /> Cine</button>
         </div>
-        <div class="more">
-          <button class="away away--new" title="Crear un agente nuevo con el asistente" @click="openWizard()"><i class="fa-solid fa-user-plus" /> Nuevo agente</button>
-          <template v-if="hidden.length">{{ hidden.length }} sin puesto (caben {{ MAX_STATIONS }}) · </template>
-          <span v-if="away.length">Fuera de la oficina:</span>
-          <button v-for="a in away" :key="a.id" class="away" :class="{ 'away--off': isOff(a) }" :style="{ '--c': agentColor(a) }"
-                  :title="isOff(a) ? `${a.name} está fuera de servicio: pulsa para volver a ponerlo a trabajar` : `Llamar a ${a.name} a la oficina`" @click="callIn(a.id)">
-            <i class="d" />{{ a.name }}<small v-if="isOff(a)"> · fuera de servicio</small>
-          </button>
-        </div>
+        <p v-if="hidden.length" class="more">{{ hidden.length }} sin puesto (caben {{ MAX_STATIONS }})</p>
         <p v-if="webglError" class="more more--err">No se puede dibujar la oficina 3D: {{ webglError }}</p>
         <p v-else-if="live.agents.length && !shown.length && !webglError" class="hint">
           <i class="fa-solid fa-door-open" /> La oficina está vacía: los agentes entran cuando les encargas algo
-          (Misión → Nueva) o cuando los llamas desde abajo.
+          (Misión → Nueva) o cuando los traes desde el Catálogo.
         </p>
         <p v-if="!live.agents.length" class="hint">
-          <i class="fa-solid fa-user-plus" /> Aún no hay agentes. <a href="#" @click.prevent="openWizard()">Crea el primero con el asistente</a>.
+          <i class="fa-solid fa-boxes-stacked" /> Aún no hay agentes. <a href="#" @click.prevent="openCatalog('agents')">Créalos o tráelos desde el Catálogo</a>.
         </p>
       </div>
       <div class="gutter gutter--h" title="Arrastra para cambiar el alto del panel de abajo (doble clic: por defecto)" @pointerdown="startDrag('dock', $event)" @dblclick="resetSizes('dock')" />
-      <OfficeDock ref="dock" :events="events" :review="review" :review-title="diffTask ? `#${diffTask.id} ${diffTask.title}` : ''" />
+      <div class="bottom">
+        <!-- abajo a la izquierda: misión y bandeja de aprobaciones en pestañas (junto a Timeline/Modelos: menús en L) -->
+        <section class="mdock">
+          <div class="mdock-h">
+            <button class="mtab" :class="{ on: ltab === 'mision' }" @click="ltab = 'mision'">
+              <i class="fa-solid fa-flag" /> Misión <span v-if="curKey" class="n">{{ duration(missionEnd - missionStart) }}</span>
+            </button>
+            <button class="mtab" :class="{ on: ltab === 'bandeja' }" @click="ltab = 'bandeja'">
+              <i class="fa-solid fa-inbox" /> Aprobaciones <span class="n" :class="{ 'n--warn': live.inbox.length }">{{ live.inbox.length }}</span>
+            </button>
+            <span class="spacer" />
+            <RouterLink v-if="ltab === 'bandeja'" to="/trabajo" class="tolink" title="Revisar con el diff archivo a archivo">Revisar →</RouterLink>
+          </div>
+          <div class="mdock-b">
+            <div v-show="ltab === 'mision'" class="mission">
+              <div class="msel">
+                <select v-model="chosen" class="input" title="Misión" :disabled="!missions.length">
+                  <option :value="null">Seguir la actual{{ autoKey ? ` (#${autoKey.slice(1)})` : "" }}</option>
+                  <option v-for="m in missions" :key="m.key" :value="m.key">{{ m.kind === "plan" ? "Plan" : "Tarea" }} #{{ m.id }} · {{ m.title.slice(0, 60) }}</option>
+                </select>
+                <button class="btn btn--primary btn--small" :class="{ on: composing }" title="Nueva misión" @click="composing = !composing">
+                  <i class="fa-solid" :class="composing ? 'fa-xmark' : 'fa-plus'" /> Nueva
+                </button>
+              </div>
+
+              <form v-if="composing || !missions.length" class="compose" @submit.prevent="launch">
+                <p v-if="!live.projects.length" class="muted small">
+                  Primero vincula una carpeta: <RouterLink to="/chat">Chat → Vincular carpeta</RouterLink>.
+                </p>
+                <div class="two">
+                  <select v-model="form.project_id" class="input" title="Proyecto">
+                    <option v-for="p in live.projects" :key="p.id" :value="p.id">{{ p.name }}</option>
+                  </select>
+                  <select v-model="form.agent_id" class="input" title="Agente" @change="proposal = null">
+                    <option :value="0">✨ Agente a medida</option>
+                    <option v-for="a in agentsSorted" :key="a.id" :value="a.id">{{ a.name }} · {{ a.provider }}</option>
+                  </select>
+                </div>
+                <textarea
+                  v-model="form.prompt" class="input" rows="3" placeholder="¿Qué hay que hacer? (Enter para ejecutar)"
+                  @keydown.enter.exact.prevent="launch"
+                />
+                <!-- propuesta del diseñador: qué agente se va a crear y por qué (quita lo que no quieras) -->
+                <div v-if="proposal" class="prop">
+                  <div class="prop-h">
+                    <i class="fa-solid fa-wand-magic-sparkles" />
+                    <b>{{ proposal.name }}</b>
+                    <span class="prov" :class="`prov--${proposal.provider}`">{{ proposal.provider === "claude" ? `Claude ${proposal.model}` : "Modelo local" }}</span>
+                  </div>
+                  <div class="chips">
+                    <span v-if="proposal.coordinator" class="pill pill--ok" title="Claude planifica y el modelo local hace el trabajo"><i class="fa-solid fa-user-tie" />coordina al local</span>
+                    <span v-if="proposal.read_only" class="pill"><i class="fa-solid fa-eye" />solo lectura</span>
+                    <span v-if="proposal.web" class="pill pill--active"><i class="fa-solid fa-globe" />internet</span>
+                    <span v-if="proposal.thinking !== 'normal'" class="pill"><i class="fa-solid fa-brain" />pensar {{ proposal.thinking }}</span>
+                    <span class="pill"><i class="fa-solid fa-repeat" />{{ proposal.max_turns }} turnos</span>
+                  </div>
+                  <div v-if="proposal.skills.length" class="prop-row"><span>Skills</span>
+                    <button v-for="x in proposal.skills" :key="x" type="button" class="pill pill--active" title="Quitar" @click="dropFrom('skills', x)"><i class="fa-solid fa-bolt" />{{ x }} ×</button>
+                  </div>
+                  <div v-if="proposal.local_skills.length" class="prop-row"><span>Su modelo local</span>
+                    <button v-for="x in proposal.local_skills" :key="x" type="button" class="pill pill--active" title="Quitar" @click="dropFrom('local_skills', x)"><i class="fa-solid fa-robot" />{{ x }} ×</button>
+                  </div>
+                  <div v-if="proposal.mcps.length" class="prop-row"><span>MCP</span>
+                    <button v-for="x in proposal.mcps" :key="x" type="button" class="pill pill--active" title="Quitar" @click="dropFrom('mcps', x)"><i class="fa-solid fa-plug" />{{ x }} ×</button>
+                  </div>
+                  <p v-if="proposal.reason" class="small muted">{{ proposal.reason }}</p>
+                  <p class="small muted">Diseñado por {{ proposal.designed_by === "claude" ? `Claude Haiku (${usd(proposal.design_cost_usd)})` : "reglas (sin Claude)" }}</p>
+                </div>
+                <p v-if="formError" class="error small">{{ formError }}</p>
+                <div class="row">
+                  <button class="btn btn--primary" :disabled="sending || designing || !form.prompt.trim() || !form.project_id || form.agent_id === null">
+                    <i class="fa-solid" :class="designing ? 'fa-spinner fa-spin' : form.agent_id === 0 && !proposal ? 'fa-wand-magic-sparkles' : 'fa-play'" />
+                    {{ designing ? "Diseñando el agente…" : form.agent_id === 0 && !proposal ? "Diseñar agente" : form.agent_id === 0 ? "Crear agente y ejecutar" : "Ejecutar" }}
+                  </button>
+                  <button v-if="proposal" type="button" class="btn btn--small" :disabled="designing" @click="design">
+                    <i class="fa-solid fa-rotate" /> Otra propuesta
+                  </button>
+                </div>
+              </form>
+
+              <template v-if="curKey && !composing">
+                <div class="m-title">{{ missionTitle }}</div>
+                <div class="m-brief">
+                  <template v-if="curTask">
+                    {{ projectName(curTask.project_id) }} · {{ agentName(curTask.agent_id) }}
+                    <StatusChip :state="statusChip(curTask.status)" :text="STATUS_TEXT[curTask.status] ?? curTask.status" />
+                    <span v-if="curTask.cost_usd" class="muted">{{ usd(curTask.cost_usd) }}</span>
+                  </template>
+                  <template v-else-if="curPlan">
+                    {{ projectName(curPlan.project_id) }} · plan #{{ curPlan.id }}
+                    <StatusChip :state="planChip(curPlan.status)" :text="PLAN_TEXT[curPlan.status] ?? curPlan.status" />
+                  </template>
+                </div>
+                <!-- el encargo entero (recortado) y, si el agente es a medida, por qué es así -->
+                <div v-if="curTask" class="m-sum" :class="{ open: briefOpen }" title="Pulsa para ver el encargo entero" @click="briefOpen = !briefOpen">
+                  <p>{{ curTask.prompt }}</p>
+                  <small v-if="curAgent?.config.generated && curAgent.config.design_reason"><i class="fa-solid fa-wand-magic-sparkles" /> {{ curAgent.config.design_reason }}</small>
+                </div>
+                <div class="m-prog"><span :style="{ width: `${progress * 100}%` }" /></div>
+                <!-- qué está haciendo el modelo local, encargo a encargo -->
+                <div v-if="curTask && (localJobs.length || curLive)" class="ljobs">
+                  <div class="ljobs__h"><i class="fa-solid fa-robot" /> Modelo local <em>{{ localJobs.filter((j) => j.state === "ok").length }}/{{ localJobs.length }} hechos</em>
+                    <button v-for="w in workers.filter((x) => x.task.id === curTask!.id)" :key="w.srv" class="linkish" @click="pick(wid(w.task.id, w.srv))">{{ live.locals.length > 1 ? `${serverOf(w.srv)?.name ?? w.srv} →` : "ver →" }}</button>
+                  </div>
+                  <div v-for="j in localJobs.slice(-8)" :key="j.key" class="ljob" :class="j.state">
+                    <i class="fa-solid" :class="j.state === 'run' ? 'fa-gear fa-spin' : j.state === 'ok' ? 'fa-check' : 'fa-xmark'" />
+                    <div>
+                      <b><span class="tag">{{ j.kind }}</span> {{ j.title.length > 110 ? j.title.slice(0, 110) + "…" : j.title }}</b>
+                      <small v-if="j.meta">{{ j.meta }}</small>
+                      <small v-for="(c, k) in j.children" :key="k" :class="{ bad: !c.ok }">{{ c.ok ? "✓" : "✗" }} {{ c.title }}</small>
+                      <small v-if="j.state === 'run' && curLive" class="livetxt">{{ curLive.text ? `✍️ ${curLive.text.slice(-140)}` : curLive.thinking ? `💭 ${curLive.thinking.slice(-140)}` : "leyendo…" }}</small>
+                    </div>
+                  </div>
+                </div>
+                <div class="steps">
+                  <div v-for="(s, i) in steps" :key="i" class="step" :class="s.state" :style="{ '--c': s.color }">
+                    <div class="dot"><i class="fa-solid" :class="s.state === 'wait' ? 'fa-lock' : s.icon" /></div>
+                    <div class="step__txt"><b>{{ s.label }}</b><small>{{ s.sub ?? s.who }}</small></div>
+                    <div class="st">
+                      <i v-if="s.state === 'done'" class="fa-solid fa-check" />
+                      <i v-else-if="s.state === 'failed'" class="fa-solid fa-xmark" />
+                      <template v-else-if="s.state === 'wait'">espera</template>
+                      <template v-else-if="s.state === 'active'">en curso</template>
+                    </div>
+                  </div>
+                </div>
+                <div class="m-acts">
+                  <RouterLink v-if="curTask" class="btn btn--small" :to="`/chat/${curTask.id}`"><i class="fa-solid fa-comments" /> Abrir chat</RouterLink>
+                  <RouterLink v-if="curPlan" class="btn btn--small" :to="`/planes/${curPlan.id}`"><i class="fa-solid fa-diagram-project" /> Ver plan</RouterLink>
+                  <button v-if="curTask?.status === 'running' || (curPlan && ['planning', 'running'].includes(curPlan.status))" class="btn btn--small btn--danger" @click="stopMission">
+                    <i class="fa-solid fa-stop" /> Parar
+                  </button>
+                </div>
+              </template>
+            </div>
+            <div v-show="ltab === 'bandeja'">
+              <p v-if="actError" class="error small">{{ actError }}</p>
+              <div v-if="!live.inbox.length" class="empty-box">
+                <i class="fa-regular fa-circle-check" />
+                Sin aprobaciones pendientes.<br>Lo de riesgo bajo lo resuelven solos los agentes.
+              </div>
+              <div v-for="i in live.inbox" :key="keyOf(i)" class="ask">
+                <div class="ask-h">
+                  <span class="from"><i :style="{ background: agentColor(fromOf(i)) }" />{{ fromOf(i)?.name ?? "Agente" }} solicita</span>
+                  <span class="risk" :class="`risk-${riskOf(i)}`">{{ i.level }} · riesgo {{ riskOf(i) }}</span>
+                </div>
+                <h4>{{ INBOX_TEXT[i.type] ?? i.type }}: {{ i.title }}</h4>
+                <ul v-if="i.reasons.length"><li v-for="r in i.reasons.slice(0, 4)" :key="r">{{ r }}</li></ul>
+                <div class="ask-actions">
+                  <button
+                    v-for="c in choices(i)" :key="c.label" class="btn btn--small" :class="`btn--${c.tone}`"
+                    :disabled="acting === keyOf(i)" @click="decide(i, c)"
+                  ><i class="fa-solid" :class="c.icon" /> {{ c.label }}</button>
+                  <button class="btn btn--small" title="Ver la misión y su diff" @click="showInbox(i)"><i class="fa-solid fa-code-compare" /> Ver</button>
+                </div>
+              </div>
+              <div v-for="(h, k) in history" :key="k" class="hist">
+                <i class="fa-solid" :class="h.ok ? 'fa-circle-check ok' : 'fa-circle-xmark no'" />
+                <span>{{ h.label }}: {{ h.title }}</span>
+              </div>
+            </div>
+          </div>
+        </section>
+        <div class="gutter" title="Arrastra para cambiar el ancho (doble clic: por defecto)" @pointerdown="startDrag('left', $event)" @dblclick="resetSizes('left')" />
+        <OfficeDock ref="dock" :events="events" :review="review" :review-title="diffTask ? `#${diffTask.id} ${diffTask.title}` : ''" />
+      </div>
     </main>
     <div class="gutter" title="Arrastra para cambiar el ancho (doble clic: por defecto)" @pointerdown="startDrag('right', $event)" @dblclick="resetSizes('right')" />
 
@@ -1108,13 +1129,16 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
           <div><b>{{ tasks.filter((t) => t.status === "running").length }}</b><span>Trabajando</span></div>
           <div title="Equivalente en API: con la suscripción no se paga aparte"><b>{{ usd(weekCost) }}</b><span>Coste 7 días</span></div>
         </div>
-        <h3 class="card-title wt-title">Worktrees git <em>{{ worktrees.length }}</em></h3>
+        <h3 class="card-title wt-title">Worktrees git <em>{{ liveTrees.length }} activos · {{ worktrees.length }}</em></h3>
         <div class="chips">
           <span class="pill"><i class="fa-solid fa-code-branch" />main</span>
           <button
-            v-for="w in worktrees" :key="`${w.kind}${w.id}`" class="pill" :class="{ 'pill--active': wtState(w) === 'active', 'pill--ok': wtState(w) === 'ready' }"
+            v-for="w in liveTrees.slice(0, 6)" :key="`${w.kind}${w.id}`" class="pill" :class="{ 'pill--active': wtState(w) === 'active', 'pill--ok': wtState(w) === 'ready' }"
             :title="`${w.project} · ${w.status}`" @click="chosen = `${w.kind === 'plan' ? 'p' : 't'}${w.id}`"
           ><i class="fa-solid fa-code-branch" />{{ w.branch.replace("localharness/", "") }}</button>
+          <RouterLink v-if="liveTrees.length > 6 || worktrees.length > liveTrees.length" to="/trabajo" class="pill" :title="`${worktrees.length} worktrees en total`">
+            +{{ worktrees.length - Math.min(6, liveTrees.length) }} más
+          </RouterLink>
         </div>
       </section>
 
@@ -1136,7 +1160,7 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
         </template>
 
         <!-- el modelo local -->
-        <template v-else-if="sel === 'rack'">
+        <template v-else-if="sel.startsWith('rack')">
           <h3 class="card-title">Inspector <em>{{ (LOCAL_TEXT[localState] ?? localState).toUpperCase() }}</em></h3>
           <div class="insp-h">
             <div class="avatar" :style="{ '--c': LOCAL }"><i class="fa-solid fa-server" /></div>
@@ -1232,12 +1256,78 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
 
 <style scoped>
 .office {
-  --lw: 330px;
+  --lw: 420px;
   --rw: 330px;
   height: 100%;
   display: grid;
-  grid-template-columns: var(--lw) 12px minmax(0, 1fr) 12px var(--rw);
+  grid-template-columns: minmax(0, 1fr) 12px var(--rw);
   min-height: 0;
+}
+/* abajo: Misión/Aprobaciones | Timeline/Terminal/Diff/Modelos, con la columna de la derecha forman una L */
+.bottom {
+  display: grid;
+  grid-template-columns: var(--lw) 10px minmax(0, 1fr);
+  height: var(--dockh);
+  min-height: 0;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
+.bottom :deep(.dock) {
+  height: 100%;
+  border-top: 0;
+}
+.mdock {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.mdock-h {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.mtab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--ink-dim);
+  font: inherit;
+  font-weight: 700;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.mtab:hover {
+  background: var(--panel-hover);
+}
+.mtab.on {
+  background: var(--ink);
+  color: var(--panel);
+}
+.mtab .n {
+  font-size: 10px;
+  background: rgba(148, 163, 184, 0.3);
+  padding: 0 6px;
+  border-radius: 4px;
+}
+.mtab .n--warn {
+  background: var(--warn);
+  color: #fff;
+}
+.mdock-b {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 12px;
+}
+.bottom .gutter::after {
+  inset: 25% 3px;
 }
 .office.dragging {
   user-select: none;
@@ -1293,9 +1383,7 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
   overflow: auto;
 }
 .mission {
-  max-height: 62%;
-  overflow: auto;
-  flex-shrink: 0;
+  min-width: 0;
 }
 .msel {
   display: flex;
@@ -1324,7 +1412,7 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
   font-size: 12.5px;
   color: var(--ink-dim);
   background: var(--panel-raised);
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   padding: 8px 10px;
   margin-bottom: 10px;
   cursor: pointer;
@@ -1356,7 +1444,7 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
 .ljobs {
   margin: 0 0 8px;
   padding: 8px 10px;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   background: rgba(14, 165, 233, 0.1);
   display: grid;
   gap: 6px;
@@ -1456,7 +1544,7 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
 .m-prog span {
   display: block;
   height: 100%;
-  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  background: var(--accent);
   transition: width 0.4s;
   border-radius: 9px;
 }
@@ -1471,7 +1559,7 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
   gap: 9px;
   align-items: center;
   padding: 6px;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   opacity: 0.55;
 }
 .step .dot {
@@ -1555,7 +1643,7 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
 /* bandeja */
 .empty-box {
   border: 1.5px dashed var(--line);
-  border-radius: 14px;
+  border-radius: var(--radius);
   padding: 16px;
   text-align: center;
   color: var(--ink-faint);
@@ -1569,8 +1657,8 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
 }
 .ask {
   border: 1.5px solid #fcd34d;
-  background: linear-gradient(180deg, var(--warn-weak), var(--panel));
-  border-radius: 16px;
+  background: var(--warn-weak);
+  border-radius: var(--radius);
   padding: 12px;
   margin-bottom: 10px;
   animation: pop 0.35s cubic-bezier(0.2, 1.4, 0.4, 1);
@@ -1661,11 +1749,10 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
   flex-direction: column;
   min-height: 0;
   min-width: 0;
-  border-radius: 22px;
+  border-radius: var(--radius);
   overflow: hidden;
   border: 1px solid var(--line);
-  box-shadow: 0 12px 30px -16px rgba(15, 23, 42, 0.25);
-  background: linear-gradient(180deg, #a7b5c4 0%, #c9cdcb 52%, #d4c9b6 100%);
+  background: #c3c8cc;
 }
 .viewport {
   flex: 1;
@@ -1703,12 +1790,11 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
   max-width: 230px;
   background: rgba(238, 235, 228, 0.97);
   border: 1px solid #cbc6ba;
-  border-radius: 14px 14px 14px 4px;
-  padding: 5px 9px;
+  border-radius: 8px 8px 8px 2px;
+  padding: 4px 8px;
   font-size: 11px;
   font-weight: 600;
   color: #4a505c;
-  box-shadow: 0 8px 18px -8px rgba(15, 23, 42, 0.3);
   text-align: center;
   line-height: 1.3;
   transition: opacity 0.25s, transform 0.25s;
@@ -1725,10 +1811,10 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
   align-items: center;
   gap: 7px;
   background: rgba(238, 235, 228, 0.97);
-  border: 1.5px solid color-mix(in srgb, var(--c) 40%, #eeebe4);
-  border-radius: 13px;
-  padding: 4px 9px 4px 5px;
-  box-shadow: 0 8px 18px -10px rgba(15, 23, 42, 0.45);
+  border: 1px solid color-mix(in srgb, var(--c) 40%, #eeebe4);
+  border-radius: 7px;
+  padding: 3px 8px 3px 4px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.18);
   transition: transform 0.15s;
   color: #1e232d;
   font: inherit;
@@ -1738,7 +1824,7 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
 }
 .plate.sel {
   border-color: var(--c);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 22%, transparent), 0 8px 18px -10px rgba(15, 23, 42, 0.45);
+  box-shadow: inset 0 0 0 1px var(--c), 0 1px 2px rgba(15, 23, 42, 0.18);
 }
 .plate .lv {
   background: var(--c);
@@ -1788,7 +1874,7 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
   letter-spacing: 0.06em;
   text-transform: uppercase;
   padding: 3px 8px;
-  border-radius: 99px;
+  border-radius: 5px;
   border: 0;
   font-family: inherit;
 }
@@ -1798,6 +1884,11 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
   text-transform: none;
   letter-spacing: 0;
   font-size: 11px;
+  border-left: 3px solid var(--c, #0ea5e9);
+}
+.tag--btn.sel {
+  background: rgba(15, 23, 42, 0.95);
+  outline: 1px solid var(--c, #0ea5e9);
 }
 .views {
   position: absolute;
@@ -1808,11 +1899,9 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
   display: flex;
   gap: 4px;
   padding: 4px;
-  border-radius: 14px;
-  background: rgba(236, 233, 225, 0.92);
-  backdrop-filter: blur(8px);
+  border-radius: 8px;
+  background: rgba(236, 233, 225, 0.96);
   border: 1px solid #cbc6ba;
-  box-shadow: 0 8px 18px -10px rgba(15, 23, 42, 0.35);
   max-width: 96%;
   overflow-x: auto;
 }
@@ -1857,7 +1946,7 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
   gap: 6px;
   padding: 5px 10px;
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: none;
   color: #4a505c;
   font-weight: 700;
@@ -1886,7 +1975,7 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
   bottom: 10px;
   margin: 0;
   padding: 5px 10px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: rgba(236, 233, 225, 0.92);
   color: #4a505c;
   font-size: 11.5px;
@@ -1943,7 +2032,7 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
   display: grid;
   gap: 6px;
   padding: 10px 12px;
-  border-radius: 14px;
+  border-radius: var(--radius);
   background: var(--accent-weak);
 }
 .prop-h {
@@ -2037,7 +2126,7 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
 }
 .kv div {
   background: var(--panel-raised);
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   padding: 8px 10px;
 }
 .kv b {
@@ -2085,13 +2174,12 @@ button.pill {
   width: 44px;
   height: 44px;
   flex-shrink: 0;
-  border-radius: 14px;
+  border-radius: var(--radius);
   display: grid;
   place-items: center;
   font-size: 19px;
   color: #fff;
   background: var(--c);
-  box-shadow: 0 8px 16px -8px var(--c);
 }
 .desc {
   margin: 0 0 10px;
@@ -2100,7 +2188,7 @@ button.pill {
   display: grid;
   gap: 2px;
   padding: 8px 10px;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   background: var(--accent-weak);
   font-size: 12px;
   margin-bottom: 4px;
@@ -2138,8 +2226,15 @@ button.pill {
   }
   .office {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: 60vh auto auto;
+    grid-template-rows: auto auto;
     height: auto;
+  }
+  .bottom {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+  }
+  .mdock-b {
+    max-height: 50vh;
   }
   .stage {
     order: -1;

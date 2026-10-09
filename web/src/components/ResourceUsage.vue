@@ -130,7 +130,7 @@ const coreMax = computed(() => Math.max(1, ...(u.value?.system.per_core ?? [0]))
 .head .card-title { margin: 0; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
 .srv { display: grid; grid-template-columns: 1fr 1.5fr; gap: 10px; margin-top: 10px; }
-.box { background: var(--panel-raised); border-radius: 14px; padding: 10px 12px; display: grid; gap: 6px; align-content: start; min-width: 0; }
+.box { background: var(--panel-raised); border-radius: var(--radius); padding: 10px 12px; display: grid; gap: 6px; align-content: start; min-width: 0; }
 .t { font-size: 12px; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .t i { margin-right: 4px; }
 .big { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }

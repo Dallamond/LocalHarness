@@ -299,12 +299,12 @@ onUnmounted(() => { clearInterval(clock); off?.(); });
 
 <style scoped>
 .work { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 12px; max-width: 1500px; margin: 0 auto; align-items: start; }
-.lists { display: grid; gap: 12px; position: sticky; top: 12px; max-height: calc(100vh - 110px); overflow: auto; }
+.lists { display: grid; gap: 12px; position: sticky; top: calc(var(--top-h) + 12px); max-height: calc(100vh - 110px); overflow: auto; }
 .pad { padding: 14px; }
 .card-title em { font-style: normal; color: var(--ink-faint); margin-left: 4px; }
 .item {
   display: flex; gap: 8px; width: 100%; text-align: left; border: 0; background: none; font: inherit; color: inherit;
-  padding: 8px; border-radius: 12px; cursor: pointer; align-items: flex-start;
+  padding: 8px; border-radius: var(--radius-sm); cursor: pointer; align-items: flex-start;
 }
 .item:hover { background: var(--panel-hover); }
 .item.on { background: var(--accent-weak); }
@@ -321,14 +321,14 @@ onUnmounted(() => { clearInterval(clock); off?.(); });
 .d-h { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; }
 .d-h h2 { margin: 0; font-size: 19px; overflow-wrap: anywhere; }
 .d-h p { margin: 4px 0 0; }
-.risk { padding: 8px 12px; border-radius: 12px; font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 4px 8px; background: var(--panel-raised); }
+.risk { padding: 8px 12px; border-radius: var(--radius-sm); font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 4px 8px; background: var(--panel-raised); }
 .risk--N2 { background: var(--crit-weak); }
 .risk--N1 { background: var(--warn-weak); }
 .acts { display: flex; flex-wrap: wrap; gap: 8px; }
 .ask { display: flex; gap: 8px; }
 .ask input { flex: 1; min-width: 0; }
 .blocks { display: grid; gap: 10px; }
-.blk { background: var(--panel-raised); border-radius: 14px; padding: 10px 12px; }
+.blk { background: var(--panel-raised); border-radius: var(--radius); padding: 10px 12px; }
 .blk h4, .changes h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-faint); cursor: default; }
 .blk h4 i { margin-left: 4px; cursor: pointer; }
 .prompt { margin: 0; white-space: pre-wrap; font-size: 13px; display: -webkit-box; -webkit-line-clamp: 4; line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
@@ -342,14 +342,14 @@ onUnmounted(() => { clearInterval(clock); off?.(); });
 .d { color: var(--crit); font-weight: 700; }
 .diffwrap { display: grid; grid-template-columns: minmax(180px, 260px) minmax(0, 1fr); gap: 10px; }
 .flist { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; align-content: start; }
-.flist li { padding: 6px 8px; border-radius: 10px; cursor: pointer; display: grid; gap: 1px; font-size: 12.5px; }
+.flist li { padding: 6px 8px; border-radius: var(--radius-sm); cursor: pointer; display: grid; gap: 1px; font-size: 12.5px; }
 .flist li:hover { background: var(--panel-hover); }
 .flist li.on { background: var(--accent-weak); }
 .fname { font-family: var(--font-mono); overflow-wrap: anywhere; }
 .fst { font-size: 11px; color: var(--ink-faint); }
 .diff {
   margin: 0; font-family: var(--font-mono); font-size: 12px; line-height: 1.5; background: var(--panel-raised);
-  border-radius: 12px; padding: 8px 0; max-height: 60vh; overflow: auto; white-space: pre;
+  border-radius: var(--radius-sm); padding: 8px 0; max-height: 60vh; overflow: auto; white-space: pre;
 }
 .diff span { display: block; padding: 0 12px; }
 .diff .add { background: color-mix(in srgb, var(--ok) 16%, transparent); }

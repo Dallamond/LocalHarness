@@ -32,12 +32,18 @@ const links = [
 
 <template>
   <div class="shell" :class="{ 'shell--full': full }">
-    <header class="top card">
-      <RouterLink to="/oficina" class="brand">
-        <span class="logo" aria-hidden="true"><i class="fa-solid fa-cubes" /></span>
-        <span><b>LocalHarness</b><small>Oficina de agentes</small></span>
+    <header class="top">
+      <RouterLink to="/oficina" class="brand" title="LocalHarness · Oficina de agentes">
+        <svg class="logo" viewBox="0 0 28 28" aria-hidden="true">
+          <rect x="4" y="3" width="20" height="6" rx="1.5" />
+          <rect x="4" y="11" width="20" height="6" rx="1.5" />
+          <rect x="4" y="19" width="20" height="6" rx="1.5" />
+          <circle class="logo__led" cx="20" cy="6" r="1.4" />
+          <circle class="logo__led" cx="20" cy="14" r="1.4" />
+          <circle class="logo__led logo__led--off" cx="20" cy="22" r="1.4" />
+        </svg>
+        <b>LocalHarness</b>
       </RouterLink>
-      <span class="sep" />
       <nav class="nav">
         <RouterLink v-for="l in links" :key="l.to" :to="l.to">
           <i class="fa-solid" :class="l.icon" aria-hidden="true" />
@@ -46,13 +52,11 @@ const links = [
         </RouterLink>
       </nav>
       <span class="spacer" />
-      <button class="btn" title="Agentes, skills y servidores MCP" @click="openCatalog()">
+      <button class="btn btn--small" title="Agentes, skills y servidores MCP" @click="openCatalog()">
         <i class="fa-solid fa-boxes-stacked" /> <span class="hide-sm">Catálogo</span>
       </button>
-      <span class="sep hide-sm" />
       <div class="usage hide-sm" :class="`is-${usage.state}`" title="Uso de la suscripción de Claude (ventana de 5 h y semanal)">
-        <span class="usage__label">Plan de Claude</span>
-        <span class="usage__value mono">{{ usage.text }}</span>
+        <span class="usage__label">Plan de Claude <span class="usage__value">{{ usage.text }}</span></span>
         <span v-if="live.limit" class="meter"><span :style="{ width: `${Math.min(100, usage.worst * 100)}%` }" /></span>
       </div>
       <span
@@ -69,12 +73,11 @@ const links = [
 </template>
 
 <style scoped>
+/* barra fija arriba del todo, a todo lo ancho; el contenido va debajo */
 .shell {
   display: grid;
   grid-template-rows: var(--top-h) minmax(0, 1fr);
-  gap: 12px;
   min-height: 100vh;
-  padding: 12px;
 }
 @media (min-width: 981px) {
   .shell--full {
@@ -84,104 +87,113 @@ const links = [
 }
 .top {
   position: sticky;
-  top: 12px;
+  top: 0;
   z-index: 40;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 12px;
+  gap: 14px;
+  height: var(--top-h);
+  padding: 0 16px;
   min-width: 0;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
 }
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  padding-right: 14px;
+  border-right: 1px solid var(--line);
+  height: 28px;
   color: var(--ink);
   text-decoration: none;
 }
 .brand b {
-  display: block;
   font-weight: 800;
   font-size: 15px;
-  letter-spacing: -0.01em;
-  line-height: 1.1;
-}
-.brand small {
-  color: var(--ink-faint);
-  font-weight: 600;
-  font-size: 10.5px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  letter-spacing: -0.015em;
 }
 .logo {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 11px;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  color: #fff;
-  box-shadow: 0 6px 14px -4px color-mix(in srgb, var(--accent) 55%, transparent);
+  width: 22px;
+  height: 22px;
+  fill: var(--ink);
 }
-.sep {
-  width: 1px;
-  height: 26px;
-  background: var(--line);
+.logo__led {
+  fill: var(--ok);
+}
+.logo__led--off {
+  fill: var(--panel);
 }
 .spacer {
   flex: 1;
 }
 .nav {
   display: flex;
-  gap: 4px;
+  align-self: stretch;
+  gap: 2px;
   min-width: 0;
   overflow-x: auto;
 }
 .nav a {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 7px 11px;
-  border-radius: 11px;
+  padding: 0 10px;
   color: var(--ink-dim);
   text-decoration: none;
-  font-weight: 700;
+  font-weight: 600;
   white-space: nowrap;
-  transition: background 0.15s, color 0.15s;
+  transition: color 0.15s;
+}
+.nav a i {
+  font-size: 12.5px;
+  opacity: 0.8;
 }
 .nav a:hover {
-  background: var(--panel-hover);
   color: var(--ink);
 }
 .nav a.router-link-active {
-  background: var(--ink);
-  color: var(--panel);
+  color: var(--ink);
+}
+.nav a.router-link-active::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -1px;
+  height: 2px;
+  background: var(--accent);
 }
 .badge {
-  min-width: 20px;
-  padding: 0 6px;
-  border-radius: 999px;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 4px;
   background: var(--warn);
   color: #fff;
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 700;
   text-align: center;
 }
 .usage {
   display: grid;
-  gap: 2px;
-  min-width: 150px;
+  gap: 4px;
+  min-width: 170px;
   font-size: 11.5px;
 }
 .usage__label {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
   color: var(--ink-faint);
-  font-weight: 700;
+  font-weight: 600;
 }
 .usage__value {
   color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
 }
 .usage .meter {
-  height: 5px;
+  height: 4px;
 }
 .usage .meter span {
   background: var(--ok);
@@ -196,8 +208,8 @@ const links = [
   color: var(--crit);
 }
 .conn {
-  width: 9px;
-  height: 9px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--warn);
   flex-shrink: 0;
@@ -211,10 +223,10 @@ const links = [
 .main {
   min-width: 0;
   min-height: 0;
-  padding: 18px 8px 48px;
+  padding: 20px 16px 48px;
 }
 .shell--full .main {
-  padding: 0;
+  padding: 10px;
 }
 @media (max-width: 980px) {
   .hide-sm,
@@ -223,11 +235,15 @@ const links = [
   }
 }
 @media (max-width: 640px) {
-  .shell {
-    padding: 8px;
+  .top {
+    gap: 8px;
+    padding: 0 10px;
   }
-  .brand span:last-child {
+  .brand b {
     display: none;
+  }
+  .main {
+    padding: 14px 10px 40px;
   }
 }
 </style>

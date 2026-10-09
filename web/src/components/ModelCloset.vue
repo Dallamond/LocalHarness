@@ -141,7 +141,7 @@ const when = (t: number) => new Date(t * 1000).toLocaleString("es-ES", { day: "2
 
 <style scoped>
 .closet { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 10px; }
-.closet__item { border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px; background: var(--panel-2, transparent); }
+.closet__item { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; background: var(--panel-2, transparent); }
 .closet__head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
 .loaded { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft, rgba(80, 160, 120, .15)); }
 .closet__caps, .closet__fits, .closet__actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }

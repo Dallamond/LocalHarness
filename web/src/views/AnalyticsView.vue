@@ -183,25 +183,26 @@ const maxTool = computed(() => Math.max(1, ...toolRows.value.map(([, n]) => n)))
 </template>
 
 <style scoped>
+/* paleta categórica validada (daltonismo y contraste): Claude naranja, local azul; el tema oscuro usa sus pasos */
 .an {
-  --c-claude: #5b5bf0;
-  --c-local: #0891b2;
+  --c-claude: #eb6834;
+  --c-local: #2a78d6;
 }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .an { --c-claude: #7a7af4; --c-local: #0a9fc0; }
+  :root:not([data-theme="claro"]) .an { --c-claude: #d95926; --c-local: #3987e5; }
 }
-:root[data-theme="dark"] .an { --c-claude: #7a7af4; --c-local: #0a9fc0; }
+:root[data-theme="oscuro"] .an { --c-claude: #d95926; --c-local: #3987e5; }
 .page-head .seg { margin-left: auto; }
-.seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: 12px; background: var(--panel-raised); }
-.seg button { border: 0; background: none; font: inherit; font-size: 12.5px; font-weight: 700; color: var(--ink-dim); padding: 5px 10px; border-radius: 9px; cursor: pointer; }
-.seg button.on { background: var(--panel); color: var(--ink); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+.seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: var(--radius-sm); background: var(--panel-raised); }
+.seg button { border: 0; background: none; font: inherit; font-size: 12.5px; font-weight: 700; color: var(--ink-dim); padding: 5px 10px; border-radius: 5px; cursor: pointer; }
+.seg button.on { background: var(--panel); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line); }
 .seg--small button { font-size: 11.5px; padding: 4px 8px; }
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: var(--gap); }
 .tile { padding: 14px 16px; display: grid; gap: 2px; }
 .tile span { font-size: 12px; font-weight: 700; color: var(--ink-dim); display: flex; align-items: center; gap: 6px; }
 .tile b { font-size: 26px; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; }
 .tile small { color: var(--ink-faint); font-size: 11.5px; }
-.sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
 .sw--claude { background: var(--c-claude); }
 .sw--local { background: var(--c-local); }
 .pad { padding: 16px 18px; }
@@ -212,16 +213,17 @@ const maxTool = computed(() => Math.max(1, ...toolRows.value.map(([, n]) => n)))
 .legend span { display: flex; align-items: center; gap: 5px; }
 .chart { position: relative; }
 svg { width: 100%; height: auto; display: block; }
-.grid line { stroke: var(--line); stroke-width: 1; }
-.grid text, .xl { fill: var(--ink-faint); font-size: 10px; font-variant-numeric: tabular-nums; }
+.grid line { stroke: var(--line); stroke-width: 1; stroke-dasharray: 2 3; }
+.grid g:first-child line { stroke: var(--line-strong); stroke-dasharray: none; }
+.grid text, .xl { fill: var(--ink-dim); font-size: 11px; font-variant-numeric: tabular-nums; }
 .b--claude { fill: var(--c-claude); }
 .b--local { fill: var(--c-local); }
 .hit { fill: transparent; }
 .hit.on { fill: var(--ink); fill-opacity: 0.05; }
 .tip {
   position: absolute; top: 4px; transform: translateX(-50%); pointer-events: none; display: grid; gap: 2px;
-  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; font-size: 12px;
-  box-shadow: 0 8px 18px -10px rgba(0, 0, 0, 0.4); white-space: nowrap; color: var(--ink);
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 7px 10px; font-size: 12px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12); white-space: nowrap; color: var(--ink);
 }
 .tip span { display: flex; align-items: center; gap: 6px; }
 .tip em { font-style: normal; font-weight: 700; margin-left: auto; padding-left: 10px; font-variant-numeric: tabular-nums; }
@@ -236,8 +238,8 @@ svg { width: 100%; height: auto; display: block; }
 .aname { display: grid; min-width: 0; }
 .aname b { font-size: 13px; }
 .aname small { color: var(--ink-faint); font-size: 11px; }
-.meter { display: flex; gap: 2px; height: 10px; border-radius: 4px; background: var(--meter); overflow: hidden; }
-.meter i { display: block; height: 100%; border-radius: 4px; }
+.meter { display: flex; gap: 2px; height: 8px; border-radius: 2px; background: var(--meter); overflow: hidden; }
+.meter i { display: block; height: 100%; border-radius: 2px; }
 .anum { text-align: right; font-weight: 800; font-variant-numeric: tabular-nums; display: grid; }
 .anum small { font-weight: 600; color: var(--ink-faint); font-size: 11px; }
 .trow { display: grid; grid-template-columns: 1fr 1fr 40px; gap: 10px; align-items: center; padding: 5px 0; font-size: 12.5px; }
