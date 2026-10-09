@@ -3,6 +3,22 @@
 Última actualización: 09/10/2026, noche (banco de pruebas: resultados y qué sigue; oficina y GUI nuevas). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
 
 
+## ▶ 09/10/2026 23:50 — `mapa.js`: un ejemplo de la skill contaminaba los imports
+**Hallazgo:** 9 de las 16 tareas (173–218) que cayeron con `Cannot find module` importaban `src/mapa.js`, que no existe
+en Cuentas claras. Venía del ejemplo de la skill `modulos-es` (`import { crearMapa } from './mapa.js'`, heredado de
+Supersalto): los modelos pequeños lo copiaban literal. Mucho de lo que parecía «cascada» era esto. Corregida la skill
+(sin ejemplos de rutas; importar solo lo que esté en el contexto o en MÓDULOS QUE YA EXISTEN; cada función una vez).
+Las skills se leen en cada tarea: vale desde el parche 2 de `qwen9b-qwen4b-cerebro2-20261009-2340`, sin reiniciar.
+**Regla:** ningún prompt ni skill con ejemplos de rutas o nombres de un proyecto concreto.
+
+**Visto en el parche 1 con el cerebro 2 (Qwen 9B + 4B), para arreglar al acabar la prueba (código: hay que reiniciar):**
+- `Identifier 'formatear' has already been declared` (la función dos veces): arreglo mecánico que quite la
+  declaración repetida (hoy solo quita exportaciones repetidas).
+- Import de un módulo que no existe: arreglo mecánico que quite el import si los nombres no se usan o ya están
+  definidos en el archivo.
+- El 9B no respeta el formato de edición BUSCAR/REEMPLAZAR (un arreglo quirúrgico «no encaja»): en el cerebro 2,
+  reescribir entero hasta ~15.000 caracteres (hoy `REWRITE_UNDER` = 4.000) — a 46 tok/s sale barato.
+
 ## ▶ 09/10/2026 23:30 — Cerebro 2 del jefe local (sin medir aún) y pareja Qwen relanzada
 **Análisis (eventos 173–190 contra 200–217):** los 13 descartes del jefe local tenían `npm test` en ROJO; la revisión
 nunca fue la única que bloqueó (corrige la hipótesis 3 de abajo). Lo que fallaba era ARREGLAR: el jefe replanificaba a

@@ -1,5 +1,7 @@
 # Modelos locales a probar (08/10/2026)
 
+> Lista por GPU del 09/10/2026 (1060 · 3060 · M40) con lo ya medido: [MODELOS-POR-GPU.md](MODELOS-POR-GPU.md).
+
 Lista para probar estos días y decidir qué modelos se quedan en LocalHarness. Hardware: RTX 3060 12 GB (`CUDA0`) +
 GTX 1060 6 GB (`CUDA1`, con ~3 GB ocupados por los monitores: **libres ~2,9 GB**).
 
