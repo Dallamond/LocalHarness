@@ -17,6 +17,7 @@ class FakeApi:
         self.llama = {"config": {"last": {"model": "D:/m/A.gguf"}}, "servers": [
             {"id": "principal", "name": "Fuerte", "status": {"state": "ready"}}]}
         self.events = None  # eventos de todas las tareas (None = los de siempre)
+        self.finals: dict[int, str] = {}  # informe final de una tarea (si no, «hecho»)
 
     def __call__(self, method, path, body=None):
         self.calls.append((method, path, body))
@@ -32,7 +33,7 @@ class FakeApi:
             tid = len(self.tasks) + 1
             status, cost = self.script.pop(0)
             self.tasks[tid] = {"id": tid, "status": status, "cost_usd": cost, "worktree": f"/wt/{tid}",
-                               "final": "hecho", "_hang": status == "hang"}
+                               "final": self.finals.get(tid, "hecho"), "_hang": status == "hang"}
             if status == "hang":
                 self.tasks[tid]["status"] = "running"
             return self.tasks[tid]
@@ -103,6 +104,16 @@ class AutopilotTests(unittest.TestCase):
         self.assertEqual(r.outcome, "descartado (tests)")
         reply = next(c for c in api.calls if c[1].endswith("/reply"))
         self.assertIn("1 failing", reply[2]["message"])
+        self.assertEqual(api.tasks[1]["status"], "rejected")
+
+    def test_patch_rejected_by_the_local_boss_is_discarded_and_is_not_a_failure(self):
+        from localharness.boss import REJECTED
+        api = FakeApi([("failed", 0.0), ("failed", 0.0), ("failed", 0.0), ("review", 0.0)])
+        for tid in (1, 2, 3):  # el informe del jefe empieza por REJECTED: no integrar, pero los modelos van bien
+            api.finals[tid] = f"{REJECTED} (no se integra): revisión: falta el import"
+        pilot, _ = self.make(api, ["a", "b", "c", "d"])
+        rs = pilot.run()
+        self.assertEqual([r.outcome for r in rs], ["descartado (revisión)"] * 3 + ["integrado"])  # no para a los 3
         self.assertEqual(api.tasks[1]["status"], "rejected")
 
     def test_task_decided_by_hand_is_not_a_failure(self):

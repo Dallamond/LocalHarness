@@ -1,6 +1,63 @@
 # Estado y traspaso — leer primero al retomar (también desde Claude Code en la web)
 
-Última actualización: 07/10/2026, noche (dos GPU, dos modelos y Comparativa; ver «DÓNDE LO DEJAMOS»). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
+Última actualización: 09/10/2026, tarde (modo 100 % local con el Mario «Supersalto»: ver la sección de abajo). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
+
+## ▶ 09/10/2026 — Modo 100 % local con «Supersalto»: qué pasó, qué se cambió y qué sigue
+**Dónde lo dejamos (18:00):** corre la prueba base de la comparativa (`scripts\prueba-mario.ps1 -Nombre
+gptoss-qwen4b -Seguir`: gpt-oss-20b en la 3060 + Qwen3.5-4B en la 1060, proyecto `mario-gptoss-qwen4b`, ya con las
+mejoras de abajo cargadas). Otra sesión de Claude está montando a la vez el banco de pruebas de modelos en `banco/`
+(movió ahí el examen oculto: `banco/pruebas/supersalto/examen`, `banco/puntuar.mjs`). Siguiente: la misma prueba
+con Qwen3.6-35B-A3B en la 3060 (mejor UD-Q3_K_XL o Q4_K_XL con `n_cpu_moe` que IQ2) + Qwen3.5-4B en Q8_0 en la 1060.
+Queda suelto un primer intento fallido: carpeta `D:\LocalHarness-proyectos\mario-chatgptoss-qwen4b`, su proyecto en
+LocalHarness y `autopilot/mario-chatgptoss-qwen4b.md` (se pueden borrar).
+
+**Qué pasó.** Mañana: «plataformas» (Saltarín) con parches poco definidos → se cayeron el 2 y el 4 y arrastraron a
+los demás; el nivel inventado no tenía suelo. Proyecto nuevo **«mario»** (`D:\LocalHarness-proyectos\mario`, ENCARGO.md
++ `docs/nivel-1.txt`/`nivel-2.txt` diseñados a mano) con `autopilot/mario.md`: 40 parches de dos módulos
+independientes con firmas y casos de test exactos. **39 de 40 «integrados» y el juego no arrancaba** (main.js vacío,
+render.js con marcas `=======`, tamano.js convertido en JSON, jugador.js con otras funciones). De los 1.030 encargos
+(tabla `events`, kind `delegate`, tareas 101–152):
+- 33 de 52 planes sin los tests que pedía la tarea → `npm test` verde sin probar nada; con tests, 14 de 19 fallaban
+  a la primera y las rondas de arreglo se iban a 9–12 archivos, creaban duplicados (`mapa.mjs`, `gameState.mjs`) y
+  amañaban código bueno para cumplir tests inventados.
+- **22 de los 39 integrados tenían la revisión local en contra**, con fallos reales: el revisor acierta, pero no
+  frenaba nada.
+- Ediciones: gpt-oss 245, 24 % fallidas (bucles, «se quedó pensando», BUSCAR que no encaja); Qwen 124, 11 %.
+  Reescrituras enteras: 100 % bien. Las marcas de render.js venían de un bloque del Qwen con dos `=======` que
+  `edits.py` aceptaba.
+- El campo `skills` iba vacío en los 769 encargos: el jefe local no usaba skills.
+Tarde: barrera `tests/modulos.test.mjs` + `Jugar.bat` (servidor local; los módulos ES no cargan con doble clic) en el
+proyecto y lista `autopilot/mario-reparar.md` (12 parches): se integraron 10, pero sin quitar los módulos de
+PENDIENTES (la barrera los saltaba) y con el código viejo; el examen oculto da **37,1 %** al proyecto.
+
+**Qué se cambió** (278 pruebas en verde; primera prueba real en marcha):
+- `boss.py`: guardias deterministas tras cada ronda (`gates`: marcas de edición, módulos JS que no cargan —también
+  los que importan algo roto—, JSON en vez de código, Python que no compila) que cuentan como tests que fallan;
+  **revisión que bloquea** (2 rondas de corrección; si sigue en contra o quedan guardias → `rejected`: el informe
+  empieza por `REJECTED`, el adaptador devuelve `failed` y el autopiloto lo anota como «descartado (revisión)» sin
+  contarlo como caída); los tests que nombra la tarea y el plan olvida → bloque `spec` escrito desde la tarea, A LA
+  VEZ que el código (`tests_after_code` no los hace esperar); `edit` de archivo < 4000 caracteres → reescritura;
+  rondas de arreglo con `scope` (lo tocado + lo que nombra el error + lo que nombra la tarea), sin duplicados ni .md
+  sueltos; el arreglo prohíbe cambiar valores esperados; skills por etapa.
+- `edits.py`: un bloque con otro separador dentro se rechaza (`MARKER`) y el modelo lo repite.
+- Skills nuevas `skills/modulos-es` y `skills/tests-de-especificacion`.
+- Examen oculto (35 casos de la especificación que los modelos no ven) y comparativa `Prueba-mario.bat` /
+  `scripts/prueba-mario.ps1` (copia limpia en el Parche 000 b97d35c, alta por la API, `autopilot/mario-base.md` con
+  39 parches, nota al final; `-Seguir` para retomar; espera a que LocalHarness conteste).
+- Ojo: **cualquier comando de la CLI** (`python -m localharness project add…`) marca como `interrupted` las tareas en
+  marcha (`cli._store` → `mark_interrupted`); con un autopiloto corriendo, usar la API. Así se perdió la task-98.
+
+**Siguientes pasos para el orquestador** (por orden):
+1. Medir la prueba base contra la de esta mañana (nota del examen, integrados, «descartado (revisión)», rondas,
+   % de GPU) y ajustar `REVIEW_ROUNDS`/guardias si rechaza de más o de menos.
+2. Que la CLI no marque `interrupted` si el servidor contesta en :8095.
+3. Guardia de contrato: comprobar que cada módulo exporta los nombres que da la tarea (hoy lo mira la revisión, que
+   es un modelo y puede fallar).
+4. Examen por parche: correr los casos del parche al integrarlo, no solo al final.
+5. Repartir el «pensar» y encadenar parches: el Qwen revisa los parches pequeños o prepara el siguiente mientras el
+   fuerte planifica (hoy planificar y revisar van siempre al fuerte, y una GPU espera a la otra entre parches).
+6. `--continuo` solo con guardias y examen (hoy no propone nada útil).
+7. Tercera GPU (M40 de 24 GB, en camino): el reparto por cola y `suggest_servers` admiten hoy dos servidores.
 
 ## ▶ EMPEZAR AQUÍ — TODO ESTÁ EN `main` (07/10/2026)
 Decisión de Lucas: **se trabaja siempre en `main`**. Se integraron en `main` las ramas `claude/gifted-carson-20grn9`

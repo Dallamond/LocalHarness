@@ -37,6 +37,13 @@ class EditsTests(unittest.TestCase):
         text = "<<<<<<< CHANGELOG.md\n- 041\n=======\n- 041\n- 042\n>>>>>>> CHANGELOG.md"
         self.assertEqual(parse_edits(text), [("- 041\n", "- 041\n- 042\n")])
 
+    def test_a_block_with_a_second_separator_is_refused(self):
+        # el 09/10 el Qwen mandó un bloque con dos «=======»: se aplicó y media edición acabó dentro de render.js
+        text = "<<<<<<< BUSCAR\nb\n=======\nB\n=======\nBB\n>>>>>>> REEMPLAZAR\n"
+        with self.assertRaises(EditError) as e:
+            apply_edits("a\nb\nc\n", parse_edits(text))
+        self.assertIn("mal formado", str(e.exception))
+
     def test_a_model_stuck_in_a_loop_is_cut(self):
         from localharness.mcp_local import ToolError, looping
         stuck = "Hay que mirar night.js. " + "We can't open file. But we can approximate. Let's open night.js. " * 80

@@ -27,6 +27,9 @@ SYSTEM_EDIT = (
 # las palabras BUSCAR/REEMPLAZAR no son obligatorias: gpt-oss con poco razonamiento escribe a veces
 # «<<<<<<< CHANGELOG.md … >>>>>>> CHANGELOG.md» (lo que manda es la forma <<<<<<< / ======= / >>>>>>>)
 _BLOCK = re.compile(r"^<{5,9}[^\n<]*\n(.*?)^={5,9}[ \t]*\n(.*?)^>{5,9}[^\n>]*$", re.S | re.M)
+# una línea que es un separador de bloque. El 09/10 el Qwen devolvió un bloque con dos «=======» y la mitad del
+# bloque acabó dentro de src/render.js, que dejó de cargar (y como ningún test lo importaba, se integró)
+MARKER = re.compile(r"^(?:<{7}|={7}|>{7})(?:[ \t].*)?$", re.M)
 
 
 class EditError(Exception):
@@ -48,6 +51,9 @@ def apply_edits(content: str, edits: list[tuple[str, str]]) -> tuple[str, int]:
         raise EditError("no hay ningún bloque <<<<<<< BUSCAR / ======= / >>>>>>> REEMPLAZAR en la respuesta")
     text = content.replace("\r\n", "\n")
     for i, (search, replace) in enumerate(edits, 1):
+        if MARKER.search(search) or MARKER.search(replace):
+            raise EditError(f"el cambio {i} está mal formado: dentro lleva otra línea separadora (<<<<<<<, ======= o "
+                            ">>>>>>>). Cada bloque tiene exactamente una de cada: BUSCAR, =======, REEMPLAZAR")
         if not search.strip():
             if text.strip():
                 raise EditError(f"el cambio {i} tiene BUSCAR vacío, pero el archivo no está vacío: copia las líneas "

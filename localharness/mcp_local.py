@@ -1814,7 +1814,9 @@ def tests_after_code(items: list[dict]) -> list[tuple[str, list[str]]]:
         return False
     out = []
     for t in items:
-        if t["kind"] not in WRITES or not is_test_path(t["path"]):
+        # `spec`: el test sale de los casos exactos de la tarea, no del código. Va A LA VEZ que el código (el 09/10,
+        # con los tests detrás, el modelo rápido se pasaba el 78 % del tiempo esperando) y no copia sus errores
+        if t["kind"] not in WRITES or not is_test_path(t["path"]) or t["b"].get("spec"):
             continue
         text = str(t["b"].get("instructions") or "") + " " + " ".join(t["files"])
         deps = [c for c in code if (c["path"] in text or Path(c["path"]).name in text)

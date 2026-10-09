@@ -50,4 +50,5 @@ class LocalBossAdapter(Adapter):
             return _out("failed", round(time.monotonic() - t0, 1), str(e))
         on_event(Event("result", text=final))
         on_event(Event("usage", data={"cost_usd": 0.0}))
-        return _out("done", round(time.monotonic() - t0, 1), final)
+        # guardias o revisión en contra: no se puede integrar (el informe empieza por boss.REJECTED y dice por qué)
+        return _out("failed" if boss.rejected else "done", round(time.monotonic() - t0, 1), final)

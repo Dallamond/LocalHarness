@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from localharness.boss import REJECTED
+
 OPEN = ("running", "pending")
 NOTE = ("\n\n(AUTOPILOTO: nadie va a contestar hasta dentro de horas. No hagas preguntas ni pidas permiso: decide tú, "
         "termina el parche y deja los tests pasando. Sigue ENCARGO.md. Termina con un informe corto: qué hizo cada "
@@ -323,6 +325,14 @@ class Autopilot:
                 except ApiError:
                     pass
                 r.outcome = "descartado (tests)"
+        elif t["status"] == "failed" and (t.get("final") or "").startswith(REJECTED):
+            # el jefe local lo rechazó (guardias o revisión en contra): no es un fallo de los modelos, no cuenta
+            # para «3 seguidos fallando»
+            try:
+                self.api("POST", f"/api/tasks/{tid}/reject")
+            except ApiError:
+                pass
+            r.outcome = "descartado (revisión)"
         elif t["status"] == "done":
             r.outcome = "sin cambios"
         elif t["status"] == "merged":  # la integraste tú desde la oficina
