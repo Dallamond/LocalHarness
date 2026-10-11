@@ -43,6 +43,16 @@ o «ya». Resultados agrupados por contendiente (tiradas, media, mejor/peor). Fa
 tras reiniciar LocalHarness (no se reinició para no cortar el relevo). Relevo a las 23:30: hitos 1–3 integrados (con
 deuda), 28,6 / 37,1 / 60 % frente a 31,4 / 48,6 / 62,9 % de Claude en el mismo punto.
 
+**12/10 00:30 — Repertorio de casos cortos (commit 5779cbc).** Lucas quería muchas pruebas cortas para ver los fallos
+de los modelos sin proyectos de una hora. `banco/casos/` (22 casos de un parche, generados por `_generar.py`, base
+común en `_comun/`): escribir (3), tests con mutantes (3), diagnosticar (4), arreglar (4), ampliar (2), varios
+archivos (2) y 4 tangibles (propinas, tareas, serpiente, tres en raya: se abren en `/banco/abrir/...`). Cada examen da
+100 a la referencia y <100 a la semilla (`tests/test_casos.py`). `banco/repertorios/basico.json` = los 22 (15 min por
+caso). La cola corre repertorios (N vueltas) y la pestaña Banco enseña la matriz casos × contendientes. Arreglado
+también: «Añadir a la cola» no hacía nada (validación muda del navegador: `step` de las horas) → el formulario valida
+él mismo y dice el motivo junto al botón. Ojo: dentro de un test, `node --test` hijo necesita el entorno SIN
+`NODE_TEST_CONTEXT` o no da su resumen.
+
 ## ▶ 10/10/2026 13:00 — Cerebro 2 medido (17,2 %) y tres arreglos; relanzado `qwen9b-qwen4b-cerebro2-20261010-1301`
 **Medido:** `qwen9b-qwen4b-cerebro2-20261010-1050` = 4/18 integrados, **17,2 %** (lógica 0/8): sin mejora sobre el
 20,7 % de la línea base. **Causa raíz** (eventos 220–237): los 59 bloques de código del plan llegaban al obrero SIN la
