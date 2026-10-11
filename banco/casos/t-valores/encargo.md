@@ -1,0 +1,1 @@
+- src/descuento.js ya está hecho y es correcto: no lo cambies. Escribe tests/descuento.test.mjs (node:test y node:assert/strict) que lo comprueben de verdad: los bordes de cada tramo (9, 10, 49, 50, 99 y 100 unidades) y algún total donde el redondeo importe. Calcula tú cada valor esperado con la regla del comentario del archivo.

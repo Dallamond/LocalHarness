@@ -1,0 +1,15 @@
+{
+  "titulo": "Un fallo del test y otro del código",
+  "tipo": "logica",
+  "grupo": "diagnosticar",
+  "descripcion": "",
+  "check": "npm test",
+  "abrir": "index.html",
+  "base": "../_comun/semilla",
+  "modalidades": {
+    "caso": {
+      "parches": "encargo.md",
+      "descripcion": "Un parche."
+    }
+  }
+}

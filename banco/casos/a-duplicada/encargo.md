@@ -1,0 +1,1 @@
+- npm test falla porque src/estadistica.js no carga. Arréglalo: el comentario de arriba del archivo es la especificación.

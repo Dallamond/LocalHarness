@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tareas</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 480px; margin: 40px auto; padding: 0 16px; }
+    .tareas { list-style: none; padding: 0; }
+    .tareas li { padding: 8px; border-bottom: 1px solid #ddd; cursor: pointer; }
+    .tareas li.hecha { text-decoration: line-through; color: #888; }
+  </style>
+</head>
+<body>
+  <h1>Tareas</h1>
+  <form id="formulario"><input id="texto" placeholder="Nueva tarea" /> <button>Añadir</button></form>
+  <select id="filtro"><option value="todas">Todas</option><option value="pendientes">Pendientes</option><option value="hechas">Hechas</option></select>
+  <p id="contador"></p>
+  <div id="lista"></div>
+  <p><small>Clic para completar; Alt + clic para borrar.</small></p>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

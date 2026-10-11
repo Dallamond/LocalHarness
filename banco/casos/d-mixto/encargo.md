@@ -1,0 +1,1 @@
+- npm test falla. Arréglalo: docs/ESPEC.md es la especificación y manda, tanto sobre el código como sobre los tests.

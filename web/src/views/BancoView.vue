@@ -7,7 +7,12 @@ import Card from "../components/Card.vue";
 import StatusChip from "../components/StatusChip.vue";
 import { api, live, post, refreshAll, type LlamaInfo } from "../api";
 
-interface Ficha { nombre: string; titulo: string; tipo: string; modalidades: Record<string, { parches: number }> }
+interface Ficha { nombre: string; titulo: string; tipo: string; grupo?: string; modalidades: Record<string, { parches: number }> }
+interface Repertorio { nombre: string; titulo: string; descripcion?: string; minutos_tarea: number; casos: string[] }
+interface Celda { tiradas: number; aprobados: number; media: number }
+interface Matriz { repertorio: string; titulo: string; contendientes: string[];
+  filas: { caso: string; titulo: string; grupo: string; celdas: Record<string, Celda> }[];
+  totales: Record<string, { casos: number; aprobados: number; tiradas: number; media: number | null }> }
 interface Cont {
   nombre: string; descripcion?: string; agente: string; modelos?: Record<string, string | null>;
   pensamiento?: Record<string, string>; linea?: number; reparar?: number; relevo?: string;
@@ -21,13 +26,16 @@ interface Tanda {
   id: string; prueba: string; modalidad: string; repeticiones: number; contendiente: Cont;
   estado: "pendiente" | "en marcha" | "hecha" | "parada" | "error"; hechas: string[]; actual: string | null;
   error: string | null; resultados: Corta[]; media: number | null; en_curso: Corta | null;
+  total: number; repertorio?: string; casos?: string[];
 }
 interface Grupo { prueba: string; modalidad: string; contendiente: string; agente: string; descripcion: string;
   tiradas: number; media: number; mejor: number; peor: number; integrados: number; parches: number;
   minutos: number; ultima: string }
-interface Cola { tandas: Tanda[]; parar: string | null; corriendo: boolean; log: string; resumen: Grupo[] }
+interface Cola { tandas: Tanda[]; parar: string | null; corriendo: boolean; log: string; resumen: Grupo[]; matrices: Matriz[] }
 
 const pruebas = ref<Ficha[]>([]);
+const casos = ref<Ficha[]>([]);
+const repertorios = ref<Repertorio[]>([]);
 const guardados = ref<Cont[]>([]);
 const ejecuciones = ref<Ejec[]>([]);
 const llama = ref<LlamaInfo | null>(null);
@@ -50,13 +58,15 @@ const form = reactive({
 async function cargar() {
   // cada parte por su lado: si una falla (p. ej. un servidor viejo sin la cola), el resto se ve igual
   const [b, l, c] = await Promise.allSettled([
-    api<{ pruebas: Ficha[]; contendientes: Cont[]; ejecuciones: Ejec[] }>("/api/banco"),
+    api<{ pruebas: Ficha[]; casos: Ficha[]; repertorios: Repertorio[]; contendientes: Cont[]; ejecuciones: Ejec[] }>("/api/banco"),
     api<LlamaInfo>("/api/llama"),
     api<Cola>("/api/banco/cola"),
   ]);
   const fallos: string[] = [];
   if (b.status === "fulfilled") {
     pruebas.value = b.value.pruebas;
+    casos.value = b.value.casos ?? [];
+    repertorios.value = b.value.repertorios ?? [];
     guardados.value = b.value.contendientes;
     ejecuciones.value = b.value.ejecuciones;
     if (!form.prueba && b.value.pruebas.length) form.prueba = b.value.pruebas[0].nombre;
@@ -87,6 +97,9 @@ onMounted(async () => {
 });
 onUnmounted(() => clearInterval(timer));
 
+const REP = "rep:";
+const repertorio = computed(() => (form.prueba.startsWith(REP)
+  ? repertorios.value.find((r) => r.nombre === form.prueba.slice(REP.length)) : undefined));
 const prueba = computed(() => pruebas.value.find((p) => p.nombre === form.prueba));
 const modalidades = computed(() => Object.entries(prueba.value?.modalidades ?? {}));
 watch(() => form.prueba, () => {
@@ -166,7 +179,7 @@ const formAviso = ref("");
 function revisar(): string {
   const n = (v: unknown) => typeof v === "number" && Number.isFinite(v);
   if (!form.prueba) return "Elige una prueba.";
-  if (!form.modalidad) return "Elige una modalidad.";
+  if (!repertorio.value && !form.modalidad) return "Elige una modalidad.";
   if (!n(form.repeticiones) || !Number.isInteger(form.repeticiones) || form.repeticiones < 1 || form.repeticiones > 50)
     return "Repeticiones: un número entero de 1 a 50.";
   if (!/^[a-z0-9][a-z0-9._-]{0,60}$/.test(form.nombre.trim()))
@@ -192,8 +205,9 @@ async function enviar(fn: () => Promise<unknown>, ok: string) {
     busy.value = false;
   }
 }
-const anadir = () => enviar(() => post("/api/banco/cola", { prueba: form.prueba, modalidad: form.modalidad,
-  repeticiones: form.repeticiones, contendiente: contendiente() }),
+const anadir = () => enviar(() => post("/api/banco/cola", repertorio.value
+  ? { repertorio: repertorio.value.nombre, repeticiones: form.repeticiones, contendiente: contendiente() }
+  : { prueba: form.prueba, modalidad: form.modalidad, repeticiones: form.repeticiones, contendiente: contendiente() }),
 `Añadida a la cola: ${form.repeticiones}× ${form.nombre.trim()}. ${cola.value?.corriendo ? "Se hará cuando acabe lo que hay delante." : "Pulsa Empezar en la tarjeta Cola."}`);
 const guardar = () => enviar(async () => {
   await post("/api/banco/contendientes", { contendiente: contendiente() });
@@ -217,7 +231,17 @@ const estadoCola = computed(() => {
 const CHIP: Record<Tanda["estado"], "ok" | "warn" | "crit" | "pending" | "off"> = {
   pendiente: "off", "en marcha": "pending", hecha: "ok", parada: "warn", error: "crit",
 };
-const titulo = (p: string) => pruebas.value.find((x) => x.nombre === p)?.titulo ?? p;
+const titulo = (p: string) => pruebas.value.find((x) => x.nombre === p)?.titulo
+  ?? repertorios.value.find((x) => x.nombre === p)?.titulo ?? p;
+const casoDe = (id: string) => id.split("/")[0].replace(/-caso$/, "");
+const fichaCaso = (n: string) => casos.value.find((c) => c.nombre === n);
+// en una tanda de repertorio, cada pastilla es un caso: los tangibles (web, juego) se abren tal cual los dejó el modelo
+const enlace = (t: Tanda, r: Corta) => (t.repertorio && fichaCaso(casoDe(r.id))?.grupo === "tangible"
+  ? `/banco/abrir/${r.id}/` : "/banco");
+const etiqueta = (t: Tanda, r: Corta) => (t.repertorio ? `${casoDe(r.id)} · ${r.nota ?? "—"}` : `${r.nota ?? "—"} %`);
+const tonoCelda = (c: Celda | undefined) => (!c ? "" : c.aprobados === c.tiradas ? "nota-alta" : c.aprobados ? "nota-media" : "nota-baja");
+const GRUPO: Record<string, string> = { escribir: "Escribir", tests: "Tests", diagnosticar: "Diagnosticar",
+  arreglar: "Arreglar", ampliar: "Ampliar", varios: "Varios archivos", tangible: "Web y juegos" };
 const modelosDe = (c: Cont) => Object.entries(c.modelos ?? {}).map(([s, m]) => `${s}: ${m === null ? "apagado" : corto(m)}`).join(" · ")
   || "los modelos que estén cargados";
 const extras = (c: Cont) => [c.linea ? `línea ×${c.linea}` : "", c.reparar ? `reparación ×${c.reparar}` : "",
@@ -267,7 +291,7 @@ const grupos = computed(() => {
           </div>
           <div class="tanda__cuerpo">
             <div class="tanda__cab">
-              <b>{{ titulo(t.prueba) }} · {{ t.modalidad }}</b>
+              <b>{{ t.repertorio ? `Repertorio ${titulo(t.prueba)}` : `${titulo(t.prueba)} · ${t.modalidad}` }}</b>
               <span class="nombre">{{ t.contendiente.nombre }}</span>
               <StatusChip :state="CHIP[t.estado]" :text="t.estado" />
             </div>
@@ -275,13 +299,13 @@ const grupos = computed(() => {
               {{ t.contendiente.agente }} · {{ modelosDe(t.contendiente) }}<template v-if="extras(t.contendiente)"> · {{ extras(t.contendiente) }}</template>
             </div>
             <div class="tiradas">
-              <span class="cuenta">{{ t.resultados.length }}/{{ t.repeticiones }}</span>
-              <a v-for="r in t.resultados" :key="r.id" class="tirada" :class="tono(r.nota)" href="/banco" target="_blank"
-                 :title="`${r.id} · ${r.integrados}/${r.parches} integrados · ${minutos(r.minutos)}`">{{ r.nota ?? "—" }} %</a>
+              <span class="cuenta">{{ t.resultados.length }}/{{ t.total ?? t.repeticiones }}</span>
+              <a v-for="r in t.resultados" :key="r.id" class="tirada" :class="tono(r.nota)" :href="enlace(t, r)" target="_blank"
+                 :title="`${r.id} · ${r.integrados}/${r.parches} integrados · ${minutos(r.minutos)}`">{{ etiqueta(t, r) }}</a>
               <span v-if="t.en_curso" class="tirada en-curso" :title="t.en_curso.id">
                 en curso · parche {{ (t.en_curso.hechos ?? 0) + 1 }}/{{ t.en_curso.parches }}
               </span>
-              <span v-for="k in Math.max(0, t.repeticiones - t.resultados.length - (t.en_curso ? 1 : 0))" :key="k" class="tirada vacia" />
+              <span v-for="k in Math.min(30, Math.max(0, (t.total ?? t.repeticiones) - t.resultados.length - (t.en_curso ? 1 : 0)))" :key="k" class="tirada vacia" />
               <span v-if="t.media != null && t.resultados.length > 1" class="media">media {{ t.media }} %</span>
             </div>
             <p v-if="t.error" class="error small">{{ t.error }}</p>
@@ -308,15 +332,26 @@ const grupos = computed(() => {
         <label class="field">
           <span class="label">Prueba</span>
           <select v-model="form.prueba" class="input">
-            <option v-for="p in pruebas" :key="p.nombre" :value="p.nombre">{{ p.titulo }} ({{ p.tipo }})</option>
+            <optgroup v-if="repertorios.length" label="Repertorios de casos cortos">
+              <option v-for="r in repertorios" :key="r.nombre" :value="`rep:${r.nombre}`">{{ r.titulo }} · {{ r.casos.length }} casos</option>
+            </optgroup>
+            <optgroup label="Pruebas largas">
+              <option v-for="p in pruebas" :key="p.nombre" :value="p.nombre">{{ p.titulo }} ({{ p.tipo }})</option>
+            </optgroup>
           </select>
+          <span v-if="repertorio" class="hint">{{ repertorio.descripcion }}</span>
         </label>
-        <label class="field">
+        <label v-if="!repertorio" class="field">
           <span class="label">Modalidad</span>
           <select v-model="form.modalidad" class="input">
             <option v-for="[m, d] in modalidades" :key="m" :value="m">{{ m }} · {{ d.parches }} parches</option>
           </select>
         </label>
+        <div v-else class="field">
+          <span class="label">Casos</span>
+          <span class="hint">Un parche cada uno, con {{ repertorio.minutos_tarea }} min como máximo por caso.
+            {{ repertorio.casos.map((c) => fichaCaso(c)?.titulo ?? c).join(" · ") }}</span>
+        </div>
         <label class="field">
           <span class="label">Partir de un contendiente guardado</span>
           <select v-model="form.partir" class="input">
@@ -351,9 +386,9 @@ const grupos = computed(() => {
         </fieldset>
 
         <label class="field">
-          <span class="label">Repeticiones</span>
+          <span class="label">{{ repertorio ? "Vueltas (a todos los casos)" : "Repeticiones" }}</span>
           <input v-model.number="form.repeticiones" type="number" min="1" max="50" class="input" />
-          <span class="hint">Con 3 o más se ve si un cambio mejora de verdad o fue suerte.</span>
+          <span class="hint">{{ repertorio ? `${form.repeticiones || 0} × ${repertorio.casos.length} = ${(form.repeticiones || 0) * repertorio.casos.length} ejecuciones cortas.` : "Con 3 o más se ve si un cambio mejora de verdad o fue suerte." }}</span>
         </label>
         <label class="field">
           <span class="label">Parar la línea</span>
@@ -369,7 +404,7 @@ const grupos = computed(() => {
             <option v-for="n in 3" :key="n" :value="n">hasta {{ n }} vuelta(s) con el tiempo que sobre</option>
           </select>
         </label>
-        <label class="field">
+        <label v-if="!repertorio" class="field">
           <span class="label">Relevo (hito por hito)</span>
           <select v-model="form.relevo" class="input">
             <option value="">no: un proyecto seguido</option>
@@ -405,7 +440,34 @@ const grupos = computed(() => {
       </form>
     </Card>
 
-    <Card title="Resultados" subtitle="Ejecuciones terminadas agrupadas por configuración. Las paradas no cuentan.">
+    <Card v-for="m in (cola?.matrices ?? []).filter((x) => x.contendientes.length)" :key="m.repertorio"
+          :title="`Casos · ${m.titulo}`" subtitle="Aprobados (nota 100) de las tiradas terminadas de cada caso, por contendiente. Pasa el ratón para ver la nota media.">
+      <div class="tablewrap">
+        <table class="res matriz">
+          <thead>
+            <tr><th>Caso</th><th v-for="c in m.contendientes" :key="c" class="nombre">{{ c }}</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="f in m.filas" :key="f.caso">
+              <td>{{ f.titulo }}<small>{{ GRUPO[f.grupo] ?? f.grupo }} · {{ f.caso }}</small></td>
+              <td v-for="c in m.contendientes" :key="c" :class="tonoCelda(f.celdas[c])"
+                  :title="f.celdas[c] ? `nota media ${f.celdas[c].media}` : 'sin tiradas'">
+                {{ f.celdas[c] ? `${f.celdas[c].aprobados}/${f.celdas[c].tiradas}` : "—" }}
+              </td>
+            </tr>
+          </tbody>
+          <tfoot>
+            <tr>
+              <th>Total</th>
+              <th v-for="c in m.contendientes" :key="c">{{ m.totales[c].aprobados }}/{{ m.totales[c].tiradas }}
+                <small>media {{ m.totales[c].media ?? "—" }} · {{ m.totales[c].casos }} casos</small></th>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </Card>
+
+    <Card title="Resultados" subtitle="Pruebas largas terminadas, agrupadas por configuración. Las paradas no cuentan.">
       <p v-if="!grupos.length" class="empty">Aún no hay ejecuciones terminadas.</p>
       <div v-for="[nombre, gs] in grupos" :key="nombre" class="grupo">
         <h4>{{ nombre }}</h4>
@@ -647,6 +709,29 @@ const grupos = computed(() => {
   border-top: 0;
   font-weight: 700;
   color: var(--ink-dim);
+}
+.matriz td:not(:first-child),
+.matriz th:not(:first-child) {
+  text-align: center;
+  font-weight: 700;
+}
+.matriz tfoot th {
+  border-top: 2px solid var(--line);
+}
+.matriz th small {
+  display: block;
+  font-weight: 400;
+  font-size: 0.75rem;
+  color: var(--ink-faint);
+}
+td.nota-alta {
+  background: var(--ok-weak);
+}
+td.nota-media {
+  background: var(--warn-weak);
+}
+td.nota-baja {
+  background: var(--crit-weak);
 }
 .res td small {
   display: block;

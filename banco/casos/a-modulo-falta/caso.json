@@ -1,0 +1,15 @@
+{
+  "titulo": "Import de un módulo que no existe",
+  "tipo": "logica",
+  "grupo": "arreglar",
+  "descripcion": "",
+  "check": "npm test",
+  "abrir": "index.html",
+  "base": "../_comun/semilla",
+  "modalidades": {
+    "caso": {
+      "parches": "encargo.md",
+      "descripcion": "Un parche."
+    }
+  }
+}

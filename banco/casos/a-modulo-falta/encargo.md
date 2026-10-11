@@ -1,0 +1,1 @@
+- npm test falla. Arréglalo. docs/ESPEC.md describe lo que falta.

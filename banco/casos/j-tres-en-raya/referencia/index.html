@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Tres en raya</title>
+  <style>
+    body { font-family: system-ui, sans-serif; display: grid; place-items: center; }
+    #tablero { display: grid; grid-template-columns: repeat(3, 80px); gap: 6px; }
+    #tablero button { width: 80px; height: 80px; font-size: 2rem; }
+  </style>
+</head>
+<body>
+  <h1>Tres en raya</h1>
+  <p id="estado"></p>
+  <div id="tablero">
+    <button></button><button></button><button></button>
+    <button></button><button></button><button></button>
+    <button></button><button></button><button></button>
+  </div>
+  <p><button id="otra">Otra partida</button></p>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

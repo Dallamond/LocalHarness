@@ -1,0 +1,1 @@
+- npm test falla: tests/reloj.test.mjs está escrito para Jest (describe, it, expect) y aquí los tests usan node:test y node:assert/strict. Pásalo a node:test sin perder ningún caso. src/reloj.js es correcto: no lo cambies.

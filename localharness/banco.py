@@ -52,13 +52,15 @@ class Prueba:
     check: str
     abrir: str
     modalidades: dict
+    grupo: str = ""  # los casos (banco/casos): escribir, tests, diagnosticar, arreglar, ampliar, varios, tangible
+    base: str | None = None  # carpeta que va debajo de la semilla (la común de los casos), relativa a la prueba
 
     def lista(self, modalidad: str) -> list[str]:
         return autopilot.read_list(self.dir / self.modalidades[modalidad]["parches"])
 
     def ficha(self) -> dict:
         return {"nombre": self.nombre, "titulo": self.titulo, "tipo": self.tipo, "descripcion": self.descripcion,
-                "abrir": self.abrir, "referencia": (self.dir / "referencia").is_dir(),
+                "abrir": self.abrir, "referencia": (self.dir / "referencia").is_dir(), "grupo": self.grupo,
                 "modalidades": {m: {"descripcion": c.get("descripcion", ""), "parches": len(self.lista(m))}
                                 for m, c in self.modalidades.items()}}
 
@@ -68,13 +70,40 @@ def pruebas(banco: Path = BANCO) -> list[Prueba]:
 
 
 def cargar_prueba(nombre: str, banco: Path = BANCO) -> Prueba:
-    d = banco / "pruebas" / nombre
-    if not (d / "prueba.json").is_file():
+    """Una prueba larga (banco/pruebas/<nombre>/prueba.json) o un caso corto (banco/casos/<nombre>/caso.json)."""
+    d, f = banco / "pruebas" / nombre, "prueba.json"
+    if not (d / f).is_file():
+        d, f = banco / "casos" / nombre, "caso.json"
+    if "/" in nombre or "\\" in nombre or not (d / f).is_file():
         hay = ", ".join(p.name for p in (banco / "pruebas").iterdir() if (p / "prueba.json").is_file())
-        raise ValueError(f"No hay ninguna prueba «{nombre}» (hay: {hay})")
-    c = json.loads((d / "prueba.json").read_text(encoding="utf-8"))
+        raise ValueError(f"No hay ninguna prueba «{nombre}» (hay: {hay} y los casos de banco/casos)")
+    c = json.loads((d / f).read_text(encoding="utf-8"))
     return Prueba(nombre, d, c.get("titulo", nombre), c.get("tipo", ""), c.get("descripcion", ""),
-                  c.get("check", "npm test"), c.get("abrir", "index.html"), c["modalidades"])
+                  c.get("check", "npm test"), c.get("abrir", "index.html"), c["modalidades"], c.get("grupo", ""),
+                  c.get("base"))
+
+
+def casos(banco: Path = BANCO) -> list[Prueba]:
+    d = banco / "casos"
+    if not d.is_dir():
+        return []
+    return [cargar_prueba(x.name, banco) for x in sorted(d.iterdir()) if (x / "caso.json").is_file()]
+
+
+def repertorios(banco: Path = BANCO) -> list[dict]:
+    d = banco / "repertorios"
+    return [cargar_repertorio(f.stem, banco) for f in sorted(d.glob("*.json"))] if d.is_dir() else []
+
+
+def cargar_repertorio(nombre: str, banco: Path = BANCO) -> dict:
+    """Una lista de casos que se corre como una sola tanda: {titulo, descripcion, minutos_tarea, casos}."""
+    f = banco / "repertorios" / f"{nombre}.json"
+    if "/" in nombre or "\\" in nombre or not f.is_file():
+        raise ValueError(f"No hay ningún repertorio «{nombre}»")
+    r = json.loads(f.read_text(encoding="utf-8"))
+    for c in r["casos"]:
+        cargar_prueba(c, banco)  # que existan todos
+    return {"minutos_tarea": 15, **r, "nombre": nombre}
 
 
 def contendientes(banco: Path = BANCO) -> list[dict]:
@@ -103,7 +132,11 @@ def crear_repo(prueba: Prueba, modalidad: str, repo: Path) -> None:
     """Semilla (y la de la modalidad encima) en un repo nuevo con un único commit: el Parche 000."""
     if repo.exists():
         raise ValueError(f"Ya existe {repo}")
-    shutil.copytree(prueba.dir / "semilla", repo)
+    if prueba.base:  # la común de los casos, debajo de la suya
+        shutil.copytree((prueba.dir / prueba.base).resolve(), repo)
+        shutil.copytree(prueba.dir / "semilla", repo, dirs_exist_ok=True)
+    else:
+        shutil.copytree(prueba.dir / "semilla", repo)
     extra = prueba.modalidades[modalidad].get("semilla_extra")
     if extra:
         shutil.copytree(prueba.dir / extra, repo, dirs_exist_ok=True)

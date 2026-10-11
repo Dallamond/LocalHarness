@@ -101,15 +101,23 @@ def contendiente(c: dict) -> dict:
 
 
 def anadir(prueba: str, modalidad: str, repeticiones: int, cont: dict, path: Path | None = None,
-           base: Path | None = None) -> dict:
-    p = banco.cargar_prueba(prueba, base or banco.BANCO)
-    if modalidad not in p.modalidades:
-        raise ValueError(f"«{prueba}» no tiene la modalidad «{modalidad}» (tiene: {', '.join(p.modalidades)})")
+           base: Path | None = None, repertorio: str | None = None) -> dict:
+    """Una tanda: una prueba larga `repeticiones` veces o, con `repertorio`, `repeticiones` vueltas a sus casos."""
+    base = base or banco.BANCO
     if not 1 <= int(repeticiones) <= 50:
         raise ValueError("repeticiones: de 1 a 50")
+    extra: dict = {}
+    if repertorio:
+        r = banco.cargar_repertorio(repertorio, base)
+        prueba, modalidad = repertorio, "repertorio"
+        extra = {"repertorio": repertorio, "casos": r["casos"], "minutos_caso": r["minutos_tarea"]}
+    else:
+        p = banco.cargar_prueba(prueba, base)
+        if modalidad not in p.modalidades:
+            raise ValueError(f"«{prueba}» no tiene la modalidad «{modalidad}» (tiene: {', '.join(p.modalidades)})")
     t = {"id": uuid.uuid4().hex[:8], "prueba": prueba, "modalidad": modalidad, "repeticiones": int(repeticiones),
          "contendiente": contendiente(cont), "estado": "pendiente", "hechas": [], "actual": None,
-         "error": None, "creada": datetime.now().isoformat(timespec="seconds")}
+         "error": None, "creada": datetime.now().isoformat(timespec="seconds"), **extra}
     editar(lambda c: c["tandas"].append(t), path)
     return t
 
@@ -152,6 +160,23 @@ def guardar_contendiente(c: dict, sobrescribir: bool = False, base: Path | None 
     f.write_text(json.dumps({k: v for k, v in c.items() if k != "nombre"}, ensure_ascii=False, indent=2) + "\n",
                  encoding="utf-8")
     return f
+
+
+def plan(t: dict) -> list[tuple[str, str]]:
+    """Las ejecuciones de una tanda, en orden: (prueba, modalidad). Un repertorio: cada vuelta, todos sus casos."""
+    if t.get("repertorio"):
+        return [(c, "caso") for _ in range(t["repeticiones"]) for c in t["casos"]]
+    return [(t["prueba"], t["modalidad"])] * t["repeticiones"]
+
+
+def contendiente_de(t: dict) -> dict:
+    """El contendiente con los topes de la tanda: en un repertorio, cada caso es un parche corto."""
+    c = dict(t["contendiente"])
+    if t.get("repertorio"):
+        c["minutos_tarea"] = min(float(c.get("minutos_tarea") or 45), float(t.get("minutos_caso") or 15))
+        c["horas"] = min(float(c.get("horas") or 12), 2.0)
+        c.pop("relevo", None)
+    return c
 
 
 # --- el proceso que la corre
@@ -233,20 +258,24 @@ def correr(api: Callable, say: Callable[[str], None] = print, path: Path | None 
             tid = t["id"]
             editar(lambda c: _tanda(c, tid).update(estado="en marcha"), path)
             try:
-                prueba = banco.cargar_prueba(t["prueba"], base)
-                while len(t["hechas"]) < t["repeticiones"] and not parada():
+                todo = plan(t)
+                while len(t["hechas"]) < len(todo) and not parada():
+                    i = len(t["hechas"])
+                    nombre, modalidad = todo[i]
+                    prueba = banco.cargar_prueba(nombre, base)
                     if t.get("actual"):  # se cortó a medias: se retoma esa ejecución
                         ej = banco.Ejecucion(datos / t["actual"])
                         say(f"\n=== Sigo {t['actual']}")
                     else:
-                        ej = banco.Ejecucion.nueva(api, prueba, t["modalidad"], t["contendiente"], datos=datos,
+                        ej = banco.Ejecucion.nueva(api, prueba, modalidad, contendiente_de(t), datos=datos,
                                                    proyectos=proyectos)
-                        ej.datos.update(tanda=tid, repeticion=len(t["hechas"]) + 1)
+                        vuelta = i // len(t["casos"]) + 1 if t.get("repertorio") else i + 1
+                        ej.datos.update(tanda=tid, repeticion=vuelta, repertorio=t.get("repertorio"))
                         ej.guardar()
                         ide = f"{ej.carpeta.parent.name}/{ej.carpeta.name}"
                         editar(lambda c: _tanda(c, tid).update(actual=ide), path)
-                        say(f"\n=== {prueba.titulo} ({t['modalidad']}) · {t['contendiente']['nombre']} · "
-                            f"repetición {len(t['hechas']) + 1}/{t['repeticiones']} · {ide}")
+                        say(f"\n=== {prueba.titulo} ({modalidad}) · {t['contendiente']['nombre']} · "
+                            f"{i + 1}/{len(todo)} · {ide}")
                     d = ej.correr(api, say=say, piloto=piloto, stop=para_ya, **kw)
                     ide = f"{ej.carpeta.parent.name}/{ej.carpeta.name}"
                     say(f"=== nota {(d.get('examen_final') or {}).get('nota')} % · "
@@ -260,7 +289,7 @@ def correr(api: Callable, say: Callable[[str], None] = print, path: Path | None 
                         x["actual"] = None
                     t = editar(hecha, path)
                     t = _tanda(t, tid)
-                fin = "hecha" if len(t["hechas"]) >= t["repeticiones"] else "parada"
+                fin = "hecha" if len(t["hechas"]) >= len(plan(t)) else "parada"
                 editar(lambda c: _tanda(c, tid).update(estado=fin), path)
             except Exception as e:  # noqa: BLE001 — una tanda que falla no para la cola
                 say(f"=== la tanda {tid} falló: {e}")
@@ -291,7 +320,7 @@ def resumen(datos: Path | None = None) -> list[dict]:
     integrados y minutos de media. Las paradas o en marcha no cuentan (sesgarían la media)."""
     grupos: dict[tuple, list[dict]] = {}
     for e in banco.ejecuciones(datos or banco.DATOS):
-        if e.get("estado") != "terminada" or (e.get("totales") or {}).get("nota") is None:
+        if e.get("estado") != "terminada" or (e.get("totales") or {}).get("nota") is None or e.get("modalidad") == "caso":
             continue
         clave = (e["prueba"], e["modalidad"], e["contendiente"])
         grupos.setdefault(clave, []).append(e)
@@ -308,10 +337,43 @@ def resumen(datos: Path | None = None) -> list[dict]:
     return sorted(out, key=lambda g: (g["prueba"], g["modalidad"], -g["media"]))
 
 
+def matrices(datos: Path | None = None, base: Path | None = None) -> list[dict]:
+    """Por repertorio: una fila por caso y una columna por contendiente, con tiradas terminadas, aprobados (nota 100)
+    y nota media. Así se ve de un vistazo qué fallo concreto tiene cada configuración."""
+    base = base or banco.BANCO
+    celdas: dict[tuple[str, str], list[float]] = {}
+    for e in banco.ejecuciones(datos or banco.DATOS):
+        if e.get("modalidad") == "caso" and e.get("estado") == "terminada" and (e.get("totales") or {}).get("nota") is not None:
+            celdas.setdefault((e["prueba"], e["contendiente"]), []).append(e["totales"]["nota"])
+    out = []
+    for r in banco.repertorios(base):
+        conts = sorted({c for (caso, c) in celdas if caso in r["casos"]})
+        filas = []
+        for nombre in r["casos"]:
+            pr = banco.cargar_prueba(nombre, base)
+            fila = {"caso": nombre, "titulo": pr.titulo, "grupo": pr.grupo, "celdas": {}}
+            for c in conts:
+                notas = celdas.get((nombre, c))
+                if notas:
+                    fila["celdas"][c] = {"tiradas": len(notas), "aprobados": sum(n >= 100 for n in notas),
+                                         "media": round(mean(notas), 1)}
+            filas.append(fila)
+        totales = {}
+        for c in conts:
+            hechos = [f["celdas"][c] for f in filas if c in f["celdas"]]
+            totales[c] = {"casos": len(hechos), "aprobados": sum(h["aprobados"] for h in hechos),
+                          "tiradas": sum(h["tiradas"] for h in hechos),
+                          "media": round(mean(h["media"] for h in hechos), 1) if hechos else None}
+        out.append({"repertorio": r["nombre"], "titulo": r["titulo"], "contendientes": conts, "filas": filas,
+                    "totales": totales})
+    return out
+
+
 def estado(path: Path | None = None, datos: Path | None = None, log: Path | None = None) -> dict:
     datos, log = datos or banco.DATOS, log or LOG
     cola = leer(path)
     for t in cola["tandas"]:
+        t["total"] = len(plan(t))
         t["resultados"] = [r for r in (ejecucion_corta(i, datos) for i in t["hechas"]) if r]
         notas = [r["nota"] for r in t["resultados"] if r["nota"] is not None]
         t["media"] = round(mean(notas), 1) if notas else None

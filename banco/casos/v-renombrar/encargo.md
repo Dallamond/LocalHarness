@@ -1,0 +1,1 @@
+- Renombra la función formatear a formatearEuros en src/dinero.js y en todo lo que la usa (src/ticket.js, src/informe.js y los tests). Que no quede ninguna exportación ni llamada con el nombre viejo. El comportamiento no cambia.

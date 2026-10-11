@@ -1,0 +1,29 @@
+{
+  "titulo": "Básico",
+  "descripcion": "Los 22 casos: escribir desde la especificación, tests, diagnosticar, arreglar, ampliar sin romper, varios archivos y cuatro tangibles (dos webs y dos juegos).",
+  "minutos_tarea": 15,
+  "casos": [
+    "e-precio",
+    "e-texto",
+    "e-inventario",
+    "t-valores",
+    "t-sin-inventar",
+    "t-jest",
+    "d-test-mal-contado",
+    "d-off-by-one",
+    "d-import-mal",
+    "d-mixto",
+    "a-modulo-falta",
+    "a-duplicada",
+    "a-export-duplicado",
+    "a-archivo-largo",
+    "m-carrito",
+    "m-paso",
+    "v-divisas",
+    "v-renombrar",
+    "w-propinas",
+    "j-serpiente",
+    "w-tareas",
+    "j-tres-en-raya"
+  ]
+}

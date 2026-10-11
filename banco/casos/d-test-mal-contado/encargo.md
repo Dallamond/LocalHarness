@@ -1,0 +1,1 @@
+- npm test falla. Arréglalo. La regla de src/nivel.js (el comentario de arriba) es la especificación y manda.

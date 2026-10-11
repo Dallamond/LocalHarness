@@ -3,6 +3,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from localharness import banco, banco_cola
 from tests.test_banco import NODE, FakeApi, prueba_mini
@@ -87,6 +88,46 @@ class ColaTest(unittest.TestCase):
             self.assertEqual(c.post("/api/banco/cola/parar", json={"modo": "despues"}).status_code, 200)
             self.assertEqual(c.delete(f"/api/banco/cola/{t.json()['id']}").status_code, 200)
             self.assertEqual(c.delete("/api/banco/cola/nada").status_code, 404)
+
+    @unittest.skipUnless(NODE, "hace falta node para el examen")
+    def test_repertorio_vuelta_a_sus_casos_y_matriz(self):
+        # dos casos de un parche cada uno: «ca» (pide src/a.js con x = 1) y «cb» (src/b.js con y = 2)
+        comun = self.banco / "casos" / "_comun" / "semilla"
+        comun.mkdir(parents=True)
+        (comun / "CHANGELOG.md").write_text("# Changelog\n", encoding="utf-8")
+        mini = self.banco / "pruebas" / "mini"
+        for nombre, examen in (("ca", "a"), ("cb", "b")):
+            d = self.banco / "casos" / nombre
+            (d / "semilla").mkdir(parents=True)
+            (d / "examen").mkdir()
+            shutil.copy(mini / "examen" / f"{examen}.test.mjs", d / "examen")
+            (d / "encargo.md").write_text(f"- Haz {examen}\n", encoding="utf-8")
+            (d / "caso.json").write_text(json.dumps({"titulo": nombre, "grupo": "escribir", "base": "../_comun/semilla",
+                                                     "check": "", "modalidades": {"caso": {"parches": "encargo.md"}}}),
+                                         encoding="utf-8")
+        (self.banco / "repertorios").mkdir()
+        (self.banco / "repertorios" / "r.json").write_text(json.dumps({"titulo": "R", "casos": ["ca", "cb"]}),
+                                                          encoding="utf-8")
+        t = banco_cola.anadir("", "", 2, {"nombre": "pareja", "agente": "Jefe local", "minutos_tarea": 45},
+                              path=self.cola, base=self.banco, repertorio="r")
+        self.assertEqual((t["prueba"], t["casos"], t["minutos_caso"]), ("r", ["ca", "cb"], 15))
+        self.assertEqual(banco_cola.plan(t), [("ca", "caso"), ("cb", "caso")] * 2)
+        self.assertEqual(banco_cola.contendiente_de(t)["minutos_tarea"], 15)
+        bien_a, mal_b = ("src/a.js", "export const x = 1;\n"), ("src/b.js", "export const y = 3;\n")
+        api = FakeApi([bien_a, mal_b, bien_a, ("src/b.js", "export const y = 2;\n")])
+        datos = self.tmp / "datos"
+        with mock.patch.object(banco, "BANCO", self.banco):
+            banco_cola.correr(api, say=lambda _: None, path=self.cola, datos=datos, proyectos=self.tmp / "proyectos",
+                              base=self.banco, sleep=lambda _: None)
+            cola = banco_cola.estado(self.cola, datos, self.tmp / "no.log")
+            self.assertEqual((cola["tandas"][0]["estado"], len(cola["tandas"][0]["hechas"]), cola["tandas"][0]["total"]),
+                             ("hecha", 4, 4))
+            [m] = banco_cola.matrices(datos, self.banco)
+        filas = {f["caso"]: f["celdas"]["pareja"] for f in m["filas"]}
+        self.assertEqual(filas["ca"], {"tiradas": 2, "aprobados": 2, "media": 100})
+        self.assertEqual(filas["cb"], {"tiradas": 2, "aprobados": 1, "media": 50})
+        self.assertEqual(m["totales"]["pareja"]["aprobados"], 3)
+        self.assertEqual(banco_cola.resumen(datos), [])  # los casos no salen en el resumen de pruebas largas
 
     def test_parar_antes_no_corre_nada(self):
         self.anadir("x")

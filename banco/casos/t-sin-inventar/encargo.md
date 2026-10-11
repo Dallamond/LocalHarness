@@ -1,0 +1,1 @@
+- src/agenda.js ya está hecho y es correcto: no lo cambies. Escribe tests/agenda.test.mjs que comprueben lo que dice el comentario de proximaCita, y solo eso: no pruebes comportamientos que el comentario no fija.

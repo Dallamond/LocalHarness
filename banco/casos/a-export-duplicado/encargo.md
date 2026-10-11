@@ -1,0 +1,1 @@
+- npm test falla porque src/color.js no carga. Arréglalo sin cambiar lo que hace.

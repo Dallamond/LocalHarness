@@ -1,0 +1,1 @@
+- npm test falla. Arregla el fallo de src/tablas.js sin tocar nada más del archivo (el catálogo tiene que quedar igual).

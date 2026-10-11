@@ -1,0 +1,1 @@
+- npm test falla. Arréglalo: el comentario de src/rango.js es la especificación.

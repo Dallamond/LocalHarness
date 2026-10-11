@@ -66,8 +66,9 @@ class SwapIn(BaseModel):
 
 
 class BancoTandaIn(BaseModel):
-    prueba: str
-    modalidad: str
+    prueba: str = ""
+    modalidad: str = ""
+    repertorio: str | None = None  # en vez de prueba y modalidad: una vuelta a todos sus casos por repetición
     repeticiones: int = Field(default=1, ge=1, le=50)
     contendiente: dict[str, Any]  # como banco/contendientes/*.json, con su `nombre`
 
@@ -1566,7 +1567,8 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
     # --- banco de pruebas: página /banco y el proyecto de cada ejecución servido para abrirlo (localharness/banco.py)
     @app.get("/api/banco")
     def banco_lista() -> dict:
-        return {"pruebas": [p.ficha() for p in banco.pruebas()], "contendientes": banco.contendientes(),
+        return {"pruebas": [p.ficha() for p in banco.pruebas()], "casos": [c.ficha() for c in banco.casos()],
+                "repertorios": banco.repertorios(), "contendientes": banco.contendientes(),
                 "ejecuciones": banco.ejecuciones(banco.DATOS)}
 
     @app.get("/api/banco/ejecucion/{grupo}/{nombre}")
@@ -1583,12 +1585,13 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
 
     @app.get("/api/banco/cola")
     def banco_cola_estado() -> dict:
-        return {**banco_cola.estado(), "resumen": banco_cola.resumen()}
+        return {**banco_cola.estado(), "resumen": banco_cola.resumen(), "matrices": banco_cola.matrices()}
 
     @app.post("/api/banco/cola", status_code=201)
     def banco_cola_anadir(body: BancoTandaIn) -> dict:
         try:
-            return banco_cola.anadir(body.prueba, body.modalidad, body.repeticiones, body.contendiente)
+            return banco_cola.anadir(body.prueba, body.modalidad, body.repeticiones, body.contendiente,
+                                     repertorio=body.repertorio or None)
         except (ValueError, FileNotFoundError) as e:
             raise HTTPException(422, str(e)) from None
 

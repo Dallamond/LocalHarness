@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Propinas</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 420px; margin: 40px auto; padding: 0 16px; }
+    label { display: block; margin: 10px 0; }
+    input { width: 100%; padding: 6px; font-size: 1rem; }
+    #resultado p { font-size: 1.15rem; margin: 6px 0; }
+  </style>
+</head>
+<body>
+  <h1>Calculadora de propinas</h1>
+  <label>Cuenta (€) <input id="cuenta" value="50,00" inputmode="decimal" /></label>
+  <label>Propina (%) <input id="porcentaje" type="number" value="10" min="0" /></label>
+  <label>Personas <input id="personas" type="number" value="2" min="1" /></label>
+  <section id="resultado"></section>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
