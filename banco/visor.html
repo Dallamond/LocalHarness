@@ -93,6 +93,16 @@ pre { white-space: pre-wrap; font: 12.5px/1.5 ui-monospace, Consolas, monospace;
 .vacio { color: var(--tinta-3); padding: 24px 0; text-align: center; }
 .pista { color: var(--tinta-3); font-size: 13px; margin: 8px 0 0; }
 .tabla-scroll { overflow-x: auto; }
+.matriz td, .matriz th { text-align: center; padding: 6px 8px; }
+.matriz td:first-child, .matriz th:first-child { text-align: left; }
+.matriz .celda { font-weight: 700; font-variant-numeric: tabular-nums; cursor: pointer; border-radius: 8px; }
+.matriz .celda.todo { background: color-mix(in srgb, var(--bien) 16%, transparent); color: var(--bien); }
+.matriz .celda.parte { background: color-mix(in srgb, var(--aviso) 16%, transparent); color: var(--aviso); }
+.matriz .celda.nada { background: color-mix(in srgb, var(--mal) 14%, transparent); color: var(--mal); }
+.matriz .celda.curso { color: var(--acento); }
+.matriz .celda.elegida { outline: 2px solid var(--tinta); }
+.matriz .grupo-fila td { color: var(--tinta-3); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; padding-top: 14px; }
+.matriz small { display: block; font-weight: 400; color: var(--tinta-3); font-size: 12px; }
 @media (max-width: 640px) { .ocultar-movil { display: none; } .columnas { grid-template-columns: 1fr; } h1 { font-size: 23px; } }
 </style>
 </head>
@@ -128,7 +138,7 @@ async function cargar() {
   const grupos = gruposDe();
   if (!grupo || !grupos.some((g) => g.id === grupo)) grupo = (grupos.find((g) => g.ejecuciones.length) || grupos[0])?.id;
   pintar();
-  if (datos.ejecuciones.some((e) => e.estado === "en marcha")) setTimeout(recargar, 30000);
+  if (datos.ejecuciones.some((e) => e.estado === "en marcha")) setTimeout(recargar, grupo?.startsWith("rep:") ? 8000 : 30000);
 }
 
 async function recargar() {
@@ -144,15 +154,21 @@ function gruposDe() {
       out.push({ id, prueba: p, modalidad: m, info: c, ejecuciones: datos.ejecuciones.filter((e) => e.id.split("/")[0] === id) });
     }
   }
+  for (const r of datos.repertorios || []) {
+    out.push({ id: `rep:${r.nombre}`, repertorio: r,
+      ejecuciones: datos.ejecuciones.filter((e) => e.modalidad === "caso" && r.casos.includes(e.prueba)) });
+  }
   return out;
 }
 
 function pintar() {
   const grupos = gruposDe();
   $("#grupos").innerHTML = grupos.map((g) => `<button class="grupo" data-grupo="${g.id}" aria-pressed="${g.id === grupo}">`
-    + `${esc(g.prueba.titulo)} · ${esc(g.modalidad)}<small>${g.ejecuciones.length}</small></button>`).join("");
+    + (g.repertorio ? `Casos · ${esc(g.repertorio.titulo)}` : `${esc(g.prueba.titulo)} · ${esc(g.modalidad)}`)
+    + `<small>${g.ejecuciones.length}</small></button>`).join("");
   const g = grupos.find((x) => x.id === grupo);
   if (!g) { $("#contenido").innerHTML = '<p class="vacio">Todavía no hay pruebas en banco/pruebas.</p>'; return; }
+  if (g.repertorio) { pintarCasos(g); return; }
   // el color sigue a la ejecución (por orden de inicio), nunca a su puesto en la clasificación
   const porInicio = [...g.ejecuciones].sort((a, b) => (a.inicio || "").localeCompare(b.inicio || ""));
   porInicio.forEach((e, i) => { e.color = i < COLORES ? `var(--s${i + 1})` : "var(--tinta-3)"; });
@@ -259,6 +275,137 @@ function moverCruz(ev) {
   globo.style.top = "8px";
 }
 
+// --- repertorio de casos cortos: clasificación, nota media por caso y matriz casos × contendientes
+const GRUPOS = { escribir: "Escribir", tests: "Tests", diagnosticar: "Diagnosticar", arreglar: "Arreglar",
+  ampliar: "Ampliar sin romper", varios: "Varios archivos", tangible: "Web y juegos" };
+let casosActual = null;
+
+function pintarCasos(g) {
+  const r = g.repertorio;
+  const fichas = Object.fromEntries((datos.casos || []).map((c) => [c.nombre, c]));
+  // el color sigue al contendiente (por su primera ejecución), nunca a su puesto
+  const conts = [];
+  for (const e of [...g.ejecuciones].sort((a, b) => (a.inicio || "").localeCompare(b.inicio || ""))) {
+    if (!conts.includes(e.contendiente)) conts.push(e.contendiente);
+  }
+  const color = (c) => { const i = conts.indexOf(c); return i < COLORES ? `var(--s${i + 1})` : "var(--tinta-3)"; };
+  g.ejecuciones.forEach((e) => { e.color = color(e.contendiente); });
+  const celdas = {};
+  for (const e of g.ejecuciones) {
+    const k = `${e.prueba}|${e.contendiente}`;
+    const c = celdas[k] ??= { notas: [], ids: [], curso: false };
+    c.ids.push(e.id);
+    if (e.estado === "en marcha") c.curso = true;
+    else if (e.estado === "terminada" && e.totales?.nota != null) c.notas.push(e.totales.nota);
+  }
+  const media = (xs) => (xs.length ? Math.round((xs.reduce((a, b) => a + b, 0) / xs.length) * 10) / 10 : null);
+
+  // clasificación
+  const filas = conts.map((c) => {
+    const mias = g.ejecuciones.filter((e) => e.contendiente === c);
+    const term = mias.filter((e) => e.estado === "terminada" && e.totales?.nota != null);
+    const casos = r.casos.filter((k) => celdas[`${k}|${c}`]?.notas.length);
+    const medias = casos.map((k) => media(celdas[`${k}|${c}`].notas));
+    return { c, aprobados: term.filter((e) => e.totales.nota >= 100).length, tiradas: term.length,
+      media: media(medias), casos: casos.length, segundos: term.reduce((a, e) => a + (e.totales.segundos || 0), 0),
+      vivo: mias.some((e) => e.estado === "en marcha"), ultima: mias.map((e) => e.inicio || "").sort().at(-1),
+      desc: mias.at(-1)?.modelos_cargados || mias.at(-1)?.descripcion || "" };
+  }).sort((a, b) => (b.media ?? -1) - (a.media ?? -1));
+  const clasif = filas.length ? `<section class="tarjeta"><h2>Clasificación</h2><div class="tabla-scroll"><table><thead><tr>`
+    + `<th>Contendiente</th><th class="num">Nota media</th><th class="num">Aprobados</th><th class="num">Casos</th>`
+    + `<th class="num ocultar-movil">Tiempo</th><th>Estado</th></tr></thead><tbody>`
+    + filas.map((f) => `<tr><td><span class="muestra" style="background:${color(f.c)}"></span><span class="nombre">${esc(f.c)}</span>`
+      + `<div class="desc">${esc(f.desc)}</div></td><td class="num nota">${f.media == null ? "—" : `${f.media}<small> %</small>`}</td>`
+      + `<td class="num">${f.aprobados} / ${f.tiradas}</td><td class="num">${f.casos} / ${r.casos.length}</td>`
+      + `<td class="num ocultar-movil">${horas(f.segundos)}</td><td>${f.vivo ? '<span class="chip vivo">en marcha</span>' : '<span class="chip">parado</span>'}`
+      + `<div class="desc">${fecha(f.ultima)}</div></td></tr>`).join("")
+    + `</tbody></table></div><p class="pista">Nota media = media de la nota de cada caso (de sus tiradas terminadas). Aprobado = nota 100.</p></section>`
+    : `<section class="tarjeta"><h2>Clasificación</h2><p class="vacio">Nadie ha corrido este repertorio todavía.<br>`
+      + `Pestaña <b>Banco</b> de LocalHarness → prueba «${esc(r.titulo)}» → Añadir a la cola → Empezar.</p></section>`;
+
+  // gráfica: nota media de cada caso, un punto por contendiente
+  const orden = [...r.casos].sort((a, b) => Object.keys(GRUPOS).indexOf(fichas[a]?.grupo) - Object.keys(GRUPOS).indexOf(fichas[b]?.grupo));
+  const AN = 900, AL = 320, MM = { izq: 40, der: 12, arr: 26, aba: 92 };
+  const banda = (AN - MM.izq - MM.der) / orden.length;
+  const bx = (i) => MM.izq + banda * i;
+  const y = (v) => MM.arr + (1 - v / 100) * (AL - MM.arr - MM.aba);
+  let svg = "";
+  for (const v of [0, 25, 50, 75, 100]) {
+    svg += `<line x1="${MM.izq}" x2="${AN - MM.der}" y1="${y(v)}" y2="${y(v)}" stroke="var(--rejilla)"/>`
+      + `<text x="${MM.izq - 8}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
+  }
+  let grupoPrevio = null;
+  orden.forEach((k, i) => {
+    const gr = fichas[k]?.grupo;
+    if (gr !== grupoPrevio) {
+      if (i) svg += `<line x1="${bx(i)}" x2="${bx(i)}" y1="${MM.arr - 18}" y2="${AL - MM.aba}" stroke="var(--borde)"/>`;
+      svg += `<text x="${bx(i) + 4}" y="${MM.arr - 8}" style="fill:var(--tinta-2)">${esc(GRUPOS[gr] || gr || "")}</text>`;
+      grupoPrevio = gr;
+    }
+    const cx = bx(i) + banda / 2;
+    svg += `<text transform="translate(${cx + 4},${AL - MM.aba + 10}) rotate(-50)" text-anchor="end">${esc(k)}</text>`;
+    conts.forEach((c, j) => {
+      const m = media(celdas[`${k}|${c}`]?.notas || []);
+      if (m == null) return;
+      const dx = conts.length > 1 ? (j - (conts.length - 1) / 2) * Math.min(7, banda / (conts.length + 1)) : 0;
+      svg += `<circle cx="${cx + dx}" cy="${y(m)}" r="5" fill="${color(c)}" stroke="var(--tarjeta)" stroke-width="2"/>`;
+    });
+    svg += `<rect data-banda="${esc(k)}" x="${bx(i)}" y="${MM.arr}" width="${banda}" height="${AL - MM.arr - MM.aba}" fill="transparent"/>`;
+  });
+  casosActual = { conts, color, celdas, media, fichas, AN, banda, bx, orden };
+  const leyenda = conts.map((c) => `<span><span class="muestra" style="background:${color(c)}"></span>${esc(c)}</span>`).join("");
+  const grafica = conts.length ? `<section class="tarjeta"><h2>Nota media por caso (%)</h2><div class="leyenda">${leyenda}</div>`
+    + `<div class="grafica"><svg viewBox="0 0 ${AN} ${AL}" role="img" aria-label="Nota media de cada caso por contendiente">${svg}</svg>`
+    + `<div class="globo" id="globo"></div></div><p class="pista">Pasa el ratón por un caso para ver el detalle; la tabla de abajo tiene los mismos datos.</p></section>` : "";
+
+  // matriz
+  let cuerpo = "";
+  grupoPrevio = null;
+  for (const k of orden) {
+    const gr = fichas[k]?.grupo;
+    if (gr !== grupoPrevio) { cuerpo += `<tr class="grupo-fila"><td colspan="${conts.length + 1}">${esc(GRUPOS[gr] || gr || "")}</td></tr>`; grupoPrevio = gr; }
+    cuerpo += `<tr><td><span class="nombre">${esc(fichas[k]?.titulo || k)}</span><small>${esc(k)}</small></td>`
+      + conts.map((c) => {
+        const x = celdas[`${k}|${c}`];
+        if (!x) return "<td>—</td>";
+        const ap = x.notas.filter((n) => n >= 100).length;
+        const clase = x.curso && !x.notas.length ? "curso" : !x.notas.length ? "" : ap === x.notas.length ? "todo" : ap ? "parte" : "nada";
+        const texto = x.curso && !x.notas.length ? "en curso" : `${ap}/${x.notas.length}${x.curso ? " ·…" : ""}`;
+        return `<td class="celda ${clase}" data-celda="${esc(x.ids.join(","))}" title="nota media ${media(x.notas) ?? "—"} · toca para ver el detalle">${texto}`
+          + `<small>${media(x.notas) ?? ""}${x.notas.length ? " %" : ""}</small></td>`;
+      }).join("") + "</tr>";
+  }
+  const matriz = conts.length ? `<section class="tarjeta"><h2>Casos × contendientes</h2><div class="tabla-scroll"><table class="matriz"><thead><tr><th>Caso</th>`
+    + conts.map((c) => `<th><span class="muestra" style="background:${color(c)}"></span>${esc(c)}</th>`).join("")
+    + `</tr></thead><tbody>${cuerpo}</tbody></table></div><p class="pista">Aprobados / tiradas terminadas, y la nota media. Toca una celda para ver sus ejecuciones abajo (las dos últimas).</p></section>` : "";
+
+  const ficha = `<section class="tarjeta ficha"><div><h2>Casos · ${esc(r.titulo)} <span class="chip">${r.casos.length} casos</span>`
+    + ` <span class="chip">${r.minutos_tarea} min por caso</span></h2><p>${esc(r.descripcion || "")}</p>`
+    + `<p class="pista">Cada caso es un parche corto contra un fallo concreto, con su examen oculto. Se lanzan desde la pestaña Banco de LocalHarness.</p></div></section>`;
+  $("#contenido").innerHTML = ficha + clasif + grafica + matriz + '<div id="detalle"></div>';
+  pintarDetalle(g);
+}
+
+function globoCaso(ev) {
+  const k = ev.target.dataset.banda;
+  const { conts, color, celdas, media, fichas, AN, banda, bx, orden } = casosActual;
+  const svg = ev.target.ownerSVGElement;
+  const caja = svg.getBoundingClientRect();
+  const filas = conts.map((c) => {
+    const x = celdas[`${k}|${c}`];
+    if (!x) return "";
+    const ap = x.notas.filter((n) => n >= 100).length;
+    return `<div><span><span class="muestra" style="background:${color(c)}"></span>${esc(c)}</span>`
+      + `<span>${media(x.notas) ?? "—"} % · ${ap}/${x.notas.length}${x.curso ? " · en curso" : ""}</span></div>`;
+  }).join("");
+  const globo = $("#globo");
+  globo.innerHTML = `<b>${esc(fichas[k]?.titulo || k)}</b>${filas || "<div><span>sin tiradas</span></div>"}`;
+  globo.style.display = "block";
+  const izq = ((bx(orden.indexOf(k)) + banda) / AN) * caja.width;
+  globo.style.left = `${Math.min(izq + 8, caja.width - globo.offsetWidth)}px`;
+  globo.style.top = "8px";
+}
+
 // --- detalle de una o dos ejecuciones
 async function pintarDetalle(g) {
   const ids = elegidas.filter((id) => g.ejecuciones.some((e) => e.id === id));
@@ -300,6 +447,16 @@ function columna(d, e) {
 document.addEventListener("click", (ev) => {
   const b = ev.target.closest("[data-grupo]");
   if (b) { grupo = b.dataset.grupo; elegidas.length = 0; pintar(); return; }
+  const celda = ev.target.closest("[data-celda]");
+  if (celda) {
+    const ids = celda.dataset.celda.split(",").filter(Boolean);
+    elegidas.length = 0;
+    elegidas.push(...ids.slice(-2));
+    document.querySelectorAll("[data-celda]").forEach((c) => c.classList.toggle("elegida", c === celda));
+    pintarDetalle(gruposDe().find((x) => x.id === grupo));
+    $("#detalle")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
   const fila = ev.target.closest("tr.fila");
   if (fila) {
     const id = fila.dataset.id;
@@ -310,8 +467,12 @@ document.addEventListener("click", (ev) => {
     pintarDetalle(gruposDe().find((g) => g.id === grupo));
   }
 });
-document.addEventListener("pointermove", (ev) => { if (ev.target.id === "zona") moverCruz({ ...ev, clientX: ev.clientX, currentTarget: ev.target }); });
+document.addEventListener("pointermove", (ev) => {
+  if (ev.target.id === "zona") moverCruz({ ...ev, clientX: ev.clientX, currentTarget: ev.target });
+  else if (ev.target.dataset?.banda) globoCaso(ev);
+});
 document.addEventListener("pointerout", (ev) => {
+  if (ev.target.dataset?.banda) { $("#globo") && ($("#globo").style.display = "none"); return; }
   if (ev.target.id !== "zona") return;
   $("#globo") && ($("#globo").style.display = "none");
   document.querySelector("#cruz")?.setAttribute("visibility", "hidden");

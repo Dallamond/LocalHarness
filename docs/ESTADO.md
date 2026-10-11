@@ -61,6 +61,13 @@ Además, tras 2 casos (100 % los dos) el alta del proyecto del 3.º dio **500** 
 compartía entre hilos sin cerrojo → `store._ConexionConCerrojo` (cada execute se lee entero dentro de un RLock); el
 banco sigue si el proyecto quedó dado de alta; la cola reintenta 2 fallos de API seguidos. Tanda reabierta (sigue en
 el caso 3).
+**12/10 01:00 — Casos en el visor `/banco` y otro fallo de Windows.** El visor (donde están las gráficas de las pruebas
+largas) tiene ahora una pestaña por repertorio («Casos · Básico»): clasificación por contendiente (nota media,
+aprobados, casos cubiertos), nota media por caso (un punto por contendiente, agrupado por tipo, con tooltip) y matriz
+casos × contendientes (tocar una celda abre el detalle de sus ejecuciones). Se refresca cada 8 s con algo en marcha.
+El 5.º caso paró la cola con `[WinError 5] Acceso denegado` al reemplazar `resultado.json` mientras el servidor lo
+leía → `banco.reemplazar` y `banco.leer_json` reintentan; `banco_cola.leer` ya no devuelve una cola vacía si no puede
+leer (habría borrado las tandas al guardar). Tanda reabierta otra vez (sigue en el caso 5).
 **PENDIENTE (lo pidió Lucas para la próxima):** pruebas más cortas: poder **elegir X casos** del repertorio (p. ej. 5)
 en vez de los 22 de golpe (selector de casos en el formulario, o repertorios pequeños por grupo).
 

@@ -27,6 +27,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -117,6 +118,30 @@ def cargar_contendiente(nombre: str, banco: Path = BANCO) -> dict:
         raise ValueError(f"No hay ningún contendiente «{nombre}» (hay: {hay})")
     c = json.loads(f.read_text(encoding="utf-8"))
     return {"agente": "Jefe local", "horas": 12, "minutos_tarea": 45, "presupuesto": 1.0, **c, "nombre": nombre}
+
+
+def reemplazar(tmp: Path, destino: Path, intentos: int = 50) -> None:
+    """tmp → destino de golpe. En Windows falla con «Acceso denegado» si otro proceso está leyendo el destino en ese
+    momento (el servidor lo lee cada pocos segundos para el panel «En vivo»; el 11/10 paró la cola): se reintenta."""
+    for i in range(intentos):
+        try:
+            tmp.replace(destino)
+            return
+        except PermissionError:
+            if i == intentos - 1:
+                raise
+            time.sleep(0.1)
+
+
+def leer_json(f: Path, intentos: int = 50):
+    """Lee un JSON que otro proceso puede estar reemplazando (mismo problema en Windows): se reintenta."""
+    for i in range(intentos):
+        try:
+            return json.loads(f.read_text(encoding="utf-8"))
+        except PermissionError:
+            if i == intentos - 1:
+                raise
+            time.sleep(0.1)
 
 
 # --- el repo de cada ejecución
@@ -237,7 +262,7 @@ class Ejecucion:
 
     def __init__(self, carpeta: Path):
         self.carpeta = carpeta
-        self.datos = json.loads((carpeta / "resultado.json").read_text(encoding="utf-8"))
+        self.datos = leer_json(carpeta / "resultado.json")
         self.prueba = cargar_prueba(self.datos["prueba"], Path(self.datos.get("banco") or BANCO))
         self.repo = Path(self.datos["repo"])
 
@@ -280,7 +305,7 @@ class Ejecucion:
     def guardar(self) -> None:
         tmp = self.carpeta / "resultado.json.tmp"
         tmp.write_text(json.dumps(self.datos, ensure_ascii=False, indent=1), encoding="utf-8")
-        tmp.replace(self.carpeta / "resultado.json")
+        reemplazar(tmp, self.carpeta / "resultado.json")
 
     def relevo(self) -> dict | None:
         """La ejecución de la que se hereda el estado antes de cada parche (`contendiente.relevo`, p. ej.
@@ -290,8 +315,7 @@ class Ejecucion:
         nombre = self.datos["contendiente"].get("relevo")
         if not nombre:
             return None
-        return json.loads((self.carpeta.parent.parent / nombre / "resultado.json").read_text(
-            encoding="utf-8"))
+        return leer_json(self.carpeta.parent.parent / nombre / "resultado.json")
 
     def preparar(self, n: int) -> None:
         """Gancho del autopiloto ANTES de cada parche, en relevo: el repo, como lo tenía el otro antes del hito n."""
@@ -394,7 +418,7 @@ def ejecuciones(datos: Path = DATOS) -> list[dict]:
     out = []
     for f in sorted(datos.glob("*/*/resultado.json")):
         try:
-            d = json.loads(f.read_text(encoding="utf-8"))
+            d = leer_json(f)
         except (OSError, ValueError):
             continue
         out.append({"id": f"{f.parent.parent.name}/{f.parent.name}", **{k: d.get(k) for k in (
@@ -410,7 +434,7 @@ def ejecucion(id_: str, datos: Path = DATOS) -> dict:
     carpeta = (datos / id_).resolve()
     if not carpeta.is_relative_to(datos.resolve()) or not (carpeta / "resultado.json").is_file():
         raise FileNotFoundError(id_)
-    d = json.loads((carpeta / "resultado.json").read_text(encoding="utf-8"))
+    d = leer_json(carpeta / "resultado.json")
     for nombre, clave in (("CHANGELOG.md", "changelog_md"), ("informe.md", "informe_md")):
         f = carpeta / nombre
         if not f.is_file() and nombre == "CHANGELOG.md":

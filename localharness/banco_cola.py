@@ -39,11 +39,12 @@ def _vacia() -> dict:
 
 
 def leer(path: Path | None = None) -> dict:
+    """La cola. Vacía solo si el archivo no existe: si no se puede leer, error (nunca una cola vacía que luego se
+    guarde encima de las tandas)."""
     path = path or COLA
-    try:
-        return {**_vacia(), **json.loads(path.read_text(encoding="utf-8"))}
-    except (OSError, ValueError):
+    if not path.exists():
         return _vacia()
+    return {**_vacia(), **banco.leer_json(path)}
 
 
 def editar(fn: Callable[[dict], object], path: Path | None = None) -> dict:
@@ -67,7 +68,7 @@ def editar(fn: Callable[[dict], object], path: Path | None = None) -> dict:
         fn(cola)
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(cola, ensure_ascii=False, indent=1), encoding="utf-8")
-        tmp.replace(path)
+        banco.reemplazar(tmp, path)
         return cola
     finally:
         os.close(fd)
@@ -230,7 +231,7 @@ def parar(modo: str, api: Callable | None = None, path: Path | None = None) -> N
     if not actual:
         return
     try:
-        proyecto = json.loads((banco.DATOS / actual / "resultado.json").read_text(encoding="utf-8"))["proyecto"]
+        proyecto = banco.leer_json(banco.DATOS / actual / "resultado.json")["proyecto"]
         pid = next(p["id"] for p in api("GET", "/api/projects") if p["name"] == proyecto)
         for t in api("GET", "/api/tasks"):
             if t.get("project_id") == pid and t.get("status") in ("running", "pending"):
@@ -326,7 +327,7 @@ def _fila(d: dict) -> dict:
 def ejecucion_corta(ide: str, datos: Path | None = None) -> dict | None:
     datos = datos or banco.DATOS
     try:
-        d = json.loads((datos / ide / "resultado.json").read_text(encoding="utf-8"))
+        d = banco.leer_json(datos / ide / "resultado.json")
     except (OSError, ValueError):
         return None
     return {"id": ide, **_fila(d)}

@@ -150,6 +150,26 @@ class ColaTest(unittest.TestCase):
         self.assertEqual((t["estado"], len(t["hechas"]), t.get("fallos")), ("hecha", 1, 0), t)
         self.assertEqual(esperas, [30])
 
+    def test_reemplazar_y_leer_reintentan_si_windows_deniega_el_acceso(self):
+        # 11/10: «[WinError 5] Acceso denegado» al reemplazar resultado.json mientras el servidor lo leía
+        destino, tmp = self.tmp / "r.json", self.tmp / "r.json.tmp"
+        destino.write_text("{}", encoding="utf-8")
+        tmp.write_text('{"a": 1}', encoding="utf-8")
+        original, veces = Path.replace, [0]
+
+        def a_veces(self_, otro):
+            veces[0] += 1
+            if veces[0] <= 2:
+                raise PermissionError(5, "Acceso denegado")
+            return original(self_, otro)
+        with mock.patch.object(Path, "replace", a_veces), mock.patch("time.sleep"):
+            banco.reemplazar(tmp, destino)
+        self.assertEqual((veces[0], banco.leer_json(destino)), (3, {"a": 1}))
+        self.assertEqual(banco_cola.leer(self.tmp / "no-existe.json")["tandas"], [])
+        (self.tmp / "roto.json").write_text("{roto", encoding="utf-8")
+        with self.assertRaises(ValueError):  # una cola ilegible es un error, nunca una cola vacía
+            banco_cola.leer(self.tmp / "roto.json")
+
     def test_parar_antes_no_corre_nada(self):
         self.anadir("x")
         banco_cola.editar(lambda c: c.update(parar="despues"), self.cola)
