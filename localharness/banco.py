@@ -10,7 +10,9 @@ en cada servidor local, con qué agente y con qué topes:
      "horas": 12, "minutos_tarea": 45, "presupuesto": 1}
 
 `modelos` puede faltar (se usa lo que esté cargado, p. ej. con un agente de Claude), un servidor a null se apaga y
-un modelo puede llevar opciones: {"modelo": "...", "opciones": {...}}.
+un modelo puede llevar opciones: {"modelo": "...", "opciones": {...}}. `linea` (n.º de reintentos de un parche que
+no entra, antes de pasar al siguiente) y `reparar` (vueltas de reparación al acabar la lista) son opcionales: los
+reintentos se quedan en el mismo parche y las reparaciones salen como parches extra al final de la curva.
 
 Cada ejecución copia la semilla en un repo nuevo, lo da de alta en LocalHarness, carga los modelos y pasa la lista
 con el autopiloto. Tras CADA parche pasa el examen oculto (la curva de nota) y apunta el commit, los archivos que
@@ -236,15 +238,45 @@ class Ejecucion:
         tmp.write_text(json.dumps(self.datos, ensure_ascii=False, indent=1), encoding="utf-8")
         tmp.replace(self.carpeta / "resultado.json")
 
+    def relevo(self) -> dict | None:
+        """La ejecución de la que se hereda el estado antes de cada parche (`contendiente.relevo`, p. ej.
+        "supersalto-libre/claude-dirige-20261010-1907"): cada hito sale del repo que tenía ese otro contendiente antes
+        de él, así un hito caído no arrastra a los siguientes y se mide hito por hito (11/10: el jefe local con la
+        receta de Claude cayó en el hito 1 y los otros 7 no midieron nada)."""
+        nombre = self.datos["contendiente"].get("relevo")
+        if not nombre:
+            return None
+        return json.loads((self.carpeta.parent.parent / nombre / "resultado.json").read_text(
+            encoding="utf-8"))
+
+    def preparar(self, n: int) -> None:
+        """Gancho del autopiloto ANTES de cada parche, en relevo: el repo, como lo tenía el otro antes del hito n."""
+        rel = self.relevo()
+        if not rel:
+            return
+        ps = {p["n"]: p for p in rel["parches"]}
+        desde = rel["base"] if n == 1 else (ps.get(n - 1) or {}).get("commit")
+        if not desde:
+            raise RuntimeError(f"el relevo no tiene el commit de antes del parche {n}")
+        git(self.repo, "fetch", "--quiet", "--no-tags", rel["repo"], "HEAD")
+        git(self.repo, "reset", "--quiet", "--hard", desde)
+        git(self.repo, "clean", "-fdq")
+        self.datos.setdefault("relevo_desde", {})[str(n)] = desde
+        self.guardar()
+
     def apuntar(self, r: Result) -> None:
         """Gancho del autopiloto tras cada parche: examen oculto, commit, archivos y CHANGELOG."""
         previo = self.datos["parches"][-1]["commit"] if self.datos["parches"] else self.datos["base"]
+        previo = (self.datos.get("relevo_desde") or {}).get(str(r.n), previo)
         try:
             hecho = cambios(self.repo, previo)
         except RuntimeError as e:
             hecho = {"commit": previo, "archivos": [], "changelog": [], "error": str(e)}
         ex = examinar(self.prueba, self.repo)
         r.extra = {**hecho, "examen": {k: ex.get(k) for k in ("pasan", "total", "nota")}}
+        rel = self.relevo()
+        if rel:  # la nota que tenía el otro tras este mismo hito, para comparar hito a hito
+            r.extra["examen_relevo"] = next((p.get("examen") for p in rel["parches"] if p["n"] == r.n), None)
         tokens = sum(m.get("tokens", 0) for m in r.models.values())
         self.datos["parches"] = [p for p in self.datos["parches"] if p["n"] != r.n] + [{
             "n": r.n, "titulo": r.text.split(". ")[0][:90], "texto": r.text, "resultado": r.outcome,
@@ -265,7 +297,7 @@ class Ejecucion:
                 a["modelo"] = m.get("modelo") or a["modelo"]
         ultima = next((p["examen"] for p in reversed(ps) if (p.get("examen") or {}).get("total")), None)
         self.datos["totales"] = {
-            "hechos": len(ps), "integrados": sum(p["resultado"] == "integrado" for p in ps),
+            "hechos": len(ps), "integrados": sum(str(p["resultado"] or "").startswith("integrado") for p in ps),
             "segundos": sum(p["segundos"] for p in ps), "coste": round(sum(p["coste"] for p in ps), 4),
             "tokens": sum(p.get("tokens", 0) for p in ps), "reintentos": sum(bool(p["reintento"]) for p in ps),
             "nota": (self.datos.get("examen_final") or ultima or {}).get("nota"), "modelos": modelos}
@@ -281,10 +313,13 @@ class Ejecucion:
             self.guardar()
             say(f"Modelos: {self.datos['modelos_cargados']}")
             items = self.prueba.lista(modalidad)
+            # «linea»: reintentos de un parche que no entra antes de seguir; «reparar»: vueltas de reparación al final
+            kw = {**kw, **{k: cont[c] for c, k in (("linea", "line_retries"), ("reparar", "repair_rounds"))
+                           if cont.get(c)}}
             p = piloto(api, self.datos["proyecto"], cont["agente"], items, hours=cont["horas"],
                        budget=cont["presupuesto"], task_minutes=cont["minutos_tarea"], check=self.prueba.check,
                        state=self.carpeta / "estado.json", report=self.carpeta / "informe.md", say=say,
-                       after=self.apuntar, **kw)
+                       after=self.apuntar, before=self.preparar if cont.get("relevo") else None, **kw)
             try:
                 p.run()
             finally:

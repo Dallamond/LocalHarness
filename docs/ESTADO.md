@@ -3,6 +3,109 @@
 Última actualización: 09/10/2026, noche (banco de pruebas: resultados y qué sigue; oficina y GUI nuevas). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
 
 
+## ▶ 11/10/2026 — Cerebro 2 reajustado: 14,3 %; experimento «recetas de Claude»
+**Medido `supersalto-libre/gptoss-qwen4b-cerebro2-20261011-1512`: 14,3 % (5/35), 2/8 integrados (con deuda), 64 min.**
+Cae el hito 1 y el motor queda a 0/8 todo el run. Fallos nuevos que nada cubría: tests estilo Jest (`describe`/`expect`;
+el diagnóstico intentó definirlos en `src/mapa.js`), tests repetidos en la raíz, `tests/rect.test.mjs` cortado
+(«Unexpected end of input»), imports de `colision-x.mjs` que no existe (hitos 3–5 rechazados por las guardias).
+Tres días de parches al cerebro: 8,6 → 17,1 → 14,3 %. Seguir parcheando no mueve la nota.
+**Experimento (sin gastar Claude):** separar planificar del resto del bucle. `banco/recetas/extraer.py` saca de la BD el
+primer `local_execute_plan` que Claude mandó en cada parche de `claude-dirige` (Supersalto libre: 8 recetas; Cuentas
+claras guiada: 18). El cerebro 2 con `config.recetas` (carpeta o archivo) usa esa receta como plan principal tal cual
+(sin `select_files` ni `shape_plan`); arreglos, rescate y revisión siguen locales. Agente «Jefe local 2 (recetas de
+Claude)» (id 17), contendiente `gptoss-qwen4b-recetas`. Lanzado `supersalto-libre/gptoss-qwen4b-recetas-20261011-*`.
+Lectura: ~80–90 % → el cuello es planificar (híbrido Claude-receta o planificador más grande con la M40); bajo → el
+bucle local de arreglo también falla. Pendientes mecánicos: guardia de tests Jest, tests fuera de `tests/`, archivo cortado.
+
+**21:00 — Resultado recetas: 8,6 % (0/8).** Hito 1 con la receta: 21/24 tests en verde a la primera; los 3 rojos eran
+tests mal contados (meta x 848 es lo correcto: `F` en la columna 53 × 16; el test esperaba 832). El depurador culpó al
+código 4 rondas × 2 intentos, reescribió `nivel.js`/`mapa.js` y metió una declaración repetida. El rescate no saltó
+(tests dentro de `describe`). Hitos 2–6 rechazados en cascada (imports de `mapa.mjs`, `rect.mjs`…: sin hito 1); hito 7,
+22 bloques > 20. **Conclusión: lo decisivo es arreglar (test o código), no planificar.**
+**21:45 — Hecho (339 tests OK, LocalHarness reiniciado):**
+- Cerebro: una ronda que cambia código y hace fallar tests que pasaban se **deshace** (`restore`) y el siguiente
+  diagnóstico lleva `TEST_FIRST` («mira primero el test»), en vez de reescribir; también tras 2 culpas al código sin
+  éxito. Rescate: ignora el fallo de la suite (`describe`). Guardia de tests estilo Jest (`JEST_CALL`). Receta de más
+  de 20 bloques: el resto en una segunda llamada. `## INTENTO ANTERIOR` (PREV_MARK) se quita de la tarea y va al
+  depurador como YA PROBADO.
+- Autopiloto: `line_retries` (parar la línea: un parche descartado/sin cambios se repite al momento, mismo número,
+  con `failure_summary` delante) y `repair_rounds` (al acabar la lista: rehacer los que no entraron y saldar la deuda
+  —`test.todo` y `.pendiente.mjs`—; otra vuelta solo si la anterior integró algo). Hook `before(n)`.
+- Banco: contendiente con `linea`, `reparar` y `relevo` (cada hito sale del repo que tenía otra ejecución antes de él:
+  `git fetch` + `reset --hard`; `examen_relevo` para comparar hito a hito).
+- Lanzado `supersalto-libre/gptoss-qwen4b-recetas-relevo-20261011-2145` (receta + relevo de Claude + `linea` 1): mide
+  el bucle local hito por hito. Después: prueba completa del Jefe local 2 con `linea` y `reparar`.
+
+## ▶ 10/10/2026 13:00 — Cerebro 2 medido (17,2 %) y tres arreglos; relanzado `qwen9b-qwen4b-cerebro2-20261010-1301`
+**Medido:** `qwen9b-qwen4b-cerebro2-20261010-1050` = 4/18 integrados, **17,2 %** (lógica 0/8): sin mejora sobre el
+20,7 % de la línea base. **Causa raíz** (eventos 220–237): los 59 bloques de código del plan llegaban al obrero SIN la
+TAREA (el 9B la resume en una frase: «nombres de meses en castellano») y el código inventaba formatos que solo los tests
+conocían. Claude dirigiendo, con el mismo 4B, le pasa la especificación entera. Además, 37 «arreglos» devolvieron el
+archivo idéntico (la reescritura «desde cero» llevaba el contenido actual y el 9B lo copiaba), y el diagnóstico solo
+veía el primer fallo (el bug de `formatear` no se tocó en 8 rondas).
+**Hecho (302 tests OK):** `shape_plan` añade la TAREA a cada bloque de código; `write_file(fresh=True)` sin contenido
+actual, y la reescritura es `fresh` si el archivo es nuevo en el parche y no repite un archivo ya reescrito; una ronda
+que no cambia nada se apunta («NO CAMBIÓ NADA») y la siguiente reescribe; el diagnóstico recibe la lista de todos los
+tests que fallan. **13:10, primera señal (`…-1301`, parada en el parche 2):** con la TAREA, `fechas.js` salió BIEN;
+el parche 1 cayó porque el 4B escribió `tests/fechas.test.mjs` sin el import de `../src/fechas.js` y el depurador
+culpó al código 8 veces. Añadido `fix_missing_imports` (arreglo mecánico: lo que se llama sin importar y exporta un
+solo módulo, se importa) y `write_file` quita una primera línea que sea la ruta. 303 tests OK. Relanzado como
+`qwen9b-qwen4b-cerebro2-20261010-1313` → **20,7 %** (el parche 1 ya cae solo por `aCentimos`/`formatear`, que el 9B no
+saca; luego cascada hasta el parche 10). **Supersalto libre** con `gptoss-qwen4b-cerebro2` (`…-1640`): **8,6 %** = la
+nota de la semilla (cerebro 1: 11,4 %). En libre la tarea solo dice «secciones 1 a 4 del contrato»: los obreros
+escribían sin CONTRATO.md (~600 tokens por encargo), y los hitos 6–7 fueron planes de solo `ask` («sin cambios»).
+Hecho: `Cerebro.with_sections` pega a la tarea las secciones citadas del documento; un plan principal sin bloques
+que escriban cuenta como plan fallido (→ plan de reserva). La reescritura solo elige archivos que fallan y un intento
+cortado no cuenta. 304 tests OK, sin medir.
+**17:35 — Efecto dominó: rescate parcial** (`Cerebro.salvage`). Si tras la escalera sigue en rojo, se corre
+`node --test --test-reporter=tap`; los tests NUEVOS del parche que fallan pasan a `test.todo` (siguen corriendo y se
+ven como TODO) y un archivo de tests nuevo que ni carga se aparca como `.pendiente.mjs`; se integra lo demás. No se
+rescata si falla un test que ya estaba (regresión), si la deuda pasa de la mitad de los tests nuevos o si sigue algo
+en rojo (guardias incluidas). El informe empieza por «Integrado con deuda» y el banco lo apunta como «integrado (con
+deuda)» (cuenta como integrado). 306 tests OK. Lanzado `supersalto-libre/gptoss-qwen4b-cerebro2-20261010-1735`
+(antes: 8,6 % con cerebro 2, 11,4 % con cerebro 1). Pendiente: que un parche posterior intente saldar los TODO;
+no avanzar si cae un parche base (cascada); tope de tokens del 9B al escribir (se fue a
+8.192 repitiendo `partesMilSeparadores3…`).
+**19:05 — Resultado del -1735: 17,1 % (6/35), 4 de 8 integrados**, la mejor nota local en Supersalto libre, pero
+engañosa. Lo que falló, y lo arreglado (306 tests OK, LocalHarness reiniciado):
+- Hito 1: tests escritos sin el contrato y copiados de la plantilla (`existe RECT.md`); los arreglos rompieron
+  `mapa.js` → tests con la TAREA y sin plantilla (`add_template` no toca tests).
+- Hitos 3, 4, 7 y 8 se integraron **sin ningún test** («con tus propios tests» no nombra rutas) → `own_tests`: un plan
+  principal con módulos JS y sin tests recibe un `tests/<módulo>.test.mjs` por módulo (máx. 6), después del código.
+- Hito 4: deshacer la corrección de la revisión **borraba** `src/render.js` y `tests/proyecto.test.mjs` (no eran del
+  parche) → vuelven a la versión de HEAD (`head_bytes`).
+- Hito 6: gpt-oss contestó «I'm sorry, but I can't provide the requested code» y eso se guardó como `sonido.js` →
+  `is_refusal` en `write_file`: reintenta una vez y, si no, falla el bloque.
+- Hito 5: `partida.js` importa `./nivel.js`, que nunca existió (era del hito 1, rechazado): la escalera no lo
+  arregla. Pendiente: escribir el módulo que falta desde la sección del contrato que lo nombra.
+Lanzado a petición de Lucas `supersalto-libre/claude-dirige-20261010-1907` (Claude Sonnet dirige, obreros gpt-oss +
+Qwen 4B; gasta plan) para tener la vara de Supersalto libre.
+
+**20:25 — Claude dirigiendo en Supersalto libre: 97,1 % (34/35), 8/8 integrados**, 76 min, 4,11 $ nominales, mismos
+obreros (que fallaron 30 encargos de 211: Claude los recupera). Qué hace distinto (eventos 282–289 contra 274–281):
+1. Compila el contrato en una **receta por archivo** (fórmulas, casos límite, números; 270–1.200 tokens). El
+   planificador local escribía «Implement moverX per spec».
+2. Da a los tests los **valores ya calculados** («camaraX(300,1000)=172»); el local, «write tests… use small maps».
+3. Ante un rojo lee test y código y decide **quién tiene razón según el contrato**; orden de una línea («línea 27:
+   cambia X por Y»). El diagnóstico local culpaba al código y lo rompía.
+
+**21:30 — Cerebro 2 reajustado con eso** (311 tests OK, LocalHarness reiniciado, sin medir; sin commit):
+- `spec_items`/`spec_excerpt`/`spec_for`: cuando la tarea cita secciones, cada bloque recibe el **trozo literal del
+  contrato** de su archivo (su «exporta», los «Edita» de este hito, la introducción de la sección) y los «exporta» de
+  los módulos que nombra, en vez del contrato entero. Si el archivo ya existe: «conserva lo que hace».
+- `contract_blocks`: el plan se completa con los archivos de las secciones del hito que olvidó.
+- `own_tests`: cada módulo NUEVO sin test en el plan recibe `tests/<módulo>.test.mjs` (máx. 10), con su trozo del
+  contrato y la orden de calcular cada valor con la fórmula y escribir la cuenta en un comentario. Los módulos que
+  se amplían (paso.js, partida.js) no: un test de integración del 4B suele salir mal y tumbar el parche.
+- `write_missing`: un `Cannot find module` de un módulo que el contrato define se escribe desde su trozo sin gastar
+  ronda (dominó del hito 5).
+- Guardia `LEFTOVER`: ``` o `node:test` dentro de código de la app = rojo (lo que pilló la revisión de Claude).
+- `SYSTEM_DIAG`: calcular con la fórmula antes de culpar; test culpable si espera otro número o prueba lo no pedido;
+  cambios con número de línea.
+- Simulado el hito 1 sobre el contrato real: 8 módulos + 8 tests, encargos de 500–3.000 caracteres.
+Para medirlo (11/10 por la mañana): `banco correr --prueba supersalto --modalidad libre --contendiente
+gptoss-qwen4b-cerebro2` y comparar con 17,1 % (jefe local) y 97,1 % (Claude).
+
 ## ▶ 09/10/2026 23:50 — `mapa.js`: un ejemplo de la skill contaminaba los imports
 **Hallazgo:** 9 de las 16 tareas (173–218) que cayeron con `Cannot find module` importaban `src/mapa.js`, que no existe
 en Cuentas claras. Venía del ejemplo de la skill `modulos-es` (`import { crearMapa } from './mapa.js'`, heredado de

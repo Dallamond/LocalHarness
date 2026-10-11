@@ -1,0 +1,1104 @@
+[
+ {
+  "n": 1,
+  "texto": "Hito 1 · Motor. Lee ENCARGO.md y CONTRATO.md enteros. Implementa las secciones 1 a 4 del contrato (mapa, rectángulos, física, cámara, niveles y colisiones) con tus propios tests en tests/ (números concretos, mapas pequeños escritos en el test). Antes de escribir código, apunta en docs/PLAN.md cómo vas a repartir el contrato en los 8 hitos.",
+  "blocks": [
+   {
+    "id": "plan",
+    "kind": "write",
+    "path": "docs/PLAN.md",
+    "after": [],
+    "files": [
+     "CONTRATO.md"
+    ],
+    "title": "Plan de hitos",
+    "instructions": "Escribe docs/PLAN.md en castellano: reparto del CONTRATO.md (secciones 1-29) en 8 hitos. Hito 1 Motor: secciones 1-4 (mapa, rect, fisica, camara, nivel, niveles, colision-x, colision-y). Hito 2: secciones 5-8 (entrada, movimiento, salto, monedas, jugador, bloques, goomba, marcador). Hito 3: secciones 9-11 (combate, vidas, partida, render, paso, index.html, main). Hito 4: secciones 12-14 (meta, fin-nivel, pantallas, control). Hito 5: secciones 15-18 (champi, tamano, ladrillo, koopa, caparazon, sprites). Hito 6: secciones 19-22 (sprites en render, sonido, correr, vida extra, efectos, flotantes). Hito 7: secciones 23-26 (estrella, flor, fuego, pirana, tuberias, fondo). Hito 8: secciones 27-29 (nivel 3, temas, titulo, record, rebote, golpe-abajo). Una lista breve por hito, con el estado: Hito 1 en curso (parche 001). Menos de 60 líneas."
+   },
+   {
+    "id": "mapa",
+    "kind": "write",
+    "path": "src/mapa.js",
+    "after": [],
+    "files": [
+     "CONTRATO.md"
+    ],
+    "title": "mapa",
+    "instructions": "Crea src/mapa.js (ES module, comentarios y nombres en castellano). Exporta: const TILE = 16; const SOLIDOS = ['#','B','?','M','T','U']; crearMapa(filas) -> {ancho: filas[0].length, alto: filas.length, tiles: [...filas]}, lanza new Error si alguna fila tiene distinto largo que la primera; tileEn(mapa, columna, fila): '#' si columna<0 || columna>=mapa.ancho || fila<0; '.' si fila>=mapa.alto; si no mapa.tiles[fila][columna]; esSolido(mapa,columna,fila) = SOLIDOS.includes(tileEn(...)); columnaDe(x) = Math.floor(x / TILE)."
+   },
+   {
+    "id": "rect",
+    "kind": "write",
+    "path": "src/rect.js",
+    "after": [],
+    "title": "rect",
+    "instructions": "Crea src/rect.js: export function solapan(a, b) con rectángulos {x,y,ancho,alto}: devuelve a.x < b.x + b.ancho && a.x + a.ancho > b.x && a.y < b.y + b.alto && a.y + a.alto > b.y. Tocarse por el borde no solapa."
+   },
+   {
+    "id": "fisica",
+    "kind": "write",
+    "path": "src/fisica.js",
+    "after": [],
+    "title": "fisica",
+    "instructions": "Crea src/fisica.js: export const GRAVEDAD = 0.5; export const VEL_MAX_CAIDA = 8; export function aplicarGravedad(cuerpo) que devuelve {...cuerpo, vy: Math.min(cuerpo.vy + GRAVEDAD, VEL_MAX_CAIDA)}."
+   },
+   {
+    "id": "camara",
+    "kind": "write",
+    "path": "src/camara.js",
+    "after": [],
+    "title": "camara",
+    "instructions": "Crea src/camara.js: export const ANCHO_PANTALLA = 256; export const ALTO_PANTALLA = 224; export function camaraX(jugadorX, anchoMapaPx) = jugadorX - 128 recortado entre 0 y Math.max(0, anchoMapaPx - 256) (usa Math.min(Math.max(...))); export function rangoColumnas(camX) = {desde: Math.floor(camX / 16), hasta: Math.floor((camX + 255) / 16)}."
+   },
+   {
+    "id": "nivel",
+    "kind": "write",
+    "path": "src/nivel.js",
+    "after": [
+     "mapa"
+    ],
+    "files": [
+     "src/mapa.js"
+    ],
+    "title": "nivel",
+    "instructions": "Crea src/nivel.js: importa crearMapa y TILE de ./mapa.js. export function parsearNivel(texto): texto.split('\\n'), quita '\\r' de cada línea y descarta las líneas vacías. Recorre cada carácter (fila, columna): 'J' -> inicio = {x: columna*16, y: fila*16}; 'o' -> monedas.push({x,y}); 'E' -> enemigos.push({tipo:'goomba',x,y}); 'K' -> enemigos.push({tipo:'koopa',x,y}); 'F' -> meta = {x,y}. Esos cinco caracteres se sustituyen por '.' en las filas limpias. Si no hay inicio lanza new Error('falta J'); si no hay meta new Error('falta F'). Devuelve {mapa: crearMapa(filasLimpias), inicio, monedas, enemigos, meta}."
+   },
+   {
+    "id": "niveles",
+    "kind": "write",
+    "path": "src/niveles.js",
+    "after": [],
+    "files": [
+     "docs/nivel-1.txt",
+     "docs/nivel-2.txt"
+    ],
+    "title": "niveles",
+    "instructions": "Crea src/niveles.js: const nivel1 y const nivel2 son template literals (comillas invertidas) que copian CARÁCTER A CARÁCTER el contenido de docs/nivel-1.txt (14 filas de 56) y docs/nivel-2.txt (14 filas de 72), una fila por línea, sin espacios delante ni sangría. Formato: const nivel1 = `\\n...` NO; usa const nivel1 = `fila1\\nfila2...\\nfila14\\n` real escrito en varias líneas, empezando la primera fila justo tras la comilla invertida y terminando con la comilla invertida en una línea propia tras la última fila. export const NIVELES = [nivel1, nivel2]; No añadas nada más."
+   },
+   {
+    "id": "cx",
+    "kind": "write",
+    "path": "src/colision-x.js",
+    "after": [
+     "mapa"
+    ],
+    "files": [
+     "src/mapa.js"
+    ],
+    "title": "colision-x",
+    "instructions": "Crea src/colision-x.js: importa esSolido y columnaDe de ./mapa.js (si lo necesitas TILE). export function moverX(cuerpo, mapa) devuelve cuerpo NUEVO. Si cuerpo.vx === 0 devuelve {...cuerpo}. nx = x + vx; filaDesde = Math.floor(y/16), filaHasta = Math.floor((y + alto - 1)/16). Si vx > 0: col = Math.floor((nx + ancho)/16); si algún esSolido(mapa,col,fila) para fila en el rango -> {...cuerpo, x: col*16 - ancho, vx: 0}. Si vx < 0: col = Math.floor(nx/16); si algún tile sólido -> {...cuerpo, x: (col+1)*16, vx: 0}. Si no choca -> {...cuerpo, x: nx}."
+   },
+   {
+    "id": "cy",
+    "kind": "write",
+    "path": "src/colision-y.js",
+    "after": [
+     "mapa"
+    ],
+    "files": [
+     "src/mapa.js"
+    ],
+    "title": "colision-y",
+    "instructions": "Crea src/colision-y.js: importa esSolido de ./mapa.js. export function moverY(cuerpo, mapa) devuelve {cuerpo, golpeTecho}. ny = y + vy; colDesde = Math.floor(x/16), colHasta = Math.floor((x + ancho - 1)/16). Si vy > 0: fila = Math.floor((ny + alto)/16); si algún tile (col,fila) sólido -> cuerpo {...cuerpo, y: fila*16 - alto, vy: 0, enSuelo: true}; si no -> {...cuerpo, y: ny, enSuelo: false}; golpeTecho null. Si vy < 0: fila = Math.floor(ny/16); si algún tile sólido -> cuerpo {...cuerpo, y:(fila+1)*16, vy:0} y golpeTecho = {columna, fila} del primer sólido empezando por la izquierda; si no -> {...cuerpo, y: ny}, golpeTecho null. Si vy === 0 devuelve {cuerpo: {...cuerpo}, golpeTecho: null} (no cambia enSuelo)."
+   },
+   {
+    "id": "t1",
+    "kind": "write",
+    "path": "tests/mapa-rect.test.mjs",
+    "after": [
+     "mapa",
+     "rect"
+    ],
+    "files": [
+     "src/mapa.js",
+     "src/rect.js"
+    ],
+    "title": "tests mapa/rect",
+    "instructions": "Crea tests/mapa-rect.test.mjs con node:test y node:assert/strict. Casos: crearMapa(['..#','#..']) -> ancho 3, alto 2; lanza con filas de distinto ancho; no comparte el array (modificar el original no cambia mapa.tiles); tileEn: dentro devuelve el carácter, columna -1 -> '#', columna >= ancho -> '#', fila -1 -> '#', fila >= alto -> '.'; esSolido true para cada uno de '#','B','?','M','T','U' y false para '.' y 'o'; columnaDe(0)=0, columnaDe(15.9)=0, columnaDe(16)=1, columnaDe(-1)=-1. solapan: {0,0,16,16} con {8,8,16,16} true; {0,0,16,16} con {16,0,16,16} false (borde); en y también borde false; separados false."
+   },
+   {
+    "id": "t2",
+    "kind": "write",
+    "path": "tests/fisica-camara.test.mjs",
+    "after": [
+     "fisica",
+     "camara"
+    ],
+    "files": [
+     "src/fisica.js",
+     "src/camara.js"
+    ],
+    "title": "tests fisica/camara",
+    "instructions": "Crea tests/fisica-camara.test.mjs (node:test, node:assert/strict). aplicarGravedad({vy:0,x:5}) -> vy 0.5 y x 5, y no modifica el original; vy 7.8 -> 8; vy 8 -> 8; vy -3 -> -2.5. camaraX(50,1000)=0; camaraX(300,1000)=172; camaraX(2000,1000)=744; camaraX(128,1000)=0; camaraX(100,200)=0 (mapa menor que la pantalla). rangoColumnas(0)={desde:0,hasta:15}; rangoColumnas(20)={desde:1,hasta:17}. ANCHO_PANTALLA 256, ALTO_PANTALLA 224."
+   },
+   {
+    "id": "t3",
+    "kind": "write",
+    "path": "tests/nivel.test.mjs",
+    "after": [
+     "nivel",
+     "niveles"
+    ],
+    "files": [
+     "src/nivel.js",
+     "src/niveles.js",
+     "src/mapa.js"
+    ],
+    "title": "tests nivel",
+    "instructions": "Crea tests/nivel.test.mjs (node:test, node:assert/strict; para leer docs usa readFileSync de node:fs y new URL('../docs/nivel-1.txt', import.meta.url)). Casos con textos pequeños: parsearNivel('..o.\\r\\nJEK.\\n\\n...F\\n') (con \\r y línea vacía) -> mapa.ancho 4, alto 3, inicio {x:0,y:16}, monedas [{x:32,y:0}], enemigos [{tipo:'goomba',x:16,y:16},{tipo:'koopa',x:32,y:16}], meta {x:48,y:32}, mapa.tiles todas '.'; los bloques '#' se conservan en tiles; sin J lanza Error con message 'falta J'; sin F lanza 'falta F'. Test de niveles: NIVELES.length === 2; cada NIVELES[i] tras quitar el salto final es igual al contenido de docs/nivel-(i+1).txt normalizado (quita \\r, trim del final); parsearNivel(NIVELES[0]) da mapa ancho 56 alto 14, y NIVELES[1] ancho 72 alto 14; en nivel 1 inicio {x:32,y:176} y meta {x:512... calcula: F está en la fila 11 columna 52 -> {x:832,y:176}}. Revisa con los docs la J: fila 11 columna 2 -> {x:32,y:176}."
+   },
+   {
+    "id": "t4",
+    "kind": "write",
+    "path": "tests/colisiones.test.mjs",
+    "after": [
+     "cx",
+     "cy"
+    ],
+    "files": [
+     "src/colision-x.js",
+     "src/colision-y.js",
+     "src/mapa.js"
+    ],
+    "title": "tests colisiones",
+    "instructions": "Crea tests/colisiones.test.mjs (node:test, node:assert/strict) usando crearMapa de ../src/mapa.js con mapas pequeños, p.ej. mapaX = crearMapa(['....#...','....#...','########']) (ancho 8, alto 3, suelo '#' en fila 2, muro en columna 4 filas 0-1). cuerpo base {x,y,ancho:12,alto:16,vx:0,vy:0,enSuelo:false}. moverX: vx=0 no cambia; libre x=10,y=0,vx=2 -> x 12; contra el muro: x=40,y=0,vx=5 -> nx=45, col=floor(57/16)=3? NO, calcula bien: con x=50,vx=3 -> nx=53, col=floor(65/16)=4 sólido -> x=4*16-12=52, vx 0; hacia la izquierda con muro en columna 4: x=70,y=0,vx=-10 -> nx=60, col=3 libre -> x=60; x=66,vx=-4 -> nx=62, col=3 libre -> x 62 (comprueba con un mapa donde el muro está a la izquierda: crearMapa(['#.......','#.......','########']): x=18,vx=-4 -> nx=14, col=0 sólido -> x=16, vx 0). No modifica el original. moverY con mapa crearMapa(['....','....','....','####']) (alto 4): cuerpo x=0,y=20,ancho 12,alto 16,vy=3 -> ny=23, fila=floor(39/16)=2 libre -> y 23, enSuelo false, golpeTecho null; y=30,vy=4 -> ny 34, fila=floor(50/16)=3 sólido -> y=48-16=32, vy 0, enSuelo true. Techo con mapa crearMapa(['..B.','....','....','####']): cuerpo x=32,y=20,vy=-6 -> ny=14, fila 0, columnas 2..2 (x=32,ancho 12 -> col 2) sólida -> y=16, vy 0, golpeTecho {columna:2,fila:0}; cuerpo x=24 ancho 12 ocupa columnas 1 y 2 -> golpeTecho {columna:2,fila:0}; con dos tiles sólidos 'BB..' y x=8,ancho 12 (columnas 0 y 1) -> golpeTecho {columna:0,fila:0}. Cada resultado de moverY tiene forma {cuerpo, golpeTecho}. Verifica a mano cada aritmética; si un número tuyo no cuadra con las fórmulas del contrato, corrígelo calculando con la fórmula."
+   },
+   {
+    "id": "log",
+    "kind": "edit",
+    "path": "CHANGELOG.md",
+    "after": [],
+    "title": "changelog",
+    "instructions": "Añade al final una línea nueva: '- Parche 001 · 10/10/2026 · Hito 1 Motor: mapa, rect, fisica, camara, nivel, niveles, colision-x y colision-y con sus tests, y docs/PLAN.md con el reparto en 8 hitos.'"
+   }
+  ]
+ },
+ {
+  "n": 2,
+  "texto": "Hito 2 · Jugador. Implementa las secciones 5 a 7 del contrato (entrada, movimiento, salto, monedas, jugador y bloques) con tus propios tests. Revisa que lo del hito 1 sigue cumpliendo el contrato.",
+  "blocks": [
+   {
+    "id": "entrada",
+    "kind": "write",
+    "path": "src/entrada.js",
+    "after": [],
+    "title": "entrada",
+    "instructions": "Módulo ES, comentarios y nombres en castellano. Exporta: crearEntrada() => {izquierda:false, derecha:false, saltar:false, pausa:false}. aplicarTecla(entrada, codigo, pulsada): pura, devuelve entrada NUEVA: 'ArrowLeft' y 'KeyA' -> izquierda=pulsada; 'ArrowRight' y 'KeyD' -> derecha; 'Space','KeyW','ArrowUp' -> saltar; 'KeyP' -> pausa; otro código devuelve copia igual. escucharTeclado(ventana, alCambiar): ventana.addEventListener('keydown', e => alCambiar(e.code, true)) y 'keyup' con false."
+   },
+   {
+    "id": "movimiento",
+    "kind": "write",
+    "path": "src/movimiento.js",
+    "after": [],
+    "title": "movimiento",
+    "instructions": "Módulo ES, castellano. Exporta ACELERACION = 0.3, VEL_MAX = 2.5, FRICCION = 0.8 y velocidadHorizontal(vx, entrada): solo derecha (derecha true e izquierda false) -> Math.min(vx + ACELERACION, VEL_MAX); solo izquierda -> Math.max(vx - ACELERACION, -VEL_MAX); ninguna o las dos -> v = vx * FRICCION, y devuelve 0 si Math.abs(v) < 0.1, si no v."
+   },
+   {
+    "id": "salto",
+    "kind": "write",
+    "path": "src/salto.js",
+    "after": [],
+    "title": "salto",
+    "instructions": "Módulo ES, castellano. Exporta FUERZA_SALTO = -8.5, CORTE_SALTO = -3, intentarSaltar(cuerpo, saltar): si saltar && cuerpo.enSuelo -> {...cuerpo, vy: FUERZA_SALTO, enSuelo:false}; si no {...cuerpo}. cortarSalto(cuerpo, saltar): si !saltar && cuerpo.vy < CORTE_SALTO -> {...cuerpo, vy: CORTE_SALTO}; si no {...cuerpo}."
+   },
+   {
+    "id": "monedas",
+    "kind": "write",
+    "path": "src/monedas.js",
+    "after": [],
+    "title": "monedas",
+    "instructions": "Módulo ES, castellano. Importa solapan de './rect.js' (solapan(a,b) con rectángulos {x,y,ancho,alto}). Exporta recogerMonedas(jugador, monedas): cada moneda {x,y} ocupa {x, y, ancho:16, alto:16}; devuelve {quedan: array con las monedas que NO solapan con el jugador, recogidas: número de las que sí}. No modifica los argumentos."
+   },
+   {
+    "id": "bloques",
+    "kind": "write",
+    "path": "src/bloques.js",
+    "after": [],
+    "title": "bloques",
+    "instructions": "Módulo ES, castellano. Importa tileEn de './mapa.js'. Exporta golpearBloque(mapa, columna, fila): tile = tileEn(mapa,columna,fila). Si '?' -> {mapa: mapa NUEVO con ese tile cambiado a 'U', puntos:200, sale:'moneda'}; si 'M' -> {mapa nuevo con 'U', puntos:0, sale:'champi'}; otro -> {mapa (el MISMO objeto), puntos:0, sale:null}. El mapa nuevo es {...mapa, tiles: copia} donde la fila afectada se rehace con fila.slice(0,columna)+'U'+fila.slice(columna+1); el original no se modifica."
+   },
+   {
+    "id": "jugador",
+    "kind": "write",
+    "path": "src/jugador.js",
+    "after": [
+     "movimiento",
+     "salto"
+    ],
+    "files": [
+     "src/movimiento.js",
+     "src/salto.js",
+     "src/fisica.js",
+     "src/colision-x.js",
+     "src/colision-y.js"
+    ],
+    "title": "jugador",
+    "instructions": "Módulo ES, castellano. Importa velocidadHorizontal de './movimiento.js', intentarSaltar y cortarSalto de './salto.js', aplicarGravedad de './fisica.js', moverX de './colision-x.js' (devuelve un cuerpo) y moverY de './colision-y.js' (devuelve {cuerpo, golpeTecho}). Exporta crearJugador(inicio) => {x: inicio.x + 2, y: inicio.y, ancho:12, alto:16, vx:0, vy:0, enSuelo:false, mirando:1, grande:false}. actualizarJugador(jugador, entrada, mapa), en este orden: c = {...jugador, vx: velocidadHorizontal(jugador.vx, entrada)}; c = intentarSaltar(c, entrada.saltar); c = cortarSalto(c, entrada.saltar); c = aplicarGravedad(c); c = moverX(c, mapa); r = moverY(c, mapa). mirando = 1 si r.cuerpo.vx > 0, -1 si < 0, si no el de antes (jugador.mirando). Devuelve {jugador: {...r.cuerpo, mirando}, golpeTecho: r.golpeTecho}. Nunca modifica el jugador recibido."
+   },
+   {
+    "id": "t1",
+    "kind": "write",
+    "path": "tests/entrada-movimiento.test.mjs",
+    "after": [
+     "entrada",
+     "movimiento"
+    ],
+    "files": [
+     "src/entrada.js",
+     "src/movimiento.js"
+    ],
+    "title": "tests entrada y movimiento",
+    "instructions": "node:test y node:assert/strict, módulos ES. Casos exactos: crearEntrada igual a {izquierda:false,derecha:false,saltar:false,pausa:false}; aplicarTecla(e,'ArrowLeft',true).izquierda true y e original sin cambiar; 'KeyA','ArrowRight','KeyD','Space','KeyW','ArrowUp','KeyP' ponen izquierda/izquierda/derecha/derecha/saltar/saltar/saltar/pausa; soltar (false) la apaga; 'KeyZ' devuelve copia deepEqual pero distinto objeto. velocidadHorizontal(0,{derecha:true,izquierda:false}) = 0.3 (usa assert.ok(Math.abs(x-0.3)<1e-9)); (2.4, solo derecha) = 2.5; (0,solo izquierda) -0.3; (-2.4, solo izquierda) -2.5; (1, ninguna) 0.8; (1, las dos) 0.8; (0.1, ninguna) 0 (0.08<0.1); (-0.1, ninguna) 0. Las entradas de movimiento se construyen a mano con campos izquierda y derecha."
+   },
+   {
+    "id": "t2",
+    "kind": "write",
+    "path": "tests/salto-monedas-bloques.test.mjs",
+    "after": [
+     "salto",
+     "monedas",
+     "bloques"
+    ],
+    "files": [
+     "src/salto.js",
+     "src/monedas.js",
+     "src/bloques.js",
+     "src/mapa.js"
+    ],
+    "title": "tests salto monedas bloques",
+    "instructions": "node:test y node:assert/strict. Casos exactos: intentarSaltar({vy:0,enSuelo:true},true) -> vy -8.5 y enSuelo false; con enSuelo false o saltar false -> igual vy y enSuelo; no muta el original. cortarSalto({vy:-8.5},false).vy = -3; cortarSalto({vy:-8.5},true).vy = -8.5; cortarSalto({vy:-2},false).vy = -2; cortarSalto({vy:1},false).vy=1. recogerMonedas con jugador {x:0,y:0,ancho:12,alto:16} y monedas [{x:8,y:0},{x:12,y:0},{x:100,y:0}] -> recogidas 1 (la de x:12 toca por borde: NO solapa; la de x:8 sí) y quedan = las otras dos; con jugador lejos -> recogidas 0. golpearBloque con crearMapa(['....','.?M.','####']) de ../src/mapa.js: (1,1) -> puntos 200, sale 'moneda', mapa.tiles[1] === '.UM.', original sigue '.?M.'; (2,1) -> puntos 0, sale 'champi', tiles[1] '.?U.'; (0,0) -> puntos 0, sale null, mapa es el mismo objeto (assert.equal)."
+   },
+   {
+    "id": "t3",
+    "kind": "write",
+    "path": "tests/jugador.test.mjs",
+    "after": [
+     "jugador"
+    ],
+    "files": [
+     "src/jugador.js",
+     "src/mapa.js"
+    ],
+    "title": "tests jugador",
+    "instructions": "node:test y node:assert/strict. Mapa propio: crearMapa(['................','................','................','................','################']) (alto 5, suelo en fila 4 = y 64). crearJugador({x:32,y:48}) deepEqual {x:34,y:48,ancho:12,alto:16,vx:0,vy:0,enSuelo:false,mirando:1,grande:false}. Test: jugador en suelo {x:34,y:48,...vy:0,enSuelo:true,mirando:1} con entrada {izquierda:false,derecha:true,saltar:false,pausa:false}: actualizarJugador -> vx ≈ 0.3, x ≈ 34.3, mirando 1, golpeTecho null, enSuelo true, y 48. Con izquierda: mirando -1, vx ≈ -0.3. Sin teclas y vx 0: mirando se conserva (-1 de entrada -> -1). Salto: enSuelo true y saltar true -> vy = -8.5+0.5 = -8, y = 40, enSuelo false. Techo: mapa crearMapa(['####','....','....','....','####']) jugador {x:2,y:16,ancho:12,alto:16,vx:0,vy:-4,enSuelo:false,mirando:1,grande:false}, saltar true mantenido: vy tras cortar = -3, gravedad -> -2.5, ny=13.5 -> fila 0 sólida -> golpeTecho {columna:0,fila:0}, y = 16, vy 0. No muta el jugador original (comparar con copia JSON)."
+   }
+  ]
+ },
+ {
+  "n": 3,
+  "texto": "Hito 3 · Enemigos y partida. Implementa las secciones 8 a 10 del contrato (goombas, marcador, combate, vidas, partida y dibujo) con tus propios tests.",
+  "blocks": [
+   {
+    "id": "goomba",
+    "kind": "write",
+    "path": "src/goomba.js",
+    "files": [
+     "src/fisica.js",
+     "src/colision-x.js",
+     "src/colision-y.js"
+    ],
+    "after": [],
+    "instructions": "Módulo ES, comentarios en castellano. Exporta crearGoomba({x,y}) = {tipo:'goomba',x,y,ancho:16,alto:16,vx:-0.5,vy:0,enSuelo:false,vivo:true,aplastado:0} y actualizarGoomba(g, mapa): si !g.vivo devuelve {...g, aplastado: g.aplastado+1}. Si no: c = aplicarGravedad(g) (src/fisica.js); r = moverX(c, mapa) (src/colision-x.js, devuelve cuerpo); si r.vx === 0 y c.vx !== 0 entonces r = {...r, vx: -c.vx}; luego moverY(r, mapa) (src/colision-y.js; devuelve {cuerpo, golpeTecho}) y devuelve el .cuerpo. Mira los archivos importados para ver sus firmas reales. No muta la entrada."
+   },
+   {
+    "id": "marcador",
+    "kind": "write",
+    "path": "src/marcador.js",
+    "after": [],
+    "instructions": "Módulo ES, comentarios en castellano. Exporta textoMarcador({puntos,monedas,mundo,tiempo,vidas}) = {puntos: String(puntos).padStart(6,'0'), monedas: 'x'+String(monedas).padStart(2,'0'), mundo, tiempo: String(tiempo).padStart(3,'0'), vidas: 'x'+vidas}; crearReloj(segundos) = {segundos, frames:0}; ticReloj(reloj): devuelve reloj NUEVO con frames+1; al llegar frames a 60 -> frames 0 y segundos-1 sin bajar de 0."
+   },
+   {
+    "id": "combate",
+    "kind": "write",
+    "path": "src/combate.js",
+    "files": [
+     "src/rect.js"
+    ],
+    "after": [],
+    "instructions": "Módulo ES, comentarios en castellano. Importa solapan de src/rect.js. Exporta resolverChoques(jugador, enemigos) -> {jugador, enemigos, puntos, muere}. Recorre enemigos; para cada uno con vivo true que solapa con el jugador: si jugador.vy > 0 (usa el jugador ORIGINAL de la entrada) y (jugador.y+jugador.alto) - enemigo.y <= 8, lo pisa: ese enemigo se sustituye por copia con vivo:false, el jugador pasa a copia con vy:-5, puntos += 100; si no, muere = true. Enemigos muertos (vivo false) se dejan igual. No muta nada (copias). puntos empieza en 0, muere en false. Devuelve el array de enemigos nuevo con el mismo orden."
+   },
+   {
+    "id": "vidas",
+    "kind": "write",
+    "path": "src/vidas.js",
+    "after": [],
+    "instructions": "Módulo ES, comentarios en castellano. Exporta perderVida(partida) -> {...partida, vidas: partida.vidas-1, estado: (partida.vidas-1) <= 0 ? 'fin' : 'muerto'} (no toca puntos, no muta) y cayoAlVacio(jugador, mapa) = jugador.y > mapa.alto*16."
+   },
+   {
+    "id": "partida",
+    "kind": "write",
+    "path": "src/partida.js",
+    "files": [
+     "src/nivel.js",
+     "src/jugador.js",
+     "src/goomba.js",
+     "src/marcador.js"
+    ],
+    "after": [
+     "goomba",
+     "marcador"
+    ],
+    "instructions": "Módulo ES, comentarios en castellano. Importa parsearNivel (src/nivel.js), crearJugador (src/jugador.js), crearGoomba (src/goomba.js), crearReloj (src/marcador.js). Exporta crearPartida(niveles) = cargarNivel({niveles, puntos:0, contadorMonedas:0, vidas:3}, 0) y cargarNivel(partida, indice): n = parsearNivel(partida.niveles[indice]); devuelve {niveles: partida.niveles, nivel: indice, mapa: n.mapa, meta: n.meta, monedas: n.monedas, jugador: crearJugador(n.inicio), enemigos: n.enemigos.map(e => crearGoomba(e)) (goomba y koopa de momento ambos con crearGoomba), puntos: partida.puntos, contadorMonedas: partida.contadorMonedas, vidas: partida.vidas, reloj: crearReloj(400), camara:0, espera:0, estado:'jugando'}. Los campos mapa, meta y monedas con esos nombres exactos."
+   },
+   {
+    "id": "render",
+    "kind": "write",
+    "path": "src/render.js",
+    "files": [
+     "src/camara.js",
+     "src/marcador.js",
+     "src/mapa.js"
+    ],
+    "after": [
+     "marcador"
+    ],
+    "instructions": "Módulo ES, comentarios en castellano, sin DOM propio (recibe ctx). Importa rangoColumnas (src/camara.js), textoMarcador (src/marcador.js), tileEn y TILE (src/mapa.js). Exporta COLORES = {cielo:'#5c94fc','#':'#c84c0c',B:'#a0522d','?':'#fca044',M:'#fca044',U:'#888888',T:'#00a800',moneda:'#fce4a0',jugador:'#d82800',goomba:'#8b4513',bandera:'#ffffff'} y dibujar(ctx, partida): 1) ctx.fillStyle=COLORES.cielo; fillRect(0,0,256,224). 2) para columna de rango.desde a rango.hasta (rangoColumnas(partida.camara)) y fila 0..partida.mapa.alto-1: t=tileEn(mapa,columna,fila); si COLORES[t] existe y t no es '.', fillStyle=COLORES[t], fillRect(columna*16 - partida.camara, fila*16, 16, 16). Usa índices dentro del mapa solo si columna < mapa.ancho. 3) monedas (partida.monedas {x,y}) 16x16 en x - camara con COLORES.moneda. 4) bandera: partida.meta {x,y}: fillRect(meta.x - camara + 6, meta.y - 144, 4, 160) con COLORES.bandera. 5) enemigos con vivo true: COLORES.goomba, fillRect(e.x - camara, e.y, e.ancho, e.alto). 6) jugador: COLORES.jugador, fillRect(j.x - camara, j.y, j.ancho, j.alto). 7) marcador: t = textoMarcador({puntos:partida.puntos, monedas:partida.contadorMonedas, mundo:'1-'+(partida.nivel+1), tiempo:partida.reloj.segundos, vidas:partida.vidas}); fillStyle blanco, ctx.font='8px monospace', y con ctx.fillText escribe t.puntos, t.monedas, t.mundo, t.tiempo, t.vidas en y=10 en x = 8, 72, 120, 184, 224. Menos de 80 líneas."
+   },
+   {
+    "id": "t-goomba",
+    "kind": "write",
+    "path": "tests/goomba-marcador.test.mjs",
+    "files": [
+     "src/goomba.js",
+     "src/marcador.js",
+     "src/mapa.js"
+    ],
+    "after": [
+     "goomba",
+     "marcador"
+    ],
+    "instructions": "Tests node:test + node:assert/strict (import { test } from 'node:test'; import assert from 'node:assert/strict'). Importa crearMapa de ../src/mapa.js, crearGoomba/actualizarGoomba de ../src/goomba.js, textoMarcador/crearReloj/ticReloj de ../src/marcador.js. Mapas propios con crearMapa. Casos: (1) crearGoomba({x:32,y:48}) deepEqual {tipo:'goomba',x:32,y:48,ancho:16,alto:16,vx:-0.5,vy:0,enSuelo:false,vivo:true,aplastado:0}. (2) goomba muerto (vivo:false, aplastado 2) -> aplastado 3 y x,y iguales. (3) mapa 4 filas de 6: ['......','......','......','######'] goomba en {x:48,y:32}: tras 1 actualizarGoomba, y===32, enSuelo true, x===47.5, vx -0.5. (4) mapa ['......','......','#.....','######'] con goomba en x=20,y=32 (suelo en fila 3, pared '#' columna 0 fila 2): tras actualizar varias veces (hasta 20) vx pasa a 0.5 (se da la vuelta). Calcula con cuidado: la pared ocupa x 0..16 en la fila 2 (y 32..48); el goomba en y=32 apoyado en el suelo choca con ella. Comprueba que en algún paso vx===0.5. (5) no muta la entrada. (6) textoMarcador({puntos:1200,monedas:5,mundo:'1-1',tiempo:7,vidas:3}) deepEqual {puntos:'001200',monedas:'x05',mundo:'1-1',tiempo:'007',vidas:'x3'}. (7) ticReloj: crearReloj(400) -> tras 59 tics frames 59 segundos 400; tras 60 frames 0 segundos 399; reloj {segundos:0,frames:59} tic -> {segundos:0,frames:0}."
+   },
+   {
+    "id": "t-combate",
+    "kind": "write",
+    "path": "tests/combate-vidas.test.mjs",
+    "files": [
+     "src/combate.js",
+     "src/vidas.js",
+     "src/goomba.js"
+    ],
+    "after": [
+     "combate",
+     "vidas",
+     "goomba"
+    ],
+    "instructions": "Tests node:test + node:assert/strict. Importa resolverChoques (../src/combate.js), perderVida y cayoAlVacio (../src/vidas.js), crearGoomba (../src/goomba.js), crearMapa (../src/mapa.js). Casos con números concretos: jugador = {x:100,y:84,ancho:12,alto:16,vx:0,vy:2,enSuelo:false} y goomba crearGoomba({x:100,y:96}): solapa (y 84..100 vs 96..112), (84+16)-96=4<=8 y vy>0 -> pisa: enemigos[0].vivo false, jugador.vy -5, puntos 100, muere false. (2) mismo jugador con vy:0 -> muere true, puntos 0, enemigo sigue vivo. (3) jugador y=88 vy 2 vs goomba y=96: (88+16)-96=8 <=8 pisa; jugador y=90: 10>8 -> muere. (4) enemigo vivo:false solapando -> no hace nada: muere false, puntos 0. (5) enemigo lejos (x:300) no cambia nada. (6) no muta la entrada (jugador y enemigos originales intactos). (7) perderVida({vidas:3,puntos:500,estado:'jugando'}) -> vidas 2, estado 'muerto', puntos 500; con vidas:1 -> vidas 0, estado 'fin'. (8) cayoAlVacio con mapa crearMapa(['..','..','##']) (alto 3 -> 48): y=48 false, y=49 true."
+   },
+   {
+    "id": "t-partida",
+    "kind": "write",
+    "path": "tests/partida-render.test.mjs",
+    "files": [
+     "src/partida.js",
+     "src/render.js",
+     "src/vidas.js"
+    ],
+    "after": [
+     "partida",
+     "render"
+    ],
+    "instructions": "Tests node:test + node:assert/strict. Importa crearPartida, cargarNivel de ../src/partida.js; COLORES, dibujar de ../src/render.js. Niveles de prueba escritos en el test como strings de varias líneas (14 filas no necesarias; usa p.ej. ['....F','J.E.K','#####'].join('\\n') con J y F; nota F en columna 4 fila 0, J columna 0 fila 1, E columna 2 fila 1, K columna 3... ajusta para que cada fila tenga el mismo ancho 5: filas '....F', 'J.E.K', '#####'). Casos: (1) crearPartida([n1,n2]): estado 'jugando', puntos 0, contadorMonedas 0, vidas 3, camara 0, espera 0, reloj deepEqual {segundos:400,frames:0}, enemigos.length 2 y ambos tipo 'goomba' (koopa de momento goomba) con x 32 y 64 en ese orden (E col 2 -> x 32, K col 4 -> x 64), jugador.x === 2 (inicio.x 0 + 2), jugador.y 16, niveles guardados. (2) cargarNivel({...p, puntos:700, contadorMonedas:4, vidas:2}, 1) conserva puntos 700, contadorMonedas 4, vidas 2, y nivel 1 con el mapa del segundo nivel (usa un n2 con otra J distinta y comprueba jugador.x). (3) COLORES valores exactos del contrato (cielo '#5c94fc', '#':'#c84c0c', B '#a0522d', '?' '#fca044', M '#fca044', U '#888888', T '#00a800', moneda '#fce4a0', jugador '#d82800', goomba '#8b4513', bandera '#ffffff'). (4) dibujar con un ctx falso: objeto que registra llamadas {fillRects:[], textos:[]} con propiedad fillStyle y métodos fillRect(x,y,w,h) (guarda {color:this.fillStyle,x,y,w,h}) y fillText(texto,x,y) (guarda texto); dibujar(ctx, partidaCreada) no lanza; primer fillRect es cielo {x:0,y:0,w:256,h:224,color:'#5c94fc'}; hay un fillRect con color '#c84c0c' en x=0,y=32 (suelo fila 2, camara 0), no hay ninguno con x>=256 para tiles; textos incluye '000000' y 'x3' y 'x00'. (5) con camara 16 los tiles se dibujan en columna*16-16 (primer tile de suelo en x=-16 o, si la columna 0 queda fuera de rangoColumnas(16)={desde 1}, x=0): comprueba que NINGÚN fillRect de suelo tiene x === -16."
+   },
+   {
+    "id": "changelog",
+    "kind": "edit",
+    "path": "CHANGELOG.md",
+    "after": [],
+    "instructions": "Añade al final una línea nueva exactamente: - Parche 003 · 10/10/2026 · Hito 3 Enemigos y partida: goomba, marcador, combate, vidas, partida y render con sus tests (secciones 8 a 10)."
+   }
+  ]
+ },
+ {
+  "n": 4,
+  "texto": "Hito 4 · Juego jugable. Implementa las secciones 11 a 14 del contrato (paso, página, bandera, fin de nivel, pantallas, pausa y reinicio). Al acabar, index.html tiene que abrir un juego que se puede jugar del principio al final del nivel 1. Añade un test que dé 3000 pasos con los niveles reales sin romperse.",
+  "blocks": [
+   {
+    "id": "meta",
+    "kind": "write",
+    "path": "src/meta.js",
+    "title": "meta",
+    "after": [],
+    "files": [
+     "src/rect.js"
+    ],
+    "instructions": "Crea src/meta.js (ES module, comentarios en castellano). Importa solapan de './rect.js' (solapan(a,b) con {x,y,ancho,alto}). Exporta tocaMeta(jugador, meta) = solapan(jugador, {x: meta.x + 6, y: meta.y - 144, ancho: 4, alto: 160}); y puntosMeta(jugador, meta) = 5000 si jugador.y < meta.y - 96, 2000 si jugador.y < meta.y - 48, y si no 400."
+   },
+   {
+    "id": "fin",
+    "kind": "write",
+    "path": "src/fin-nivel.js",
+    "title": "fin-nivel",
+    "after": [],
+    "instructions": "Crea src/fin-nivel.js (ES module, castellano). Exporta terminarNivel(partida): devuelve una partida NUEVA (sin mutar) con puntos = partida.puntos + partida.reloj.segundos * 50. Si partida.nivel + 1 < partida.niveles.length → estado 'meta' y espera 180; si no → estado 'victoria' (espera igual que antes)."
+   },
+   {
+    "id": "pant",
+    "kind": "write",
+    "path": "src/pantallas.js",
+    "title": "pantallas",
+    "after": [],
+    "instructions": "Crea src/pantallas.js (ES module, castellano). Exporta textoPantalla(partida), pura: estado 'jugando' → null; 'pausa' → ['PAUSA', 'pulsa P para seguir']; 'muerto' → ['MUNDO 1-' + (partida.nivel + 1), 'x ' + partida.vidas]; 'fin' → ['FIN DEL JUEGO', 'pulsa Espacio']; 'meta' → ['¡NIVEL SUPERADO!', 'puntos ' + partida.puntos]; 'victoria' → ['¡HAS GANADO!', 'puntos ' + partida.puntos, 'pulsa Espacio']; cualquier otro → null."
+   },
+   {
+    "id": "ctrl",
+    "kind": "write",
+    "path": "src/control.js",
+    "title": "control",
+    "after": [],
+    "files": [
+     "src/partida.js"
+    ],
+    "instructions": "Crea src/control.js (ES module, castellano). Importa crearPartida de './partida.js' (crearPartida(niveles)). Exporta controlar(partida, entrada, anterior), pura: si entrada.pausa && !anterior.pausa y estado es 'jugando' → {...partida, estado:'pausa'}; si es 'pausa' → {...partida, estado:'jugando'}; si estado es 'fin' o 'victoria' y entrada.saltar && !anterior.saltar → crearPartida(partida.niveles); en cualquier otro caso devuelve la misma partida."
+   },
+   {
+    "id": "paso",
+    "kind": "write",
+    "path": "src/paso.js",
+    "title": "paso",
+    "after": [
+     "meta",
+     "fin"
+    ],
+    "files": [
+     "src/jugador.js",
+     "src/bloques.js",
+     "src/monedas.js",
+     "src/combate.js",
+     "src/vidas.js",
+     "src/marcador.js",
+     "src/camara.js",
+     "src/goomba.js",
+     "src/partida.js",
+     "src/mapa.js"
+    ],
+    "instructions": "Crea src/paso.js (ES module, castellano, <200 líneas). Importa: actualizarJugador (jugador.js; devuelve {jugador, golpeTecho} con golpeTecho null o {columna, fila}), golpearBloque (bloques.js; golpearBloque(mapa,columna,fila) → {mapa, puntos, sale}), actualizarGoomba(g, mapa) (goomba.js), recogerMonedas(jugador, monedas) → {quedan, recogidas} (monedas.js), resolverChoques(jugador, enemigos) → {jugador, enemigos, puntos, muere} (combate.js), perderVida(partida), cayoAlVacio(jugador, mapa) (vidas.js), ticReloj(reloj) (marcador.js), camaraX(jugadorX, anchoMapaPx) (camara.js), cargarNivel(partida, indice) (partida.js), tocaMeta/puntosMeta (meta.js), terminarNivel (fin-nivel.js). Exporta paso(partida, entrada) → partida NUEVA, sin mutar. Según partida.estado: 'jugando': r = actualizarJugador(partida.jugador, entrada, partida.mapa); mapa = partida.mapa; puntos = partida.puntos; contadorMonedas = partida.contadorMonedas; si r.golpeTecho: g = golpearBloque(mapa, columna, fila), mapa = g.mapa, puntos += g.puntos, y si g.sale === 'moneda' contadorMonedas += 1. Enemigos = partida.enemigos.map(e => actualizarGoomba(e, mapa)). recogerMonedas(jugador, partida.monedas): monedas = quedan, puntos += recogidas*200, contadorMonedas += recogidas. resolverChoques(jugador, enemigos): usa sus jugador/enemigos, puntos += su puntos. reloj = ticReloj(partida.reloj). Construye la partida nueva con todo eso y camara = camaraX(jugador.x, mapa.ancho * 16). Si choques.muere || cayoAlVacio(jugador, mapa) || reloj.segundos === 0 → devuelve {...perderVida(nueva), espera: 120}. Si no, si tocaMeta(jugador, partida.meta) → suma puntosMeta(jugador, partida.meta) a puntos y devuelve terminarNivel(nueva con esos puntos). Si no, devuelve nueva. 'muerto': espera = partida.espera - 1; si llega a 0 (<=0) → {...cargarNivel(partida, partida.nivel), estado:'jugando'} (cargarNivel conserva puntos/monedas/vidas); si no {...partida, espera}. 'meta': espera - 1; al llegar a 0 → {...cargarNivel(partida, partida.nivel + 1), estado:'jugando'}; si no {...partida, espera}. Cualquier otro estado ('fin','pausa','victoria') → devuelve la misma partida."
+   },
+   {
+    "id": "render",
+    "kind": "edit",
+    "path": "src/render.js",
+    "title": "render pantallas",
+    "after": [
+     "pant"
+    ],
+    "files": [
+     "src/pantallas.js"
+    ],
+    "instructions": "Añade import { textoPantalla } from './pantallas.js'; al principio. Al final de la función dibujar (tras el marcador, sin cambiar su firma ni nada más): const lineas = textoPantalla(partida); si no es null: ctx.globalAlpha = 0.7; ctx.fillStyle = 'black'; ctx.fillRect(0, 0, 256, 224); ctx.globalAlpha = 1; ctx.fillStyle = 'white'; ctx.font = '8px monospace'; ctx.textAlign = 'center'; y por cada línea i: ctx.fillText(lineas[i], 128, 96 + i * 16); finalmente ctx.textAlign = 'left'."
+   },
+   {
+    "id": "main",
+    "kind": "write",
+    "path": "src/main.js",
+    "title": "main",
+    "after": [
+     "paso",
+     "ctrl"
+    ],
+    "files": [
+     "src/entrada.js",
+     "src/niveles.js",
+     "src/partida.js",
+     "src/control.js"
+    ],
+    "instructions": "Crea src/main.js (ES module, castellano). Importa NIVELES de './niveles.js', crearPartida de './partida.js', paso de './paso.js', controlar de './control.js', dibujar de './render.js', crearEntrada, aplicarTecla, escucharTeclado de './entrada.js'. Obtiene el canvas con document.getElementById('pantalla') y ctx = getContext('2d'). Variables: partida = crearPartida(NIVELES), entrada = crearEntrada(), anterior = crearEntrada(). escucharTeclado(window, (codigo, pulsada) => { entrada = aplicarTecla(entrada, codigo, pulsada); }). Bucle con requestAnimationFrame(t): acumula tiempo (delta = t - ultimo, limitado a 250 ms máximo), y mientras acumulado >= 1000/60: partida = controlar(partida, entrada, anterior); anterior = entrada; partida = paso(partida, entrada); acumulado -= 1000/60. Después dibujar(ctx, partida) y vuelve a pedir el frame. Inicializa ultimo con el primer t."
+   },
+   {
+    "id": "html",
+    "kind": "write",
+    "path": "index.html",
+    "title": "index.html",
+    "after": [],
+    "instructions": "Crea index.html en la raíz: <!doctype html>, lang es, meta charset utf-8, <title>Supersalto</title>, estilo: body fondo negro, margin 0, display flex, justify-content center, align-items center, min-height 100vh; canvas#pantalla con width 768px y image-rendering: pixelated (también crisp-edges). <canvas id=\"pantalla\" width=\"256\" height=\"224\"></canvas> y <script type=\"module\" src=\"src/main.js\"></script>."
+   },
+   {
+    "id": "test",
+    "kind": "write",
+    "path": "tests/juego.test.mjs",
+    "title": "tests",
+    "after": [
+     "paso",
+     "ctrl",
+     "meta",
+     "fin",
+     "pant"
+    ],
+    "files": [
+     "src/paso.js",
+     "src/control.js",
+     "src/meta.js",
+     "src/fin-nivel.js",
+     "src/pantallas.js",
+     "src/partida.js",
+     "src/mapa.js",
+     "src/entrada.js",
+     "src/niveles.js",
+     "src/marcador.js",
+     "src/jugador.js"
+    ],
+    "instructions": "Crea tests/juego.test.mjs con node:test y node:assert/strict (ES modules). Los tests usan mapas propios con crearMapa([...filas]) (src/mapa.js) y objetos partida construidos a mano (campos: niveles, nivel, mapa, meta {x,y}, monedas, jugador (crearJugador de src/jugador.js), enemigos, puntos, contadorMonedas, vidas, reloj {segundos,frames}, camara, espera, estado). Casos: (1) tocaMeta: jugador {x:100,y:50,ancho:12,alto:16} con meta {x:96,y:100} → true (mástil x 102..106, y -44..116); jugador lejos x=0 → false. (2) puntosMeta con meta.y=160: jugador.y=50 → 5000, y=100 → 2000, y=150 → 400. (3) terminarNivel: partida con reloj.segundos 100, puntos 10, niveles ['a','b'], nivel 0 → estado 'meta', espera 180, puntos 5010; con nivel 1 → estado 'victoria'; no muta la original. (4) textoPantalla: 'jugando' → null; 'pausa' → ['PAUSA','pulsa P para seguir']; 'muerto' nivel 0 vidas 2 → ['MUNDO 1-1','x 2']; 'fin' → ['FIN DEL JUEGO','pulsa Espacio']; 'meta' puntos 300 → ['¡NIVEL SUPERADO!','puntos 300']; 'victoria' puntos 300 → ['¡HAS GANADO!','puntos 300','pulsa Espacio']. (5) controlar: pausa false→true en 'jugando' → 'pausa'; de nuevo en 'pausa' → 'jugando'; pausa mantenida (anterior.pausa true) no cambia; en 'fin' con saltar false→true → partida nueva (estado 'jugando', vidas 3, puntos 0; usa niveles reales NIVELES o un texto de nivel válido para parsearNivel, p. ej. el nivel1 de NIVELES); en 'jugando' saltar no hace nada. (6) paso con mapa pequeño propio (p. ej. 12 columnas, 4 filas, suelo '#' en la última fila): jugador quieto sobre el suelo en estado 'jugando' → sigue 'jugando' y reloj.frames sube 1; jugador con y mayor que mapa.alto*16 → estado 'perdido': perderVida → estado 'muerto' (o 'fin' con vidas 1), vidas-1, espera 120; estado 'muerto' con espera 1 → vuelve a 'jugando' (usa niveles reales NIVELES para que cargarNivel funcione); espera 5 → espera 4; estado 'fin' devuelve igual; jugador tocando la meta en 'jugando' → estado 'meta' (con niveles ['a','b'] en la lista, nivel 0) y puntos suben; estado 'meta' con espera 1 → carga nivel siguiente 'jugando' (niveles reales, nivel 0 → nivel 1); paso no muta la partida. (7) Test de 3000 pasos con los NIVELES reales (import { NIVELES } from '../src/niveles.js'): partida = crearPartida(NIVELES); entrada con derecha true y saltar alternando cada 20 pasos (usa crearEntrada/aplicarTecla); 3000 veces partida = controlar(partida, entrada, anterior) y luego paso; después de cada paso comprueba que estado esté en ['jugando','muerto','fin','meta','victoria','pausa'], que Number.isFinite(partida.jugador.x) y Number.isFinite(partida.jugador.y), puntos >= 0 y vidas >= 0; al final assert que partida.reloj existe y que jugador.x es finito. Mantén el archivo por debajo de 200 líneas."
+   },
+   {
+    "id": "log",
+    "kind": "edit",
+    "path": "CHANGELOG.md",
+    "title": "changelog",
+    "after": [],
+    "instructions": "Añade al final una línea: - Parche 004 · 10/10/2026 · Hito 4 Juego jugable: meta, fin-nivel, paso, pantallas, control, main e index.html con sus tests (secciones 11 a 14)."
+   }
+  ]
+ },
+ {
+  "n": 5,
+  "texto": "Hito 5 · Champiñón y koopas. Implementa las secciones 15 a 18 del contrato con tus propios tests.",
+  "blocks": [
+   {
+    "id": "champi",
+    "kind": "write",
+    "path": "src/champi.js",
+    "files": [
+     "src/goomba.js"
+    ],
+    "after": [],
+    "instructions": "Crea src/champi.js (comentarios en castellano). Exporta crearChampi(columna, fila) = {tipo:'champi', x: columna*16, y: fila*16 - 16, ancho:16, alto:16, vx:1, vy:0, enSuelo:false, vivo:true} y actualizarChampi(c, mapa): idéntico a actualizarGoomba de src/goomba.js (aplicarGravedad, moverX dándose la vuelta si r.vx===0 && c.vx!==0, moverY, devuelve cuerpo) pero sin lógica de aplastado. Mismos imports que goomba.js. No muta."
+   },
+   {
+    "id": "tamano",
+    "kind": "write",
+    "path": "src/tamano.js",
+    "after": [],
+    "instructions": "Crea src/tamano.js (castellano). Exporta: crecer(jugador): si jugador.grande es true devuelve copia igual; si no {...jugador, grande:true, alto:32, y: jugador.y-16}. recibirGolpe(jugador): si grande → {jugador:{...jugador, grande:false, alto:16, y:jugador.y+16, invencible:120}, muere:false}; si no grande y (jugador.invencible||0) > 0 → {jugador, muere:false}; si no → {jugador, muere:true}. bajarInvencible(jugador): {...jugador, invencible: Math.max(0,(jugador.invencible||0)-1)}. Puras, sin mutar."
+   },
+   {
+    "id": "ladrillo",
+    "kind": "write",
+    "path": "src/ladrillo.js",
+    "files": [
+     "src/mapa.js",
+     "src/bloques.js"
+    ],
+    "after": [],
+    "instructions": "Crea src/ladrillo.js (castellano). romperLadrillo(mapa, columna, fila, grande): si tileEn(mapa,columna,fila)==='B' y grande es true → {mapa:{...mapa, tiles:nuevos con '.' en ese sitio (como hace golpearBloque en src/bloques.js)}, roto:true, puntos:50}; si no → {mapa, roto:false, puntos:0}. trozosLadrillo(columna, fila) = 4 trozos [{x,y,vx,vy}] con x=columna*16 y y=fila*16 mas desplazamiento a las esquinas: (x,y) con vx -1, (x+8,y) vx 1, (x,y+8) vx -1, (x+8,y+8) vx 1; vy respectivamente -6,-6,-3,-3. No muta."
+   },
+   {
+    "id": "koopa",
+    "kind": "write",
+    "path": "src/koopa.js",
+    "files": [
+     "src/goomba.js"
+    ],
+    "after": [],
+    "instructions": "Crea src/koopa.js (castellano). crearKoopa({x,y}) = {tipo:'koopa', x, y: y-8, ancho:16, alto:24, vx:-0.5, vy:0, enSuelo:false, vivo:true, modo:'andando'}. actualizarKoopa(k, mapa): si !k.vivo devuelve k; si modo==='caparazon' → aplicarGravedad, fuerza vx 0, moverX, moverY (no se mueve en x, cae); en 'andando' y 'caparazon_rodando' igual que actualizarGoomba de src/goomba.js (gravedad, moverX con vuelta al chocar, moverY). Conserva modo. No muta."
+   },
+   {
+    "id": "caparazon",
+    "kind": "write",
+    "path": "src/caparazon.js",
+    "files": [
+     "src/rect.js"
+    ],
+    "after": [],
+    "instructions": "Crea src/caparazon.js (castellano). pisarKoopa(koopa, jugador) devuelve {koopa, puntos}: modo 'andando' → {...koopa, modo:'caparazon', alto:16, y: koopa.y+8, vx:0}, puntos 100; modo 'caparazon' → {...koopa, modo:'caparazon_rodando', vx: (jugador.x+jugador.ancho/2) < (koopa.x+koopa.ancho/2) ? 4 : -4}, puntos 400; modo 'caparazon_rodando' → {...koopa, modo:'caparazon', vx:0}, puntos 100. caparazonGolpea(caparazon, enemigo) = true si caparazon.modo==='caparazon_rodando' && enemigo.vivo && enemigo!==caparazon && solapan(caparazon, enemigo) (src/rect.js)."
+   },
+   {
+    "id": "sprites",
+    "kind": "write",
+    "path": "src/sprites.js",
+    "after": [],
+    "instructions": "Crea src/sprites.js (castellano, <200 líneas). Exporta PALETA {letra: color} (p.ej. R:'#e45c10' gorra/rojo, S:'#fc9838' piel, A:'#2038ec' peto azul, N:'#6c3c00' marrón, B:'#ffffff' blanco, K:'#000000' negro, Y:'#fcc800' amarillo, O:'#b8860b'), SPRITES = {jugador:[16 strings de EXACTAMENTE 16 chars: dibujo de 12 de ancho centrado (2 '.' a cada lado): gorra roja, cara, peto azul], goomba:[16 strings de 16 chars, marrón con ojos], moneda:[16 strings de 16 chars, amarillo]} y pixelesSprite(nombre) → lista [{x,y,color}] de los píxeles no '.' (color = PALETA[letra]); lanza Error si el nombre no existe. Todas las letras usadas deben existir en PALETA."
+   },
+   {
+    "id": "t-modulos",
+    "kind": "write",
+    "path": "tests/champi-koopa.test.mjs",
+    "files": [
+     "src/champi.js",
+     "src/tamano.js",
+     "src/ladrillo.js",
+     "src/koopa.js",
+     "src/caparazon.js",
+     "src/sprites.js",
+     "src/mapa.js"
+    ],
+    "after": [
+     "champi",
+     "tamano",
+     "ladrillo",
+     "koopa",
+     "caparazon",
+     "sprites"
+    ],
+    "instructions": "Crea tests/champi-koopa.test.mjs con node:test y node:assert/strict, ES modules. Mapas propios con crearMapa([...filas]) de src/mapa.js. Casos con números concretos: crearChampi(3,5) → x 48,y 64,vx 1; actualizarChampi cae con gravedad sobre mapa con suelo y se da la vuelta (vx -1) contra un muro; crecer pequeño→grande alto 32 y y-16, crecer grande igual; recibirGolpe grande→pequeño alto16 y+16 invencible 120 muere false; pequeño invencible 5 → muere false; pequeño → muere true; bajarInvencible 3→2 y 0→0; romperLadrillo B con grande true → '.' roto true puntos 50 y el original no cambia; grande false → roto false; trozosLadrillo(2,3) → 4 trozos con vx -1,1,-1,1 y vy -6,-6,-3,-3; crearKoopa({x:10,y:40}) → y 32 alto 24 modo andando; actualizarKoopa en caparazon mantiene x y vx 0; pisarKoopa en los 3 modos (jugador a izquierda → vx 4, a derecha → -4; puntos 100/400/100); caparazonGolpea true con rodando solapando, false si no rueda, false si mismo, false si enemigo muerto; pixelesSprite('jugador') no vacío, todos x,y en 0..15 y color string, SPRITES.jugador tiene 16 filas de 16 chars, pixelesSprite('nada') lanza."
+   }
+  ]
+ },
+ {
+  "n": 6,
+  "texto": "Hito 6 · Sprites, sonido y extras. Implementa las secciones 19 a 23 del contrato con tus propios tests.",
+  "blocks": [
+   {
+    "id": "sonido",
+    "kind": "write",
+    "path": "src/sonido.js",
+    "after": [],
+    "files": [
+     "CONTRATO.md"
+    ],
+    "title": "sonido",
+    "instructions": "Crea src/sonido.js (ES module, nombres en castellano, <200 líneas). Exporta NOTAS = {salto:[{frecuencia,duracion}...], moneda:[{frecuencia:988,duracion:0.08},{frecuencia:1319,duracion:0.3}], pisar:[...], champi:[...], muerte:[...], meta:[...]} con frecuencias entre 100 y 2000 Hz y duraciones entre 0.03 y 0.5 s (cada lista con al menos 1 nota). Exporta crearSonido(contextoAudio) que devuelve una función tocar(nombre): si el nombre no existe en NOTAS no hace nada; si existe, para cada nota crea un OscillatorNode de tipo 'square' (contextoAudio.createOscillator), con un GainNode, frecuencia, y lo arranca en contextoAudio.currentTime + suma de duraciones previas y lo para al acabar su nota, conectado a contextoAudio.destination."
+   },
+   {
+    "id": "test-sonido",
+    "kind": "write",
+    "path": "tests/sonido.test.mjs",
+    "after": [],
+    "files": [
+     "CONTRATO.md"
+    ],
+    "title": "test sonido",
+    "instructions": "Crea tests/sonido.test.mjs con node:test y node:assert/strict que importa solo ../src/sonido.js. Comprueba: NOTAS tiene las claves salto, moneda, pisar, champi, muerte, meta; todas las notas tienen frecuencia entre 100 y 2000 y duracion entre 0.03 y 0.5; NOTAS.moneda deepEqual [{frecuencia:988,duracion:0.08},{frecuencia:1319,duracion:0.3}]; crearSonido con un contexto falso (createOscillator/createGain que devuelven objetos con frequency:{value:0}, connect(){}, start(){}, stop(){}, gain:{value:0,setValueAtTime(){}}) devuelve una función y tocar('moneda') crea exactamente 2 osciladores de type 'square'; tocar('inexistente') no lanza ni crea osciladores."
+   },
+   {
+    "id": "vida",
+    "kind": "write",
+    "path": "src/vida-extra.js",
+    "after": [],
+    "files": [
+     "src/partida.js"
+    ],
+    "title": "vida extra",
+    "instructions": "Crea src/vida-extra.js exporta contarMoneda(partida): devuelve una partida NUEVA (sin mutar) con contadorMonedas + 1; si llega a 100 vuelve a 0 y vidas + 1. Mira src/partida.js para los nombres reales de los campos (si contadorMonedas no existe, trátalo como 0). Crea también tests/vida-extra.test.mjs: contadorMonedas 5→6; 99→0 con vidas 3→4; no muta la entrada."
+   },
+   {
+    "id": "efectos",
+    "kind": "write",
+    "path": "src/efectos.js",
+    "after": [],
+    "files": [
+     "CONTRATO.md"
+    ],
+    "title": "efectos y flotantes",
+    "instructions": "Crea src/efectos.js: crearMonedaSalto(columna,fila) = {tipo:'moneda_salto', x:columna*16, y:fila*16-16, vy:-6, vida:30}; actualizarEfecto(e) devuelve NUEVO objeto: primero y = y+vy, luego vy = vy+0.5, y vida-1; vivos(efectos) = los que tienen vida>0. Crea src/flotantes.js: crearFlotante(x,y,texto) = {x,y,texto,vida:45}; actualizarFlotante(f) → nuevo con y-1, vida-1. Crea tests/efectos.test.mjs con node:test y assert/strict: crearMonedaSalto(2,5) → x 32,y 64; actualizarEfecto({y:64,vy:-6,vida:30}) → y 58, vy -5.5, vida 29; vivos filtra vida 0; crearFlotante(10,20,'100'); actualizarFlotante → y 19, vida 44; no mutan."
+   },
+   {
+    "id": "estrella",
+    "kind": "write",
+    "path": "src/estrella.js",
+    "after": [],
+    "files": [
+     "src/champi.js",
+     "src/fisica.js",
+     "src/colision-x.js",
+     "src/colision-y.js",
+     "src/mapa.js"
+    ],
+    "title": "estrella y poderes",
+    "instructions": "Crea src/estrella.js: crearEstrella(columna,fila) = {tipo:'estrella', x:columna*16, y:fila*16-16, ancho:16, alto:16, vx:1.5, vy:-5, enSuelo:false, vivo:true} y actualizarEstrella(e,mapa): gravedad, moverX dándose la vuelta al chocar, moverY y, si toca suelo, vy=-5 (bota). Copia el estilo exacto de actualizarChampi en src/champi.js (mismas funciones aplicarGravedad, moverX, moverY y su forma de devolver resultados). Crea src/poderes.js: darEstrella(jugador) → copia con estrella:600; conEstrella(jugador) → (jugador.estrella||0)>0; bajarEstrella(jugador) → estrella-1 sin bajar de 0. Crea tests/estrella-poderes.test.mjs (node:test, assert/strict, mapa propio con crearMapa): crearEstrella(3,5) → x48,y64,vx1.5,vy-5; actualizarEstrella en suelo con vy cayendo termina con vy -5; con muro a la derecha vx pasa a -1.5; darEstrella → 600; conEstrella true/false; bajarEstrella 600→599 y 0→0; no mutan."
+   },
+   {
+    "id": "correr",
+    "kind": "edit",
+    "path": "src/entrada.js",
+    "after": [],
+    "files": [
+     "src/entrada.js",
+     "src/movimiento.js",
+     "src/jugador.js",
+     "tests/entrada-movimiento.test.mjs"
+    ],
+    "title": "correr (entrada, movimiento, jugador)",
+    "instructions": "Sección 21 sin cambiar firmas existentes. En src/entrada.js: crearEntrada incluye correr:false y aplicarTecla mapea 'ShiftLeft','ShiftRight','KeyJ' al campo correr (igual que los otros). OJO: tests existentes en tests/entrada-movimiento.test.mjs comprueban crearEntrada con deepEqual: actualízalos añadiendo correr:false. Además edita src/movimiento.js: añade export const VEL_CORRER = 3.5 y export function velocidadConCorrer(vx, entrada) que es como velocidadHorizontal pero con tope 3.5 si entrada.correr es true (lee velocidadHorizontal para ver cómo calcula el tope normal; no la cambies). Edita src/jugador.js para usar velocidadConCorrer en vez de velocidadHorizontal. Añade tests nuevos a tests/entrada-movimiento.test.mjs: aplicarTecla ShiftLeft/KeyJ ponen correr true; velocidadConCorrer con correr true permite 3.5 y con correr false se comporta como velocidadHorizontal."
+   },
+   {
+    "id": "render",
+    "kind": "edit",
+    "path": "src/render.js",
+    "after": [],
+    "files": [
+     "src/render.js",
+     "src/sprites.js",
+     "tests/partida-render.test.mjs"
+    ],
+    "title": "render con sprites",
+    "instructions": "Sección 19: en src/render.js (sin cambiar la firma de dibujar) pinta el jugador, los goombas y las monedas con pixelesSprite (de src/sprites.js; devuelve [{x,y,color}]) usando un fillRect de 1×1 por píxel (x/y del sprite + posición del objeto menos cámara). Jugador espejado en x si jugador.mirando es -1 (x dibujada = 15 - px). Si el jugador es grande se pinta el sprite estirado al doble de alto (fillRect de 1×2, y*2). Mantén el parpadeo por invencible y el resto de lo ya existente (champiñón, koopas, etc.). Mantén render.js bajo 200 líneas (si hace falta, extrae a un módulo nuevo src/dibujo-sprites.js). Ajusta tests/partida-render.test.mjs solo si algún test existente deja de valer, y añade un test con contexto falso que registre llamadas fillRect: un jugador pequeño mirando 1 genera fillRect 1×1; un jugador grande genera fillRect con alto 2."
+   },
+   {
+    "id": "paso",
+    "kind": "edit",
+    "path": "src/paso.js",
+    "after": [],
+    "files": [
+     "src/paso.js",
+     "src/partida.js",
+     "src/main.js",
+     "tests/paso-champi.test.mjs"
+    ],
+    "title": "eventos en paso y sonido en main",
+    "instructions": "Sección 20. Edita src/paso.js sin cambiar firma: la partida devuelta lleva eventos: array con lo que pasó en ese paso (strings 'salto' cuando el jugador salta, 'moneda' al recoger moneda o sacar moneda de un bloque, 'pisar' al pisar enemigo, 'champi' al recoger champiñón, 'muerte' al morir, 'meta' al tocar la meta), [] si nada. Siempre se reconstruye por paso (no acumula de pasos anteriores). Mantén paso.js bajo 200 líneas (extrae helpers a src/eventos.js si hace falta). Edita src/main.js: crea un AudioContext (window.AudioContext||webkitAudioContext) en el primer keydown (listener once), crea tocar = crearSonido(ctx) de src/sonido.js, y tras cada paso llama tocar(e) por cada e de partida.eventos (si tocar aún no existe, no hace nada). Crea tests/eventos.test.mjs con mapas propios (crearMapa): paso sin nada → eventos deepEqual []; paso con jugador que pulsa salto estando en suelo → eventos incluye 'salto'; paso donde el jugador solapa una moneda 'o' → incluye 'moneda'. Mira tests/paso-champi.test.mjs y tests/paso-juego.test.mjs para ver cómo se construye una partida y se llama a paso."
+   },
+   {
+    "id": "log",
+    "kind": "edit",
+    "path": "CHANGELOG.md",
+    "after": [],
+    "files": [
+     "CHANGELOG.md"
+    ],
+    "title": "changelog",
+    "instructions": "Añade al final una línea: - Parche 006 · 10/10/2026 · Hito 6 Sprites, sonido y extras: sonido, vida-extra, efectos, flotantes, estrella, poderes, correr, eventos en paso y render con sprites con sus tests (secciones 19 a 23)."
+   }
+  ]
+ },
+ {
+  "n": 7,
+  "texto": "Hito 7 · Más contenido. Implementa las secciones 24 a 29 del contrato con tus propios tests.",
+  "blocks": [
+   {
+    "id": "flor",
+    "kind": "write",
+    "path": "src/flor.js",
+    "files": [
+     "src/tamano.js",
+     "src/estrella.js",
+     "CONTRATO.md"
+    ],
+    "after": [],
+    "instructions": "Crea src/flor.js (ES module, castellano, comentarios breves, <200 líneas, puro, sin mutar). Exporta crearFlor(columna, fila) = {tipo:'flor', x:columna*16, y:fila*16-16, ancho:16, alto:16, vivo:true} y darFuego(jugador): si jugador.grande es true devuelve {...jugador, fuego:true}; si no, devuelve crecer(jugador) importado de './tamano.js' (mira su firma)."
+   },
+   {
+    "id": "fuego",
+    "kind": "write",
+    "path": "src/fuego.js",
+    "files": [
+     "src/champi.js",
+     "src/estrella.js",
+     "src/colision-x.js",
+     "src/colision-y.js",
+     "src/fisica.js"
+    ],
+    "after": [],
+    "instructions": "Crea src/fuego.js (ES module, castellano, puro). Exporta lanzarFuego(jugador) = {tipo:'fuego', x: jugador.x + (jugador.mirando>0 ? jugador.ancho : -8), y: jugador.y+4, ancho:8, alto:8, vx:4*jugador.mirando, vy:0, vivo:true, botes:0} y actualizarFuego(f, mapa): aplica gravedad (aplicarGravedad), moverX (si choca en x -> vivo:false), moverY (si toca suelo -> vy:-4 y botes+1; si botes llega a 4 -> vivo:false). Sigue el mismo patrón que actualizarEstrella/actualizarChampi para usar moverX/moverY (mira sus firmas y qué devuelven). No muta la entrada."
+   },
+   {
+    "id": "pirana",
+    "kind": "write",
+    "path": "src/pirana.js",
+    "files": [
+     "CONTRATO.md"
+    ],
+    "after": [],
+    "instructions": "Crea src/pirana.js (ES module, castellano, puro). crearPirana(columna, fila) = {tipo:'pirana', x:columna*16+8, yBase:fila*16, y:fila*16, ancho:16, alto:24, fase:0, vivo:true}. actualizarPirana(p, jugadorX): devuelve objeto nuevo. Si p.fase===180 (escondida) y Math.abs((p.x+8)-jugadorX)... NO: usa distancia en x = Math.abs(p.x - jugadorX) < 24 -> la fase se queda en 180 y y = yBase. En otro caso fase = fase+1 y si llega a 240 vuelve a 0. Luego y según la NUEVA fase: fase<60: yBase - fase*0.4; 60..119: yBase-24; 120..179: yBase-24+(fase-120)*0.4; 180..239: yBase. Aclaración del orden: primero decide si bloquea (fase actual>=180 y jugador cerca => fase se queda en 180, y=yBase), si no incrementa."
+   },
+   {
+    "id": "tub",
+    "kind": "write",
+    "path": "src/tuberias.js",
+    "files": [
+     "src/mapa.js"
+    ],
+    "after": [],
+    "instructions": "Crea src/tuberias.js. bocasTuberia(mapa) devuelve lista de {columna, fila} (recorre filas de arriba abajo y columnas de izquierda a derecha) de cada tile 'T' cuyo tile de arriba (tileEn(mapa,col,fila-1)) no es 'T' y cuyo tile de la izquierda (col-1) no es 'T'. Usa tileEn de './mapa.js' (mira su firma y cómo expone ancho/alto el mapa)."
+   },
+   {
+    "id": "fondo",
+    "kind": "write",
+    "path": "src/fondo.js",
+    "files": [
+     "CONTRATO.md"
+    ],
+    "after": [],
+    "instructions": "Crea src/fondo.js. decorado(anchoMapaPx): array fijo: nubes {tipo:'nube', x, y} cada 192 px empezando en x=64 mientras x<anchoMapaPx, con y alternando 24 (primera), 40, 24...; y colinas {tipo:'colina', x, y:160} cada 384 px empezando en x=0 mientras x<anchoMapaPx. Devuelve primero todas las nubes y luego las colinas. posicionParalaje(x, camara, factor) = x - camara*factor. Exporta también FACTOR_NUBE=0.5 y FACTOR_COLINA=0.75."
+   },
+   {
+    "id": "temas",
+    "kind": "write",
+    "path": "src/temas.js",
+    "files": [],
+    "after": [],
+    "instructions": "Crea src/temas.js. temaNivel(indice): si indice===2 devuelve {cielo:'#000000', suelo:'#0070ec', ladrillo:'#0070ec'}; para los demás {cielo:'#5c94fc', suelo:'#c84c0c', ladrillo:'#a0522d'}. Devuelve objeto nuevo cada vez."
+   },
+   {
+    "id": "titulo",
+    "kind": "write",
+    "path": "src/titulo.js",
+    "files": [],
+    "after": [],
+    "instructions": "Crea src/titulo.js. textoTitulo(record) = ['SUPERSALTO','1 JUGADOR','RÉCORD ' + String(record).padStart(6,'0'),'pulsa Espacio']."
+   },
+   {
+    "id": "record",
+    "kind": "write",
+    "path": "src/record.js",
+    "files": [],
+    "after": [],
+    "instructions": "Crea src/record.js (puro, sin localStorage). nuevoRecord(record, puntos)=Math.max(record,puntos); esRecord(record, puntos)=puntos>record."
+   },
+   {
+    "id": "rebote",
+    "kind": "write",
+    "path": "src/rebote.js",
+    "files": [],
+    "after": [],
+    "instructions": "Crea src/rebote.js. crearRebote(columna,fila)={columna,fila,paso:0}; avanzar(rebote)=objeto nuevo con paso+1; desplazamiento(rebote): 0 si paso es 0 o >=8 (devolver 0 de verdad, nunca -0); -paso si paso de 1 a 4; -(8-paso) si de 5 a 7."
+   },
+   {
+    "id": "golpe",
+    "kind": "write",
+    "path": "src/golpe-abajo.js",
+    "files": [
+     "src/rect.js"
+    ],
+    "after": [],
+    "instructions": "Crea src/golpe-abajo.js. enemigosEncima(enemigos, columna, fila): devuelve los enemigos con vivo!==false cuya parte de abajo (y+alto) está entre fila*16-2 y fila*16+2 (ambos incluidos) y que se solapan en x con el tile: e.x < columna*16+16 && e.x+e.ancho > columna*16. No muta."
+   },
+   {
+    "id": "t1",
+    "kind": "write",
+    "path": "tests/flor-fuego.test.mjs",
+    "files": [
+     "src/flor.js",
+     "src/fuego.js",
+     "src/tamano.js",
+     "src/mapa.js"
+    ],
+    "after": [
+     "flor",
+     "fuego"
+    ],
+    "instructions": "Tests node:test + node:assert/strict (import ESM '../src/...'). Cubre: crearFlor(3,5) -> x48,y64,ancho16,alto16,vivo true,tipo 'flor'. darFuego con jugador grande:true -> fuego true; con pequeño -> igual que crecer (grande true, alto 32). lanzarFuego con jugador {x:100,y:50,ancho:16,mirando:1} -> x116,y54,vx4; mirando -1 -> x92, vx -4. actualizarFuego con mapa propio crearMapa([...filas pequeñas]) con suelo: bota (vy -4, botes 1) al tocar suelo; tras 4 botes vivo false; choque con muro -> vivo false. Calcula los números esperados leyendo el código. No muta la entrada."
+   },
+   {
+    "id": "t2",
+    "kind": "write",
+    "path": "tests/pirana-tuberias.test.mjs",
+    "files": [
+     "src/pirana.js",
+     "src/tuberias.js",
+     "src/mapa.js"
+    ],
+    "after": [
+     "pirana",
+     "tub"
+    ],
+    "instructions": "Tests node:test. crearPirana(2,5) -> x40,yBase 80,y80,alto24,fase0. actualizarPirana con fase 0 y jugador lejos (jugadorX 500) -> fase1,y 79.6; fase 59->60 y 56 (yBase 80); fase 119 -> 120 y 56; fase 150 -> 151 con y=56+31*0.4=68.4 (usa assert.ok(Math.abs(...)<1e-9) para decimales); fase 239 -> 0 y 80; fase 180 con jugador a 10 px de p.x -> sigue 180 y y 80; fase 180 con jugador a 100 px -> 181. No muta. bocasTuberia con crearMapa de 4 filas con una tubería 2 de ancho y 2 de alto (TT sobre TT) devuelve solo [{columna,fila}] de la esquina superior izquierda; dos tuberías devuelven dos bocas en orden."
+   },
+   {
+    "id": "t3",
+    "kind": "write",
+    "path": "tests/fondo-temas-titulo.test.mjs",
+    "files": [
+     "src/fondo.js",
+     "src/temas.js",
+     "src/titulo.js",
+     "src/record.js"
+    ],
+    "after": [
+     "fondo",
+     "temas",
+     "titulo",
+     "record"
+    ],
+    "instructions": "Tests node:test. decorado(400): nubes en x 64,256 (y 24,40) y colinas en x 0,384 (y160). decorado(64) -> sin nubes, solo colina x0. posicionParalaje(100,40,0.5)=80; (100,40,0.75)=70. temaNivel(2) y temaNivel(0) con deepEqual exacto. textoTitulo(1234) -> 4 líneas exactas ('RÉCORD 001234'). nuevoRecord(5,3)=5, (3,5)=5; esRecord(5,5)=false, (5,6)=true."
+   },
+   {
+    "id": "t4",
+    "kind": "write",
+    "path": "tests/rebote-golpe.test.mjs",
+    "files": [
+     "src/rebote.js",
+     "src/golpe-abajo.js"
+    ],
+    "after": [
+     "rebote",
+     "golpe"
+    ],
+    "instructions": "Tests node:test. crearRebote(2,3) deepEqual {columna:2,fila:3,paso:0}. desplazamiento para paso 0..9: 0,-1,-2,-3,-4,-3,-2,-1,0,0; comprueba con Object.is(desplazamiento(r),0) que paso 0 y 8 no dan -0. avanzar no muta. enemigosEncima con tile columna 2 fila 5 (tile x 32..48, y 80): enemigo {x:30,y:64,ancho:16,alto:16,vivo:true} (abajo 80) incluido; enemigo vivo false excluido; enemigo con abajo 83 excluido, 82 incluido, 78 excluido, 78 -> excluido (78<78 es falso: 78 está en el borde? rango es 78..82, incluido); enemigo x:48 excluido (no solapa)."
+   },
+   {
+    "id": "render",
+    "kind": "edit",
+    "path": "src/render.js",
+    "files": [
+     "src/render.js",
+     "src/fondo.js",
+     "src/temas.js",
+     "tests/partida-render.test.mjs",
+     "tests/render-sprites.test.mjs"
+    ],
+    "after": [
+     "fondo",
+     "temas"
+    ],
+    "instructions": "Sin cambiar la firma de dibujar y sin romper tests existentes (tests/partida-render.test.mjs y render-sprites). 1) Importa temaNivel de './temas.js' y úsalo para el color del cielo, del suelo '#' y del ladrillo 'B' (indice del nivel: mira cómo guarda la partida el índice del nivel, p. ej. partida.nivel o partida.indice; si no existe, usa 0). OJO: los tests existentes verifican COLORES; con el tema por defecto (índice 0) los colores deben ser iguales a los actuales (cielo '#5c94fc', suelo '#c84c0c', ladrillo '#a0522d' si coinciden; si los actuales difieren, conserva los actuales para los índices distintos de 2). 2) Antes de pintar los tiles, pinta decorado(anchoMapaPx) de './fondo.js' con posicionParalaje(x, camara, factor): nubes blancas '#ffffff' 32x16 factor 0.5; colinas '#00a800' 48x32 (y arriba = y-?: dibuja la colina con base en y+32 como y indica el contrato: rectángulo escalonado, p.ej. fillRect(px,y+16,48,16) y fillRect(px+8,y,32,16)) y un arbusto '#80d010' 24x8 junto a cada colina (a px+48, y+24). factor 0.75 colinas. Mantén render.js bajo 200 líneas; si no cabe, mueve el decorado a una función nueva en src/render-fondo.js (dibujarFondo(ctx, camara, anchoMapaPx, colores))."
+   },
+   {
+    "id": "niveles",
+    "kind": "edit",
+    "path": "src/niveles.js",
+    "files": [
+     "src/niveles.js",
+     "src/nivel.js",
+     "docs/nivel-1.txt",
+     "tests/nivel.test.mjs"
+    ],
+    "after": [],
+    "instructions": "Añade un tercer nivel a NIVELES de 64 columnas y 14 filas (cada fila exactamente 64 caracteres), mismo formato que los otros dos. Subterráneo: fila 0 toda 'B'; filas 12 y 13 suelo '#' con 3 huecos ('.' en ambas filas) de 2 o 3 columnas (p.ej. columnas 15-16, 33-35, 48-49); columnas de ladrillos 'B' a distintas alturas en filas 8-11; exactamente 10 'o', 2 '?', 1 'M', 6 'E', 1 'K'; 'J' en columna 2 fila 11; 'F' en columna 61 fila 11 (sobre suelo, no sobre hueco). Resto '.'. Comprueba contando que cada fila mide 64. Los E/K/J/F/o van en aire sobre suelo/ladrillo. Mira cómo exporta niveles.js y respeta el formato (texto con filas)."
+   },
+   {
+    "id": "tniv",
+    "kind": "write",
+    "path": "tests/nivel3.test.mjs",
+    "files": [
+     "src/niveles.js",
+     "src/nivel.js"
+    ],
+    "after": [
+     "niveles"
+    ],
+    "instructions": "Test node:test: parsea el tercer nivel de NIVELES (mira niveles.js para acceder; este es el único test permitido leer niveles.js) y comprueba: 64 columnas y 14 filas, fila 0 toda 'B', filas 12 y 13 con 3 huecos, cuenta de caracteres: 'o' 10, '?' 2, 'M' 1, 'E' 6, 'K' 1, J en (col 2, fila 11), F en (col 61, fila 11) con '#' debajo (fila 12). Cuenta los huecos como tramos consecutivos de '.' en la fila 12 y comprueba que cada uno mide 2 o 3."
+   },
+   {
+    "id": "control",
+    "kind": "edit",
+    "path": "src/control.js",
+    "files": [
+     "src/control.js",
+     "src/partida.js",
+     "src/titulo.js",
+     "tests/meta-pantallas.test.mjs"
+    ],
+    "after": [
+     "titulo"
+    ],
+    "instructions": "Sin cambiar la firma de controlar. Añade: con partida.estado==='titulo' y Espacio recién pulsado (mira cómo detecta ya Espacio recién pulsado en los otros estados 'fin'/'victoria' y haz igual) devuelve crearPartida() (de './partida.js'). No rompas los comportamientos existentes. Añade además a src/pantallas.js textoPantalla soporte para estado 'titulo' SOLO si es trivial (devolver textoTitulo(0) de ./titulo.js); si textoPantalla ya devuelve algo para otros estados, añádelo sin cambiar lo existente."
+   },
+   {
+    "id": "tctl",
+    "kind": "write",
+    "path": "tests/titulo-control.test.mjs",
+    "files": [
+     "src/control.js",
+     "src/partida.js"
+    ],
+    "after": [
+     "control"
+    ],
+    "instructions": "Test node:test: controlar con partida {...crearPartida(), estado:'titulo'} y entrada con Espacio recién pulsado devuelve una partida con estado 'jugando' (comprueba qué estado inicial pone crearPartida y úsalo); sin pulsar sigue 'titulo'. Lee control.js para ver cómo se pasa la entrada."
+   },
+   {
+    "id": "paso",
+    "kind": "edit",
+    "path": "src/paso.js",
+    "files": [
+     "src/paso.js",
+     "src/golpe-abajo.js",
+     "src/bloques.js",
+     "src/partida.js",
+     "tests/paso-champi.test.mjs"
+    ],
+    "after": [
+     "golpe"
+    ],
+    "instructions": "Sin cambiar la firma de paso ni romper los tests existentes. Cuando el jugador golpea un bloque desde abajo (donde ya se llama a golpearBloque/romperLadrillo), usa enemigosEncima de './golpe-abajo.js' (enemigos = goombas y koopas de la partida, con la columna/fila del bloque golpeado) y marca esos enemigos como vivo:false sumando 100 puntos por cada uno (campo de puntos de la partida; sigue el patrón ya usado en pisar goomba). paso.js debe seguir bajo 200 líneas; si no cabe, crea src/golpe-bloque.js con una función auxiliar aplicarGolpeAbajo(partida, columna, fila) y llámala desde paso."
+   },
+   {
+    "id": "main",
+    "kind": "edit",
+    "path": "src/main.js",
+    "files": [
+     "src/main.js",
+     "src/record.js",
+     "src/partida.js",
+     "src/titulo.js"
+    ],
+    "after": [
+     "record",
+     "control"
+    ],
+    "instructions": "Sin romper nada: el juego empieza en la pantalla de título (la partida inicial con estado:'titulo', p.ej. {...crearPartida(), estado:'titulo'}). Lee el récord de localStorage ('supersalto-record') dentro de try/catch (0 si falla) y al pasar la partida a estado 'fin' o 'victoria' guarda nuevoRecord(record, partida.puntos) en localStorage dentro de try/catch. localStorage SOLO en main.js. Si el dibujo del título necesita textoTitulo(record), pásalo con el mecanismo de textoPantalla existente sin cambiar firmas. Mantén bajo 200 líneas."
+   },
+   {
+    "id": "log",
+    "kind": "edit",
+    "path": "CHANGELOG.md",
+    "files": [
+     "CHANGELOG.md"
+    ],
+    "after": [],
+    "instructions": "Añade al final una línea: '- Parche 007 · 10/10/2026 · Hito 7 Más contenido: flor, fuego, pirana, tuberias, fondo, temas, titulo, record, rebote, golpe-abajo, nivel 3, título, récord y golpe de bloque con sus tests (secciones 24 a 29).'"
+   }
+  ]
+ },
+ {
+  "n": 8,
+  "texto": "Hito 8 · Revisión final. Relee CONTRATO.md sección por sección y comprueba cada nombre, firma y número contra src/; busca imports rotos, código de Node en el navegador y funciones que modifican lo que reciben. Arregla lo que falle sin cambiar firmas y deja todos los tests pasando.",
+  "blocks": [
+   {
+    "id": "ef",
+    "kind": "write",
+    "path": "src/efectos.js",
+    "title": "efectos limpio",
+    "instructions": "Reescribe src/efectos.js con SOLO este código ES module (sin bloques markdown, sin tests, sin imports): export function crearMonedaSalto(columna, fila){return {tipo:'moneda_salto', x:columna*16, y:fila*16-16, vy:-6, vida:30};} export function actualizarEfecto(e){return {...e, y:e.y+e.vy, vy:e.vy+0.5, vida:e.vida-1};} export function vivos(efectos){return efectos.filter(e=>e.vida>0);} Comentarios en castellano.",
+    "files": [
+     "src/efectos.js"
+    ],
+    "after": []
+   },
+   {
+    "id": "fl",
+    "kind": "write",
+    "path": "src/flotantes.js",
+    "title": "flotantes",
+    "instructions": "Crea src/flotantes.js (ES module, comentarios en castellano, sin imports): export function crearFlotante(x,y,texto){return {x,y,texto,vida:45};} export function actualizarFlotante(f){return {...f, y:f.y-1, vida:f.vida-1};}",
+    "after": []
+   },
+   {
+    "id": "es",
+    "kind": "write",
+    "path": "src/estrella.js",
+    "title": "estrella limpio",
+    "instructions": "Reescribe src/estrella.js entero siguiendo el estilo de src/champi.js (léelo). Imports UNA sola vez: aplicarGravedad de ./fisica.js, moverX de ./colision-x.js, moverY de ./colision-y.js. export function crearEstrella(columna,fila) = {tipo:'estrella', x:columna*16, y:fila*16-16, ancho:16, alto:16, vx:1.5, vy:-5, enSuelo:false, vivo:true}. export function actualizarEstrella(e,mapa): igual que actualizarChampi (gravedad, moverX, si r.vx===0 && cGrav.vx!==0 invertir vx a -cGrav.vx, luego const {cuerpo}=moverY(r,mapa)) y al final, si cuerpo.enSuelo es true, devolver {...cuerpo, vy:-5}; si no, devolver cuerpo. Nada más en el archivo: sin bloques markdown, sin tests, sin otros módulos.",
+    "files": [
+     "src/champi.js",
+     "src/estrella.js",
+     "src/colision-y.js"
+    ],
+    "after": []
+   },
+   {
+    "id": "po",
+    "kind": "write",
+    "path": "src/poderes.js",
+    "title": "poderes",
+    "instructions": "Crea src/poderes.js (ES module, castellano, funciones puras que NO modifican el jugador): export function darEstrella(jugador){return {...jugador, estrella:600};} export function conEstrella(jugador){return (jugador.estrella||0)>0;} export function bajarEstrella(jugador){return {...jugador, estrella: Math.max(0,(jugador.estrella||0)-1)};}",
+    "after": []
+   },
+   {
+    "id": "t1",
+    "kind": "write",
+    "path": "tests/efectos.test.mjs",
+    "title": "test efectos",
+    "instructions": "Crea tests/efectos.test.mjs con node:test y node:assert/strict. Importa de ../src/efectos.js y ../src/flotantes.js. Casos: crearMonedaSalto(2,5) deepEqual {tipo:'moneda_salto',x:32,y:64,vy:-6,vida:30}; actualizarEfecto({y:64,vy:-6,vida:30}) deepEqual {y:58,vy:-5.5,vida:29} y no modifica el original; vivos([{vida:1},{vida:0},{vida:-5}]) longitud 1; crearFlotante(10,20,'100') deepEqual {x:10,y:20,texto:'100',vida:45}; actualizarFlotante({x:10,y:20,texto:'100',vida:45}) -> y 19, vida 44.",
+    "after": [
+     "ef",
+     "fl"
+    ]
+   },
+   {
+    "id": "t2",
+    "kind": "write",
+    "path": "tests/estrella-poderes.test.mjs",
+    "title": "test estrella",
+    "instructions": "Crea tests/estrella-poderes.test.mjs con node:test y node:assert/strict (test(), NO describe/it). Importa crearMapa de ../src/mapa.js, crearEstrella/actualizarEstrella de ../src/estrella.js y darEstrella/conEstrella/bajarEstrella de ../src/poderes.js. Casos: crearEstrella(3,5) deepEqual {tipo:'estrella',x:48,y:64,ancho:16,alto:16,vx:1.5,vy:-5,enSuelo:false,vivo:true}. actualizarEstrella con mapa crearMapa(['....','....','####']) (fila 2 suelo, TILE 16) y estrella {tipo:'estrella',x:16,y:16,ancho:16,alto:16,vx:1.5,vy:0,enSuelo:true,vivo:true}: resultado vy === -5 (botando) — comprueba antes leyendo src/colision-y.js que con esos datos toca suelo; si no, ajusta y para que lo toque (y:31 con vy 2). Choque con muro: mapa crearMapa(['..#','..#','###']) estrella x:16,y:16,vx:1.5 -> resultado vx -1.5. darEstrella({estrella:0}).estrella===600; conEstrella({estrella:1}) true, conEstrella({}) false; bajarEstrella({estrella:600}).estrella===599; bajarEstrella({estrella:0}).estrella===0; bajarEstrella({}).estrella===0; el objeto original no cambia (deepEqual tras llamar).",
+    "files": [
+     "src/mapa.js",
+     "src/colision-y.js"
+    ],
+    "after": [
+     "es",
+     "po"
+    ]
+   }
+  ]
+ }
+]

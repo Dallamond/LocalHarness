@@ -9,8 +9,8 @@ import unittest
 from pathlib import Path
 
 from localharness.boss import SYSTEM_REVIEW, SYSTEM_SELECT
-from localharness.cerebro import (SYSTEM_DIAG, Cerebro, api_map, exports_of, first_failure, fix_duplicate_exports,
-                                  fix_duplicate_functions, fix_imports, in_order)
+from localharness.cerebro import (DEBT, PREV_MARK, SYSTEM_DIAG, Cerebro, api_map, exports_of, first_failure, fix_duplicate_exports,
+                                  fix_duplicate_functions, fix_imports, fix_missing_imports, in_order)
 from localharness.mcp_local import SYSTEM_PLAN, SYSTEM_WRITE, Server, ToolError
 
 NODE = shutil.which("node")
@@ -79,6 +79,14 @@ def repo() -> Path:
 
 
 class PiezasTests(unittest.TestCase):
+    def test_tests_estilo_jest(self):
+        from localharness.cerebro import JEST_CALL, imported_names
+        ok = ("import { test, describe } from 'node:test';\nimport assert from 'node:assert/strict';\n"
+              "describe('a', () => {\n  test('b', () => {});\n});\n")
+        jest = "import { crearMapa } from '../src/mapa.js';\ndescribe('a', () => {\n  test('b', () => {});\n});\n"
+        self.assertEqual({m.group(1) for m in JEST_CALL.finditer(ok)} - imported_names(ok), set())
+        self.assertEqual({m.group(1) for m in JEST_CALL.finditer(jest)} - imported_names(jest), {"describe", "test"})
+
     def test_exports_y_mapa(self):
         self.assertEqual(exports_of("export function a(x, y) {}\nexport const B = 1;\nexport { c, d as e };\n"),
                          {"a": "x, y", "B": "", "c": "", "e": ""})
@@ -128,6 +136,37 @@ class PiezasTests(unittest.TestCase):
         # se usa y nadie lo exporta: no se toca
         text = "import { nada } from './mapa.js';\nnada();\n"
         self.assertEqual(fix_imports(root, "src/a.js", text, exported), (text, []))
+
+    def test_secciones_citadas_se_pegan_a_la_tarea(self):
+        root = repo()
+        (root / "CONTRATO.md").write_text("# Contrato\n\nIntro.\n\n## 1. Mapa\n\n- src/mapa.js exporta TILE = 16.\n\n"
+                                          "## 2. Física\n\n- src/fisica.js exporta GRAVEDAD = 0.5.\n\n"
+                                          "## 3. Cámara\n\n- src/camara.js exporta camaraX.\n", encoding="utf-8")
+        c = Cerebro.__new__(Cerebro)
+        c.root = root
+        task = "Hito 1. Implementa las secciones 1 a 2 del contrato con tus tests."
+        out = c.with_sections(task)
+        self.assertIn("src/mapa.js exporta TILE = 16", out)
+        self.assertIn("GRAVEDAD = 0.5", out)
+        self.assertNotIn("camaraX", out)
+        self.assertEqual(c.task_paths(out)[-2:], ["src/mapa.js", "src/fisica.js"])
+        self.assertEqual(c.with_sections(out), out)  # el reintento no lo pega dos veces
+        self.assertEqual(c.with_sections("Relee el contrato sección por sección"),
+                         "Relee el contrato sección por sección")
+
+    def test_import_que_falta_en_un_test(self):
+        root = repo()
+        exported = {"src/dinero.js": {"aCentimos": ""}, "src/fechas.js": {"sumarMeses": "", "nombreMes": ""}}
+        # el tests/fechas.test.mjs del 10/10: usa las funciones sin importarlas
+        text = ('import { test } from "node:test";\nimport assert from "node:assert/strict";\n\n'
+                'test("x", () => { assert.strictEqual(sumarMeses("2026-11", 2), "2027-01"); nombreMes("2026-01"); });\n')
+        new, notes = fix_missing_imports(root, "tests/fechas.test.mjs", text, exported)
+        self.assertIn("import { sumarMeses, nombreMes } from '../src/fechas.js';", new)
+        self.assertTrue(new.index("node:assert") < new.index("../src/fechas.js") < new.index("test(\"x\""))
+        self.assertIn("faltaba importar", notes[0])
+        # lo que ya está importado, declarado o no exporta nadie: no se toca
+        text = "import { sumarMeses } from '../src/fechas.js';\nfunction nombreMes() {}\nsumarMeses(); nombreMes(); otra();\n"
+        self.assertEqual(fix_missing_imports(root, "tests/a.test.mjs", text, exported), (text, []))
 
     def test_funcion_declarada_dos_veces(self):
         text = ("function formatear(c) {\n  const s = '}';\n  return s + c;\n}\n\nexport function aCentimos(v) {"
@@ -188,13 +227,44 @@ class PensamientoTests(unittest.TestCase):
 
 @unittest.skipUnless(NODE, "hace falta node")
 class VueltaCompletaTests(unittest.TestCase):
-    def run_cerebro(self, fake: Fake) -> tuple[Cerebro, str, Path]:
+    def run_cerebro(self, fake: Fake, recetas: str | None = None, task: str = TASK) -> tuple[Cerebro, str, Path]:
         root = repo()
         env = {"LH_ROOT": str(root), "LH_LOG": str(root.parent / f"{root.name}.jsonl"),
                "LH_LOCAL_SERVERS": json.dumps([{"id": "principal", "url": "http://x", "role": "fuerte"},
                                                {"id": "rapido", "url": "http://y", "role": "rapido"}])}
-        c = Cerebro(Server(env, transport=fake), check="npm test")
-        return c, c.run(TASK), root
+        c = Cerebro(Server(env, transport=fake), check="npm test", recetas=recetas)
+        return c, c.run(task), root
+
+    def test_intento_anterior_va_al_depurador_y_no_a_los_obreros(self):
+        fake = Fake({"src/dinero.js": [BUGGY, GOOD], "tests/dinero.test.mjs": [TEST]},
+                    diag=[{"archivo": "src/dinero.js", "culpable": "codigo", "causa": "por 10", "cambio": "por 100"}])
+        task = TASK + "\n\n" + PREV_MARK + " (no salió)\nResultado: descartado (tests).\n- Arreglo 1: QUEMADO"
+        c, report, root = self.run_cerebro(fake, task=task)
+        writes = [b["messages"][1]["content"] for b in fake.bodies if "ARCHIVO A ESCRIBIR" in b["messages"][1]["content"]]
+        self.assertTrue(writes and not any("QUEMADO" in w for w in writes))
+        diag_users = [b["messages"][1]["content"] for b in fake.bodies
+                      if b["messages"][0]["content"].startswith(SYSTEM_DIAG[:40])]
+        self.assertIn("INTENTO ANTERIOR DE ESTE PARCHE", diag_users[0])
+        self.assertIn("QUEMADO", diag_users[0])
+
+    def test_receta_de_claude_sustituye_al_plan(self):
+        """Con `recetas`, el plan principal es el de Claude tal cual: sin planificar, sin elegir archivos y sin que
+        shape_plan añada tareas ni tests; el resto (verificar, revisión) sigue igual."""
+        d = Path(tempfile.mkdtemp())
+        (d / "otra.json").write_text(json.dumps([{"n": 1, "texto": "Otra cosa.", "blocks": []}]), encoding="utf-8")
+        (d / "esta.json").write_text(json.dumps([{"n": 1, "texto": "Dinero. src/dinero.js exporta", "blocks": [
+            {"id": "a", "kind": "write", "path": "src/dinero.js", "after": [], "instructions": "receta dinero"},
+            {"id": "t", "kind": "write", "path": "tests/dinero.test.mjs", "after": ["a"], "files": ["src/dinero.js"],
+             "instructions": "receta test"}]}]), encoding="utf-8")
+        fake = Fake({"src/dinero.js": [GOOD], "tests/dinero.test.mjs": [TEST]}, diag=[])
+        c, report, root = self.run_cerebro(fake, recetas=str(d))
+        self.assertNotIn("plan", fake.order)
+        self.assertEqual(fake.order, ["write src/dinero.js", "write tests/dinero.test.mjs", "review"])
+        code = next(b for b in fake.bodies if b["messages"][1]["content"].startswith("ARCHIVO A ESCRIBIR: src/"))
+        self.assertIn("receta dinero", code["messages"][1]["content"])
+        self.assertNotIn("TAREA", code["messages"][1]["content"])
+        self.assertIn("la receta de Claude (2 bloques", report)
+        self.assertIn("`npm test` pasa", report)
 
     def test_mecanico_diagnostico_y_verde(self):
         fake = Fake({"src/dinero.js": [BUGGY, GOOD], "tests/dinero.test.mjs": [TEST]},
@@ -255,16 +325,154 @@ class VueltaCompletaTests(unittest.TestCase):
                          ["write src/dinero.js", "write tests/dinero.test.mjs"])
 
     def test_en_rojo_sube_la_escalera_hasta_reescribir(self):
-        bad = GOOD.replace("* 100)", "* 7)")
-        fake = Fake({"src/dinero.js": [bad, bad, bad, GOOD], "tests/dinero.test.mjs": [TEST]},
+        bad = [GOOD.replace("* 100)", f"* {n})") for n in (7, 8, 9)]  # cada ronda cambia algo, pero mal
+        fake = Fake({"src/dinero.js": [*bad, GOOD], "tests/dinero.test.mjs": [TEST]},
                     diag=[{"archivo": "src/dinero.js", "culpable": "codigo", "causa": "c1", "cambio": "x"},
                           {"archivo": "src/dinero.js", "culpable": "codigo", "causa": "c2", "cambio": "y"}])
         c, report, _ = self.run_cerebro(fake)
-        self.assertIn("Arreglo 3 (reescritura entera): src/dinero.js", report)
+        self.assertIn("Arreglo 3 (reescritura entera, desde cero): src/dinero.js", report)
         self.assertIn("`npm test` pasa", report)
         diag_users = [b["messages"][1]["content"] for b in fake.bodies
                       if b["messages"][0]["content"].startswith(SYSTEM_DIAG[:40])]
         self.assertIn("YA PROBADO", diag_users[1])  # el segundo diagnóstico sabe qué no funcionó
+        rewrite = [b["messages"][1]["content"] for b in fake.bodies
+                   if "ARCHIVO A ESCRIBIR: src/dinero.js" in b["messages"][1]["content"]][-1]
+        self.assertNotIn("CONTENIDO ACTUAL", rewrite)  # desde cero: sin la versión mala delante
+
+    def test_rescate_parcial_integra_lo_que_funciona(self):
+        # formatear sigue mal tras toda la escalera: 1 de 3 tests nuevos falla → ese pasa a TODO y se integra
+        test3 = TEST + ("\ntest('uno', () => {\n  assert.equal(aCentimos(1), 100);\n});\n"
+                        "\ntest('formatea', async () => {\n  const { formatear } = await import('../src/dinero.js');\n"
+                        "  assert.equal(formatear(5), '0,05 €');\n});\n")
+        diag = {"archivo": "src/dinero.js", "culpable": "codigo", "causa": "formatear", "cambio": "x"}
+        fake = Fake({"src/dinero.js": [GOOD] * 6, "tests/dinero.test.mjs": [test3]}, diag=[diag] * 3)
+        c, report, root = self.run_cerebro(fake)
+        self.assertTrue(report.startswith(DEBT), report[:300])
+        self.assertFalse(c.rejected)
+        text = (root / "tests" / "dinero.test.mjs").read_text(encoding="utf-8")
+        self.assertIn("test.todo('formatea'", text)
+        self.assertIn("test('uno'", text)  # lo que pasa no se toca
+        self.assertIn("tests/dinero.test.mjs: formatea → TODO", report)
+
+    def test_rescate_dentro_de_describe(self):
+        # el 11/10 los tests venían en describe(…): la suite sale como fallo propio y el rescate no se hacía
+        test3 = ("import { describe, it } from 'node:test';\nimport assert from 'node:assert/strict';\n"
+                 "import { aCentimos, formatear } from '../src/dinero.js';\n\ndescribe('DINERO', () => {\n"
+                 "  it('doce y medio', () => {\n    assert.equal(aCentimos(12.5), 1250);\n  });\n"
+                 "  it('uno', () => {\n    assert.equal(aCentimos(1), 100);\n  });\n"
+                 "  it('formatea', () => {\n    assert.equal(formatear(5), '0,05 €');\n  });\n});\n")
+        diag = {"archivo": "src/dinero.js", "culpable": "codigo", "causa": "formatear", "cambio": "x"}
+        fake = Fake({"src/dinero.js": [GOOD] * 6, "tests/dinero.test.mjs": [test3]}, diag=[diag] * 4)
+        c, report, root = self.run_cerebro(fake)
+        self.assertTrue(report.startswith(DEBT), report[:300])
+        text = (root / "tests" / "dinero.test.mjs").read_text(encoding="utf-8")
+        self.assertIn("it.todo('formatea'", text)
+        self.assertIn("describe('DINERO'", text)
+
+    def test_arreglo_que_rompe_lo_que_pasaba_se_deshace_y_se_mira_el_test(self):
+        # el código está bien y el test espera un valor mal contado; «arreglar» el código rompe el otro test
+        wrong = TEST + "\ntest('uno', () => {\n  assert.equal(aCentimos(1), 99);\n});\n"
+        right = TEST + "\ntest('uno', () => {\n  assert.equal(aCentimos(1), 100);\n});\n"
+        broken = GOOD.replace("Math.round(valor * 100)", "Math.round(valor * 99)")
+        fake = Fake({"src/dinero.js": [GOOD, broken], "tests/dinero.test.mjs": [wrong, right]},
+                    diag=[{"archivo": "src/dinero.js", "culpable": "codigo", "causa": "da 100", "cambio": "por 99"},
+                          {"archivo": "tests/dinero.test.mjs", "culpable": "test", "causa": "1 € son 100",
+                           "cambio": "en 'uno' espera 100"}])
+        c, report, root = self.run_cerebro(fake)
+        self.assertIn("deshecho, rompía 1 test(s) que pasaban (doce y medio)", report)
+        self.assertIn("`npm test` pasa", report)
+        self.assertIn("valor * 100", (root / "src" / "dinero.js").read_text(encoding="utf-8"))
+        diag_users = [b["messages"][1]["content"] for b in fake.bodies
+                      if b["messages"][0]["content"].startswith(SYSTEM_DIAG[:40])]
+        self.assertNotIn("Mira PRIMERO el test", diag_users[0])
+        self.assertIn("Mira PRIMERO el test", diag_users[1])
+        self.assertIn("DESHECHO", diag_users[1])
+
+    def test_sin_rescate_si_falla_mas_de_la_mitad(self):
+        diag = {"archivo": "src/dinero.js", "culpable": "codigo", "causa": "c", "cambio": "x"}
+        fake = Fake({"src/dinero.js": [BUGGY] * 6, "tests/dinero.test.mjs": [TEST]}, diag=[diag] * 4)
+        c, report, root = self.run_cerebro(fake)
+        self.assertFalse(report.startswith(DEBT))
+        self.assertIn("Rescate parcial: no", report)
+        self.assertNotIn("todo", (root / "tests" / "dinero.test.mjs").read_text(encoding="utf-8"))
+
+    def test_ronda_que_no_cambia_nada_pasa_a_reescribir(self):
+        bad = GOOD.replace("* 100)", "* 7)")
+        fake = Fake({"src/dinero.js": [bad, bad, GOOD], "tests/dinero.test.mjs": [TEST]},
+                    diag=[{"archivo": "src/dinero.js", "culpable": "codigo", "causa": "c1", "cambio": "x"}])
+        c, report, _ = self.run_cerebro(fake)
+        self.assertIn("Arreglo 1: no cambió nada; el siguiente reescribe", report)
+        self.assertIn("Arreglo 2 (reescritura entera, desde cero): src/dinero.js", report)
+        self.assertIn("`npm test` pasa", report)
+
+    def test_los_bloques_de_codigo_llevan_la_tarea(self):
+        fake = Fake({"src/dinero.js": [GOOD], "tests/dinero.test.mjs": [TEST]}, diag=[])
+        self.run_cerebro(fake)
+        code = [b["messages"][1]["content"] for b in fake.bodies
+                if b["messages"][1]["content"].startswith("ARCHIVO A ESCRIBIR: src/dinero.js")]
+        self.assertTrue(code)
+        self.assertIn("TAREA (la especificación", code[0])
+
+    def contrato(self) -> Cerebro:
+        root = repo()
+        shutil.copy(Path(__file__).parents[1] / "banco" / "pruebas" / "supersalto" / "semilla-libre" / "CONTRATO.md",
+                    root / "CONTRATO.md")
+        c = Cerebro.__new__(Cerebro)
+        c.root, c.notes = root, []
+        return c
+
+    def test_cada_bloque_recibe_su_trozo_del_contrato(self):
+        c = self.contrato()
+        task = c.with_sections("Hito 2 · Jugador. Implementa las secciones 5 a 7 del contrato con tus propios tests.")
+        spec = c.spec_for(["src/jugador.js"], task)
+        self.assertIn("crearJugador(inicio) = {x: inicio.x + 2", spec)
+        self.assertIn("LO QUE USA DE OTROS MÓDULOS", spec)
+        self.assertIn("velocidadHorizontal(vx, entrada)", spec)  # la firma del módulo que usa
+        self.assertNotIn("golpearBloque", spec)  # lo de otro archivo de la misma sección, no
+        self.assertNotIn("camaraX", spec)
+        self.assertLess(len(spec), 6000)
+        # la introducción de la sección («Un cuerpo es …») va con los módulos de esa sección
+        hito1 = c.with_sections("Hito 1 · Motor. Implementa las secciones 1 a 4 del contrato.")
+        self.assertIn("Un cuerpo es {x, y, ancho, alto, vx, vy, enSuelo}", c.spec_for(["src/colision-x.js"], hito1))
+        # un «Edita» de este hito lleva también el párrafo base del archivo, para no cambiar su firma
+        hito4 = c.with_sections("Hito 4 · Juego jugable. Implementa las secciones 11 a 14 del contrato.")
+        paso = c.spec_for(["src/paso.js"], hito4)
+        self.assertIn("src/paso.js exporta paso(partida, entrada)", paso)
+        self.assertIn("Edita src/paso.js (sin cambiar la firma de paso)", paso)
+        self.assertEqual(c.spec_for(["src/otro.js"], hito4), "")
+        self.assertEqual(c.spec_for(["src/jugador.js"], TASK), "")  # sin secciones citadas, nada
+
+    def test_el_plan_se_completa_con_los_archivos_del_contrato(self):
+        c = self.contrato()
+        task = c.with_sections("Hito 1 · Motor. Implementa las secciones 1 a 4 del contrato.")
+        extra = c.contract_blocks(task, [{"id": "a", "kind": "write", "path": "src/mapa.js"}])
+        self.assertEqual([b["path"] for b in extra], ["src/rect.js", "src/fisica.js", "src/camara.js", "src/nivel.js",
+                                                      "src/niveles.js", "src/colision-x.js", "src/colision-y.js"])
+        self.assertIn("El plan no traía src/rect.js", c.notes[-1])
+
+    def test_modulo_importado_que_no_existe(self):
+        c = self.contrato()
+        out = (f"- src/partida.js: no carga como módulo: Cannot find module '{c.root / 'src' / 'nivel.js'}' imported "
+               f"from {c.root / 'src' / 'partida.js'}\n- Cannot find module 'D:/otro/sitio.js'")
+        self.assertEqual(c.missing_modules(out, set()), ["src/nivel.js"])
+        self.assertEqual(c.missing_modules(out, {"src/nivel.js"}), [])
+
+    @unittest.skipUnless(NODE, "hace falta node")
+    def test_guardia_de_salida_pegada(self):
+        c = self.contrato()
+        (c.root / "src").mkdir()
+        (c.root / "src" / "efectos.js").write_text(
+            "export const A = 1;\n```\nimport { test } from 'node:test';\n", encoding="utf-8")
+        (c.root / "src" / "bien.js").write_text("export const B = '```no es una valla';\n", encoding="utf-8")
+        problems = c.gates()
+        self.assertTrue(any(p.startswith("src/efectos.js: lleva salida del modelo pegada") for p in problems))
+        self.assertFalse(any(p.startswith("src/bien.js") for p in problems))
+
+    def test_negativa_del_modelo(self):
+        from localharness.mcp_local import is_refusal
+        self.assertTrue(is_refusal("I’m sorry, but I can’t provide the requested code."))
+        self.assertTrue(is_refusal("Lo siento, no puedo ayudar con eso."))
+        self.assertFalse(is_refusal("export function sorry() {}\n"))
 
 
 if __name__ == "__main__":

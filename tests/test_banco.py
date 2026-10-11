@@ -146,6 +146,26 @@ class BancoTest(unittest.TestCase):
         self.assertEqual(previo, {"servers": llama["servers"], "autostart_on_task": True})
 
     @unittest.skipUnless(NODE, "hace falta node para el examen")
+    def test_relevo_cada_parche_sale_del_estado_del_otro(self):
+        api = FakeApi([("src/a.js", "export const x = 1;\n"), ("src/b.js", "export const y = 3;\n")])
+        p = banco.cargar_prueba("mini", self.banco)
+        datos, proyectos = self.tmp / "datos", self.tmp / "proyectos"
+        banco.Ejecucion.nueva(api, p, "guiada", banco.cargar_contendiente("pareja", self.banco), datos=datos,
+                              proyectos=proyectos, ahora=datetime(2026, 10, 9, 20, 0)).correr(
+            api, say=lambda _: None, sleep=lambda _: None)
+        cont = {**banco.cargar_contendiente("pareja", self.banco), "nombre": "relevo",
+                "relevo": "mini-guiada/pareja-20261009-2000"}
+        # el del relevo hace mal el parche 1 (no escribe a.js) y bien el 2: el 2 sale del a.js del otro
+        api2 = FakeApi([("src/z.js", "export const z = 0;\n"), ("src/b.js", "export const y = 2;\n")])
+        d = banco.Ejecucion.nueva(api2, p, "guiada", cont, datos=datos, proyectos=proyectos,
+                                  ahora=datetime(2026, 10, 9, 21, 0)).correr(api2, say=lambda _: None,
+                                                                             sleep=lambda _: None)
+        self.assertEqual([x["examen"]["nota"] for x in d["parches"]], [0, 100])
+        self.assertEqual([x["examen_relevo"]["nota"] for x in d["parches"]], [50, 50])
+        self.assertEqual(d["parches"][1]["archivos"], [{"estado": "M", "ruta": "CHANGELOG.md"},
+                                                       {"estado": "A", "ruta": "src/b.js"}])
+
+    @unittest.skipUnless(NODE, "hace falta node para el examen")
     def test_ejecucion_completa_con_curva_de_nota(self):
         api = FakeApi([("src/a.js", "export const x = 1;\n"), ("src/b.js", "export const y = 3;\n")])
         p = banco.cargar_prueba("mini", self.banco)

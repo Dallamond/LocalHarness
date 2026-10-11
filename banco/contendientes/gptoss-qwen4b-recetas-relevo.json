@@ -1,0 +1,9 @@
+{
+  "descripcion": "Medición hito por hito del bucle local (11/10): Jefe local 2 con la receta de Claude, mismos obreros (gpt-oss 3060 + Qwen 4B 1060), y cada hito sale del repo que tenía Claude antes de él (relevo), así un hito caído no arrastra a los demás. Un reintento por hito con lo que falló delante. Solo supersalto libre.",
+  "agente": "Jefe local 2 (recetas de Claude)",
+  "modelos": {"principal": "gpt-oss-20b-UD-Q4_K_XL", "rapido": "Qwen_Qwen3.5-4B-Q4_K_M"},
+  "pensamiento": {"principal": "normal", "rapido": "apagado"},
+  "relevo": "supersalto-libre/claude-dirige-20261010-1907",
+  "linea": 1,
+  "horas": 12, "minutos_tarea": 45, "presupuesto": 1
+}

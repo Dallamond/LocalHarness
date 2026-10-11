@@ -23,14 +23,16 @@ revisar. Lo que cambia:
    ser lento. Si un modelo «se queda pensando», se repite UNA vez con el razonamiento apagado.
 """
 
+import copy
 import json
 import os
 import re
+import subprocess
 import time
 from pathlib import Path
 
 from localharness.boss import SKIP_DIRS, Boss
-from localharness.mcp_local import ToolError, check_failed, is_test_path, strip_fence
+from localharness.mcp_local import MAX_BLOCKS, ToolError, check_failed, is_test_path, strip_fence
 
 # papel → {tipo: a qué clase de servidor va (route de mcp_local), servidor: id concreto (opcional), effort:
 # razonamiento de gpt-oss, pensar: apagado|normal|profundo (manda sobre el del servidor), max_tokens}
@@ -57,6 +59,24 @@ DECL = re.compile(r"^[ \t]*(?:export[ \t]+)?(?:async[ \t]+)?(?:function[ \t]*\*?
                   r"class[ \t]+([A-Za-z_$][\w$]*)|(?:const|let|var)[ \t]+([A-Za-z_$][\w$]*))", re.M)
 FUNC_DECL = re.compile(r"^[ \t]*(export[ \t]+)?(?:async[ \t]+)?function[ \t]*\*?[ \t]*([A-Za-z_$][\w$]*)[ \t]*\(",
                        re.M)
+SPEC_PATH = r"(?:[\w-]+/)*[\w-]+(?:\.[\w-]+)*\.(?:mjs|cjs|js|ts|py|html|css)"
+LEFTOVER = re.compile(r"^[ \t]*```|from[ \t]*['\"]node:(?:test|assert)", re.M)  # salida del modelo pegada en código
+MISSING_MODULE = re.compile(r"Cannot find module '([^']+)'")
+JEST_CALL = re.compile(r"^[ \t]*(describe|test|it|expect|beforeEach|afterEach)\s*\(", re.M)
+
+
+def imported_names(text: str) -> set[str]:
+    """Los nombres que un módulo importa (con nombre o por defecto) o declara al nivel superior."""
+    names: set[str] = set()
+    for m in re.finditer(r"import\s*(\w+)?\s*,?\s*(?:\{([^}]*)\})?\s*from", text):
+        if m.group(1):
+            names.add(m.group(1))
+        for spec in (m.group(2) or "").split(","):
+            if spec.strip():
+                names.add(spec.split(" as ")[-1].strip())
+    names |= set(re.findall(r"^(?:const|let|var|function)\s+(\w+)", text, re.M))
+    return names
+MAX_SPEC_DEPS = 3000    # caracteres de «lo que usa de otros módulos» por bloque
 IMPORT_NAMED = re.compile(r"^([ \t]*)import[ \t]*\{([^}]*)\}[ \t]*from[ \t]*(['\"])(\.{1,2}/[^'\"]+)\3[ \t]*;?",
                           re.M)
 
@@ -71,11 +91,22 @@ SYSTEM_DIAG = (
     "comprobación que FALLA y los archivos implicados con números de línea. Encuentra la causa del PRIMER fallo y "
     "di el cambio exacto que lo arregla. Los valores y casos de la TAREA mandan: si un test comprueba lo que dice la "
     "tarea y falla, el culpable es el CÓDIGO; el test solo es culpable si importa mal, tiene un error de sintaxis o "
-    "espera algo distinto de lo que dice la tarea. `archivo`: la ruta del archivo que hay que cambiar (uno de los "
-    "que te paso). `causa`: una frase. `cambio`: instrucción exacta y corta para otro modelo que verá ese archivo: "
-    "qué función o línea, qué hay ahora y qué tiene que haber (p. ej. «en diasDelMes los casos 3, 5, 8 y 10 "
-    "devuelven 30 y el default 31»). Nunca cambies el valor esperado de un test que copia la tarea ni metas casos "
+    "espera algo distinto de lo que dice la tarea. Antes de decidir, CALCULA con la fórmula de la tarea el valor que "
+    "debería salir en ese caso: si el test espera otro número, prueba algo que la tarea no pide (un error, un archivo, "
+    "un mensaje) o usa datos que no existen (una fila 4 en un mapa de 3), el culpable es el TEST; si el código da otro "
+    "número, el CÓDIGO. `archivo`: la ruta del archivo que hay que cambiar (uno de los "
+    "que te paso). `causa`: una frase. `cambio`: instrucción exacta y corta para otro modelo que verá ese archivo, "
+    "con el número de línea, lo que hay y lo que tiene que haber (p. ej. «línea 27: cambia "
+    "`assert.deepEqual(fila, ['.', '.'])` por `assert.equal(fila, '..')`» o «en diasDelMes los casos 3, 5, 8 y 10 "
+    "devuelven 30 y el default 31»). Si el culpable es un test, quita o corrige SOLO ese caso. Nunca cambies el valor esperado de un test que copia la tarea ni metas casos "
     "especiales o números fijos. No repitas nada de YA PROBADO: no funcionó. Responde SOLO con el JSON.")
+
+
+TEST_FIRST = (
+    "\n\nOJO: cambiar el CÓDIGO ya se probó y no sirvió (o rompía otros tests que pasaban). Lo más probable es que el "
+    "TEST espere un valor mal calculado o algo que la TAREA no pide. Mira PRIMERO el test que falla: si el valor que "
+    "da el código encaja con la regla de la TAREA (y con los otros tests que pasan), el culpable es el TEST; corrige "
+    "ese valor esperado o quita ese caso.")
 
 
 # --- módulos JS (sin modelo)
@@ -205,6 +236,38 @@ def fix_imports(root: Path, rel: str, text: str, exported: dict[str, dict[str, s
     return IMPORT_NAMED.sub(repl, text), notes
 
 
+IMPORT_ANY = re.compile(r"^[ \t]*import[ \t]+(?:([A-Za-z_$][\w$]*)[ \t]*,?[ \t]*)?(?:\{([^}]*)\}|\*[ \t]+as[ \t]+"
+                        r"([A-Za-z_$][\w$]*))?[ \t]*(?:from[ \t]*)?['\"][^'\"]+['\"][ \t]*;?", re.M)
+CALL = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*)[ \t]*\(")
+
+
+def fix_missing_imports(root: Path, rel: str, text: str, exported: dict[str, dict[str, str]]) -> tuple[str, list[str]]:
+    """Funciones que el archivo llama sin declararlas ni importarlas y que exporta UN solo módulo del repo: se importan
+    de él. El 10/10 el 4B escribió tests/fechas.test.mjs sin `import … from '../src/fechas.js'` y el depurador culpó
+    al código en las 8 rondas (`ReferenceError: sumarMeses is not defined`)."""
+    have = {m.group(i) for i in (1, 2, 3) for m in DECL.finditer(text) if m.group(i)}
+    for m in IMPORT_ANY.finditer(text):
+        have |= {x for x in (m.group(1), m.group(3)) if x}
+        have |= {s.split(" as ")[-1].strip() for s in (m.group(2) or "").split(",") if s.strip()}
+    # parámetros y variables locales no se distinguen bien con regex: solo cuenta lo que exporta otro módulo
+    called = list(dict.fromkeys(m.group(1) for m in CALL.finditer(text)))
+    wanted: dict[str, list[str]] = {}
+    for name in called:
+        if name in have:
+            continue
+        owners = [t for t, ex in exported.items() if name in ex and t != rel]
+        if len(owners) == 1:
+            wanted.setdefault(owners[0], []).append(name)
+    if not wanted:
+        return text, []
+    lines = [f"import {{ {', '.join(names)} }} from '{rel_import(rel, owner)}';" for owner, names in wanted.items()]
+    imports = list(IMPORT_ANY.finditer(text))
+    at = imports[-1].end() if imports else 0
+    sep = "\n" if at else ""
+    new = text[:at] + sep + "\n".join(lines) + ("\n" if not at else "") + text[at:]
+    return new, [f"{rel}: faltaba importar {', '.join(n)} de {o}" for o, n in wanted.items()]
+
+
 def missing_module(m: re.Match, rel: str, target: str, text: str, exported: dict[str, dict[str, str]],
                    notes: list[str]) -> str:
     """Un import de un archivo que no existe (el `mapa.js` que copiaban de un ejemplo): cada nombre se quita si el
@@ -301,6 +364,43 @@ def first_failure(output: str) -> str:
     return "\n\n".join(parts).strip()
 
 
+def failing_tests(output: str) -> list[str]:
+    """Los nombres de los tests que fallan (líneas `✖ …` de node:test, sin el resumen ni repetidos)."""
+    names = [m.group(1).strip() for m in re.finditer(r"^\s*✖ (.+?)(?: \([\d.]+m?s\))?\s*$", output, re.M)]
+    return list(dict.fromkeys(n for n in names if n and not n.startswith("failing tests")))
+
+
+TEST_CALL = re.compile(r"\b(test|it)(\s*)\(")
+SUITE_CALL = re.compile(r"\b(describe|suite)\s*\(")
+PREV_MARK = "## INTENTO ANTERIOR"  # el autopiloto pega así lo que falló la vez anterior
+DEBT = "Integrado con deuda"  # primera línea del informe de un parche rescatado (el autopiloto lo apunta así)
+MAX_OWN_TESTS = 10      # tests propios que se añaden como mucho a un plan sin tests
+MAX_DEBT_SHARE = 0.5    # como mucho la mitad de los tests nuevos del parche pasan a TODO; si no, no se rescata
+
+
+def tap_failures(out: str, root: Path) -> list[tuple[str, str, int]] | None:
+    """(nombre, ruta relativa, línea) de cada test que falla en la salida TAP de `node --test`; un archivo que ni
+    carga sale con su propia ruta como nombre y línea 1. None si algo no se entiende (no se rescata a ciegas)."""
+    fails, name = [], None
+    for line in out.splitlines():
+        m = re.match(r"\s*not ok \d+ - (.*)$", line)
+        if m:
+            name = m.group(1).strip()
+            continue
+        m = re.match(r"\s*location: '(.+):(\d+):\d+'$", line)
+        if m and name is not None:
+            path = Path(m.group(1).replace("\\\\", "\\"))
+            try:
+                rel = path.resolve().relative_to(root.resolve()).as_posix()
+            except ValueError:
+                return None
+            fails.append((name, rel, int(m.group(2))))
+            name = None
+        elif re.match(r"\s*ok \d+ - ", line):
+            name = None
+    return fails
+
+
 def in_order(blocks: list) -> list:
     """Los bloques en un orden en que cada `after` apunta a bloques anteriores (estable: a igualdad, como venían).
     Las dependencias de bloques que no están, o que cerrarían un ciclo, se quitan."""
@@ -323,6 +423,50 @@ def numbered(text: str) -> str:
     return "\n".join(f"{i:4} | {line}" for i, line in enumerate(text.splitlines(), 1))
 
 
+# --- la especificación troceada por archivo (sin modelo)
+def spec_items(text: str) -> list[dict]:
+    """Los párrafos de un contrato con su sección y los archivos de los que hablan: «- src/mapa.js exporta …» es de
+    src/mapa.js; «- Edita src/partida.js y src/paso.js (…)» de los dos; un párrafo sin viñeta es la introducción de
+    su sección (p. ej. «Un cuerpo es {x, y, …}»)."""
+    items, sec = [], ""
+    for part in re.split(r"\n[ \t]*\n", text):
+        p = part.strip()
+        if p.startswith("#"):
+            first, _, p = p.partition("\n")
+            sec = first.lstrip("#").strip() if re.match(r"#{2,3}\s*\d", first) else ""
+            p = p.strip()
+        if not p or not sec:
+            continue
+        if p.startswith("-"):
+            head = re.split(r"[(:]", p, maxsplit=1)[0]
+            found = re.findall(SPEC_PATH, head)
+            owners = found if p[1:].lstrip().startswith("Edita") else found[:1]
+            items.append({"sec": sec, "owners": owners, "text": p, "edit": p[1:].lstrip().startswith("Edita")})
+        else:
+            items.append({"sec": sec, "owners": [], "text": p, "edit": False})
+    return items
+
+
+def spec_excerpt(path: str, current: list[dict], whole: list[dict]) -> tuple[list[str], list[str]]:
+    """(lo que el contrato dice de `path`, lo que dice de los módulos que eso nombra). De `path`: su párrafo base
+    («exporta …», de todo el contrato) y lo que le pide la parte actual (los «Edita»), con la introducción de esas
+    secciones. De los demás: solo sus párrafos base, para importarlos con los nombres exactos."""
+    base = [i for i in whole if path in i["owners"] and not i["edit"]]
+    now = [i for i in current if path in i["owners"]]
+    own = list({id(i): i for i in [*base[:1], *now]}.values())
+    if not own:
+        return [], []
+    secs = {i["sec"] for i in now or own}
+    intro = [i["text"] for i in current + whole if not i["owners"] and i["sec"] in secs]
+    named = {p for text in [*intro, *(i["text"] for i in own)] for p in re.findall(SPEC_PATH, text) if p != path}
+    deps, size = [], 0
+    for i in whole:
+        if not i["edit"] and set(i["owners"]) & named and i["text"] not in deps and size < MAX_SPEC_DEPS:
+            deps.append(i["text"])
+            size += len(i["text"])
+    return list(dict.fromkeys([*intro, *(i["text"] for i in own)])), deps
+
+
 class Cerebro(Boss):
     RULE_LIKE = {"ENCARGO.md", "AGENTS.md", "CLAUDE.md", "README.md", "CHANGELOG.md", "package.json"}
     # el 10/10 el Qwen3.5-9B no respetó el formato BUSCAR/REEMPLAZAR y un arreglo quirúrgico «no encajó»; a ~45 tok/s
@@ -331,8 +475,17 @@ class Cerebro(Boss):
     CODE_SUFFIXES = (".js", ".mjs", ".cjs", ".ts", ".py", ".html", ".css", ".json")
 
     def __init__(self, server, check: str = "", say=lambda text: None, deadline: float | None = None,
-                 roles: dict | None = None):
+                 roles: dict | None = None, recetas: str | None = None):
         super().__init__(server, check=check, say=say, deadline=deadline)
+        # experimento del 11/10: los planes que Claude mandó a los obreros en el banco (banco/recetas/*.json); con
+        # ellos, el plan principal es el de Claude tal cual y el resto (arreglos, rescate, revisión) sigue local
+        # (un archivo o una carpeta de ellos: cada receta se elige por el texto del hito)
+        src = Path(recetas) if recetas else None
+        files = sorted(src.glob("*.json")) if src and src.is_dir() else [src] if src else []
+        self.recetas = [r for f in files for r in json.loads(f.read_text(encoding="utf-8"))]
+        self.receta: list | None = None
+        self._raw = False  # el plan que sale de _plan es la receta: shape_plan no lo toca
+        self._rest: list = []  # bloques de la receta que no caben en una llamada
         self.last_diag: str | None = None  # el último archivo que señaló el depurador
         self._main = False  # planificando el plan principal (no una ronda de arreglo)
         self._plan_fails = 0
@@ -389,15 +542,36 @@ class Cerebro(Boss):
                      spec: str | None = None) -> dict:
         self._main, self._plan_fails = label == "Plan" and scope is None, 0
         try:
-            return super().plan_and_run(task, files, rules, label, scope, spec)
+            res = super().plan_and_run(task, files, rules, label, scope, spec)
         finally:
             self._main = False
+        rest, self._rest = self._rest, []
+        if rest:  # una receta de más de MAX_BLOCKS: lo que no cupo, en una segunda llamada
+            ids = {b.get("id") for b in rest}
+            for b in rest:
+                b["after"] = [a for a in b.get("after") or [] if a in ids]
+            self.run_blocks(rest, f"{label} (resto)")
+            res["written"] += [b["path"] for b in rest if b.get("kind") in ("edit", "write") and b.get("path")]
+        return res
 
     def _plan(self, task: str, files: list[str], rules: str) -> tuple[list, dict]:
         """El plan del modelo; si en el plan principal falla dos veces (el 10/10 el Qwen3.5-9B entró en bucle dos
         veces y el parche 3 acabó «sin cambios»), un plan de reserva sacado de la tarea: un bloque por archivo."""
+        if self._main and self.receta:
+            blocks, self.receta = self.receta, None
+            blocks, self._rest = blocks[:MAX_BLOCKS], blocks[MAX_BLOCKS:]  # el 11/10 el hito 7 traía 22
+            self.notes.append(f"- Plan: la receta de Claude ({len(blocks)} bloques, banco/recetas)")
+            self.say(f"Plan: receta de Claude, {len(blocks)} bloques")
+            self._raw = True
+            return blocks, {"plan": [{k: b.get(k) for k in ("id", "kind", "path", "title", "after")} for b in blocks],
+                            "receta": True}
         try:
-            return super()._plan(task, files, rules)
+            blocks, stats = super()._plan(task, files, rules)
+            # un plan principal sin ningún bloque que escriba no hace el parche (el 10/10 los hitos 6 y 7 de
+            # Supersalto libre fueron 7 bloques «describe los cambios» y acabaron «sin cambios»)
+            if self._main and not any(b.get("kind") in ("write", "edit") for b in blocks):
+                raise ToolError("el plan no escribe ningún archivo (solo preguntas)")
+            return blocks, stats
         except ToolError as e:
             self._plan_fails += 1
             backup = self.skeleton(task) if self._main and self._plan_fails >= 2 else []
@@ -426,6 +600,44 @@ class Cerebro(Boss):
                                             + task[:400])})
         return blocks
 
+    def add_template(self, b: dict) -> None:
+        """Sin plantilla para los tests: con tests/proyecto.test.mjs de plantilla, el obrero copiaba sus casos y los
+        renombraba («el proyecto tiene rect y changelog» → exige un RECT.md que nadie pidió)."""
+        if not is_test_path(str(b.get("path") or "")):
+            super().add_template(b)
+
+    def own_tests(self, blocks: list) -> list[dict]:
+        """Un plan principal que escribe módulos JS sin ningún test (modalidad libre: «con tus propios tests», sin
+        rutas) se integraba con `npm test` en verde porque no había nada que probar (10/10, hitos 3, 4, 7 y 8 de
+        Supersalto libre). Se añade un tests/<módulo>.test.mjs por módulo nuevo, escrito después del código."""
+        if not (self.root / "package.json").is_file():
+            return []
+        # lo que ya prueba algún test del plan (por la ruta del test o porque sus instrucciones nombran el módulo)
+        planned = " ".join(f"{b.get('path')} {b.get('instructions') or ''}" for b in blocks
+                           if is_test_path(str(b.get("path") or "")))
+        suffix = ".test.mjs" if any((self.root / "tests").glob("*.test.mjs")) else ".test.js"
+        extra = []
+        for b in blocks:
+            path = str(b.get("path") or "")
+            if b.get("kind") not in ("edit", "write") or Path(path).suffix not in JS or is_test_path(path):
+                continue
+            if (self.root / path).is_file():  # los módulos que se amplían (paso.js, partida.js) integran mucho: un
+                continue                      # test propio ahí suele salir mal y tumbar el parche; solo los nuevos
+            stem = Path(path).name.split(".")[0]
+            if re.search(rf"(?<![\w-]){re.escape(stem)}(?![\w-])", planned):
+                continue
+            test = f"tests/{stem}{suffix}"
+            if (self.root / test).exists() or any(t["path"] == test for t in extra):
+                continue
+            extra.append({"id": f"own-test-{stem}", "kind": "write", "path": test, "after": [b.get("id")],
+                          "title": test, "instructions": "", "spec": True, "module": path})
+            if len(extra) == MAX_OWN_TESTS:
+                break
+        if extra:
+            self.notes.append("- Módulos nuevos sin test en el plan: se añaden " + ", ".join(t["path"] for t in extra)
+                              + " (desde la tarea, después del código)")
+        return extra
+
     def code_for_test(self, test: str, blocks: list) -> tuple[list[str], list[str]]:
         """(ids de los bloques de código del plan, rutas) que comprueba un test: el del mismo nombre
         (tests/dinero.test.mjs → src/dinero.js); si no hay, los módulos que nombran sus instrucciones; si no, todos."""
@@ -443,6 +655,9 @@ class Cerebro(Boss):
         return [str(b.get("id")) for b in chosen], paths
 
     def shape_plan(self, task: str, blocks: list, scope: set[str] | None = None) -> list:
+        if getattr(self, "_raw", False):  # la receta de Claude va tal cual, como la mandó él a execute_plan
+            self._raw = False
+            return blocks
         named = self.task_paths(task)
         named_tests = [p for p in named if is_test_path(p)]
         for b in blocks:  # un test fuera de su sitio (fechas.test.mjs en la raíz) vuelve a la ruta de la tarea
@@ -453,6 +668,9 @@ class Cerebro(Boss):
                     self.notes.append(f"- {path} → {same[0]} (la ruta que da la tarea)")
                     b["path"] = same[0]
         out = super().shape_plan(task, blocks, scope)
+        if scope is None and getattr(self, "_main", False):
+            out += self.contract_blocks(task, out)
+            out += self.own_tests(out)
         for b in out:  # reescribir entero lo que no sea enorme (execute_plan editaría por trozos desde 6.000)
             target = self.root / str(b.get("path") or "")
             if b.get("kind") == "write" and b.get("path") and target.is_file() \
@@ -461,17 +679,52 @@ class Cerebro(Boss):
         api = api_map(self.root)
         tests = [b for b in out if is_test_path(str(b.get("path") or ""))]
         rest = [b for b in out if b not in tests]
+        # a cada bloque de código, su especificación: el trozo literal del contrato si la tarea lo cita (como hacía
+        # Claude, 10/10: 97,1 %) y, si no, la tarea entera (el 10/10 los 59 bloques del plan del 9B llegaron con una
+        # frase, «nombres de meses en castellano», y el obrero inventó formatos que solo los tests conocían)
+        head = self.task_head(task)
+        for b in rest:
+            path = str(b.get("path") or "")
+            if b.get("kind") in ("edit", "write") and Path(path).suffix in self.CODE_SUFFIXES \
+                    and Path(path).name not in self.RULE_LIKE and "TAREA:" not in str(b.get("instructions") or ""):
+                spec = self.spec_for([path], task)
+                if spec and (self.root / path).is_file():
+                    spec += ("\n\nEl archivo YA EXISTE y hace cosas de partes anteriores del contrato: consérvalas "
+                             "todas (mismas funciones, exportaciones y comportamiento) y añade lo de aquí.")
+                b["instructions"] = (
+                    f"{b.get('instructions') or ''}\n\n{spec}\n\nENCARGO (para situarte; lo de los demás archivos lo "
+                    f"hacen otros):\n{head}" if spec else
+                    f"{b.get('instructions') or ''}\n\nTAREA (la especificación: cumple lo que pide para {path} con "
+                    f"los nombres, formatos, valores y ejemplos exactos; lo de los demás archivos lo hacen otros):\n{task}")
         for b in rest:
             if Path(str(b.get("path") or "")).suffix in JS and api:
                 b["instructions"] = (f"{b.get('instructions') or ''}\n\nMÓDULOS QUE YA EXISTEN (importa de aquí, "
                                      f"con estos nombres exactos y del archivo que los exporta):\n{api}")
         for b in tests:
-            if not b.pop("spec", False) or scope is not None:
+            spec_block = b.pop("spec", False)
+            if scope is not None:
                 continue
             ids, paths = self.code_for_test(str(b["path"]), rest)
-            b["after"] = [i for i in ids if i != b.get("id")]
+            if spec_block or not b.get("after"):
+                b["after"] = [i for i in ids if i != b.get("id")]
             b["files"] = list(dict.fromkeys([*paths, *(b.get("files") or [])]))[:6]
-            if str(b.get("id", "")).startswith("spec-test-"):
+            module = b.pop("module", None)
+            excerpt = self.spec_for([module] if module else [p for p in paths if not is_test_path(p)][:3], task)
+            # Claude daba los valores esperados ya calculados; el obrero, sin cuentas, se los inventaba
+            source = (f"{excerpt}\n\nLa especificación da fórmulas y reglas: esas SÍ dan los valores. Elige entradas "
+                      "pequeñas, calcula tú cada valor esperado con la fórmula y escribe la cuenta en un comentario "
+                      "junto al assert (p. ej. `// camaraX(300, 1000): 300 - 128 = 172`). Datos pequeños escritos "
+                      f"en el test.\n\nENCARGO:\n{head}" if excerpt else f"TAREA:\n{task}")
+            what = "la ESPECIFICACIÓN" if excerpt else "la TAREA"
+            if str(b.get("id", "")).startswith("own-test-"):
+                b["instructions"] = (
+                    f"Escribe el archivo de tests {b['path']} para {module}, con node:test y node:assert/strict: de 3 "
+                    f"a 8 test() al nivel superior con lo que {what} de abajo pide para ese módulo (sus funciones, "
+                    f"firmas y números exactos). Nada que {what} no diga: ni errores, ni archivos, ni mensajes que no "
+                    "nombre. El código YA ESTÁ ESCRITO y lo tienes en ARCHIVOS DE CONTEXTO: importa cada función del "
+                    f"archivo que la exporta. Los valores esperados salen de {what}, no del código.\n\n{source}"
+                    f"{self.skill('tests-de-especificacion')}")
+            elif str(b.get("id", "")).startswith("spec-test-"):
                 b["instructions"] = (
                     f"Escribe el archivo de tests {b['path']} con los casos que pide para él la TAREA de abajo (solo "
                     "los de este archivo), con node:test y node:assert/strict y un test() por caso, todos al nivel "
@@ -480,11 +733,42 @@ class Cerebro(Boss):
                     f"Los valores esperados salen de la TAREA, no del código.\n\nTAREA:\n{task}"
                     f"{self.skill('tests-de-especificacion')}")
             else:
+                # también a los tests del plan: el 10/10 (Supersalto libre) el obrero escribió los tests sin el
+                # contrato (~370 tokens) e inventó casos («existe RECT.md», «columnaDe lanza fuera de límites»); los
+                # arreglos rompieron mapa.js para cumplirlos
                 b["instructions"] = (f"{b.get('instructions') or ''}\n\nEl código que se prueba YA ESTÁ ESCRITO (en "
-                                     "ARCHIVOS DE CONTEXTO): importa cada función del archivo que la exporta.")
+                                     f"ARCHIVOS DE CONTEXTO): importa cada función del archivo que la exporta. Prueba "
+                                     f"SOLO lo que dice {what} de abajo, con sus nombres, firmas y valores: nada que no "
+                                     "pida (ni errores, ni archivos, ni mensajes que no nombre)."
+                                     + ("" if "TAREA:" in str(b.get("instructions") or "") else f"\n\n{source}"))
         # el código, luego los tests, y lo que dependa de algo, detrás (el 10/10 el CHANGELOG esperaba a los tests y,
         # con los tests al final, el plan entero falló: «el bloque 7 depende de 5, 6, que no es un bloque anterior»)
         return in_order(rest + tests)
+
+    def gates(self) -> list[str]:
+        """Las del jefe 1 y, además, salida del modelo pegada en el código de la app (el 10/10, con Claude dirigiendo,
+        src/efectos.js y src/estrella.js llevaban bloques ``` y tests con `import node:test` dentro; los pilló la
+        revisión final de Claude, el jefe local los habría integrado)."""
+        problems = super().gates()
+        for rel in self.changed():
+            if Path(rel).suffix not in JS:
+                continue
+            try:
+                text = (self.root / rel).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if is_test_path(rel):
+                # 11/10: tests con describe/expect de Jest sin importarlos; el depurador quiso definirlos en src/mapa.js
+                used = sorted({m.group(1) for m in JEST_CALL.finditer(text)} - imported_names(text))
+                if used:
+                    problems.append(f"{rel}: usa {', '.join(used)} sin importarlos (estilo Jest): con node:test es "
+                                    "`import { test, describe, it } from 'node:test'` y `import assert from "
+                                    "'node:assert/strict'` (assert.equal…, no expect)")
+                continue
+            if LEFTOVER.search(text):
+                problems.append(f"{rel}: lleva salida del modelo pegada (``` o tests con node:test dentro del código "
+                                "de la app): debe quedar solo el módulo")
+        return problems
 
     # --- arreglos sin modelo
     def mechanical(self) -> list[str]:
@@ -515,6 +799,8 @@ class Cerebro(Boss):
             path = self.root / rel
             text = path.read_text(encoding="utf-8", errors="replace")
             new, fixed = fix_imports(self.root, rel, text, exported)
+            new, missing = fix_missing_imports(self.root, rel, new, exported)
+            fixed += missing
             if fixed and new != text:
                 path.write_text(new, encoding="utf-8", newline="\n")
                 notes += fixed
@@ -540,7 +826,10 @@ class Cerebro(Boss):
             out += [t for t in self.changed() if is_test_path(t) and Path(t).name.split(".")[0] == stem]
         return list(dict.fromkeys(x for x in out if x != path))
 
-    def diagnose(self, task: str, output: str, tried: list[str], touched: list[str]) -> dict | None:
+    def diagnose(self, task: str, output: str, tried: list[str], touched: list[str],
+                 test_first: bool = False) -> dict | None:
+        """`test_first`: arreglar el código ya rompió tests que pasaban o se le culpó dos veces sin éxito; el modelo
+        tiene que mirar primero el test (el 11/10 gpt-oss culpó al código 4 rondas de un valor mal contado en el test)."""
         fail = first_failure(output)
         named = self.named_files(fail) or self.named_files(output)
         files = list(dict.fromkeys([*named, *(d for f in named for d in self.related(f))]))
@@ -549,8 +838,13 @@ class Cerebro(Boss):
         files = files[:MAX_DIAG_FILES]
         ctx = "\n\n".join(f"--- {f} ---\n{numbered((self.root / f).read_text(encoding='utf-8', errors='replace'))}"
                           [:MAX_DIAG_FILE_CHARS] for f in files)
-        user = (f"TAREA:\n{task}\n\nFALLA ASÍ (`{self.check or 'guardias'}`):\n```\n{fail}\n```\n\nARCHIVOS:\n{ctx}"
-                + ("\n\nYA PROBADO (no funcionó):\n" + "\n".join(f"- {t}" for t in tried) if tried else ""))
+        others = failing_tests(output)
+        user = (f"TAREA:\n{task}\n\nFALLA ASÍ (`{self.check or 'guardias'}`):\n```\n{fail}\n```"
+                + (f"\n\nTODOS LOS TESTS QUE FALLAN ({len(others)}):\n" + "\n".join(f"- {t}" for t in others[:25])
+                   if len(others) > 1 else "")
+                + f"\n\nARCHIVOS:\n{ctx}"
+                + ("\n\nYA PROBADO (no funcionó):\n" + "\n".join(f"- {t}" for t in tried) if tried else "")
+                + (TEST_FIRST if test_first else ""))
 
         def ask():
             raw, stats = self.s.complete(SYSTEM_DIAG, user, schema=DIAG_SCHEMA)
@@ -600,35 +894,278 @@ class Cerebro(Boss):
         named = self.named_files(fail) or self.named_files(output)
         # el que señaló el último diagnóstico; si no, código antes que tests (la salida suele nombrar solo el test)
         pool = [f for f in dict.fromkeys([*named, *touched]) if (self.root / f).is_file()]
-        path = (d or {}).get("archivo") or self.last_diag or next(
-            (f for f in pool if not is_test_path(f) and f not in self.RULE_LIKE), None) or next(iter(pool), None)
+        code = [f for f in pool if not is_test_path(f) and f not in self.RULE_LIKE]
+        first = (d or {}).get("archivo") or self.last_diag
+        # un archivo ya reescrito en este parche no se reescribe otra vez: el siguiente que falle (el 10/10 el bug de
+        # dinero.js no se tocó en 8 rondas porque todas fueron a fechas.js)
+        # solo otro archivo que esté fallando (el código que prueban los tests que fallan): el 10/10 15:00, con la
+        # reescritura de dinero.js cortada en bucle, la ronda siguiente reescribió fechas.js, que ya pasaba
+        failing = list(dict.fromkeys(f for t in self.named_files(output) for f in [t, *self.related(t)]
+                                     if not is_test_path(f) and f not in self.RULE_LIKE))
+        path = next((f for f in [first, *failing] if f and f not in self.rewritten), None) or first or next(
+            iter(code), None) or next(iter(pool), None)
         if not path:
             self.notes.append(f"- Arreglo {n}: no sé qué archivo reescribir")
             return "nada"
+        fresh = self.is_new(path)  # nuevo en este parche: desde cero de verdad, sin la versión mala delante
         spec = self.skill("tests-de-especificacion") if is_test_path(path) else ""
         instructions = (f"Reescribe {path} ENTERO y desde cero para que cumpla la TAREA: la versión actual tiene "
-                        "fallos que no se han podido arreglar a trozos. Mismos nombres de funciones y de exportaciones "
-                        f"que pide la tarea.\n\nTAREA:\n{task}\n\nASÍ FALLA AHORA:\n```\n{fail}\n```"
+                        "fallos que no se han podido arreglar a trozos"
+                        + (" (no te la enseño a propósito: no la copies, escríbelo desde la especificación)"
+                           if fresh else "")
+                        + ". Mismos nombres de funciones y de exportaciones que pide la tarea.\n\n"
+                        f"TAREA:\n{task}\n\nASÍ FALLA AHORA:\n```\n{fail}\n```"
                         + ("\n\nYA PROBADO (no funcionó):\n" + "\n".join(f"- {t}" for t in tried) if tried else "")
                         + spec)
         block = self.block_for(path, instructions, self.related(path), f"reescribir{n}")
         block["kind"] = "write"
+        block["fresh"] = fresh
         ok = self.run_blocks([block], f"Arreglo {n}")
-        self.notes.append(f"- Arreglo {n} (reescritura entera): {path}" + ("" if ok else " (no salió)"))
+        if ok:  # si el obrero no pudo (bucle), ese archivo sigue pendiente
+            self.rewritten.add(path)
+        self.notes.append(f"- Arreglo {n} (reescritura entera{', desde cero' if fresh else ''}): {path}"
+                          + ("" if ok else " (no salió)"))
         return f"{path}: reescrito entero"
 
+    def is_new(self, path: str) -> bool:
+        """Que el archivo no esté en el último commit (lo ha creado este parche)."""
+        try:
+            p = subprocess.run(["git", "cat-file", "-e", f"HEAD:{path}"], cwd=self.root, capture_output=True,
+                               timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return p.returncode != 0
+
+    def snapshot(self) -> dict[str, bytes]:
+        return {p: (self.root / p).read_bytes() for p in self.changed()}
+
+    def restore(self, snap: dict[str, bytes]) -> None:
+        """Deja el worktree como en `snap`: lo cambiado después vuelve a su versión de entonces (o a HEAD, o se borra
+        si no existía)."""
+        for p in self.changed():
+            if p not in snap:
+                old = self.head_bytes(p)
+                if old is None:
+                    (self.root / p).unlink(missing_ok=True)
+                else:
+                    (self.root / p).write_bytes(old)
+        for p, data in snap.items():
+            (self.root / p).write_bytes(data)
+
+    # --- rescate parcial (contra el efecto dominó)
+    def head_bytes(self, rel: str) -> bytes | None:
+        p = subprocess.run(["git", "show", f"HEAD:{rel}"], cwd=self.root, capture_output=True, timeout=30)
+        return p.stdout if p.returncode == 0 else None
+
+    def head_text(self, rel: str) -> str | None:
+        old = self.head_bytes(rel)
+        return old.decode("utf-8", "replace") if old is not None else None
+
+    def salvage(self) -> tuple[list[str], str] | None:
+        """Con los tests aún en rojo tras la escalera: en vez de tirar el parche entero, se integra lo que funciona y
+        los tests NUEVOS que fallan pasan a `test.todo` (siguen corriendo y se ven como TODO, pero no tumban la
+        suite); un archivo de tests nuevo que ni carga se aparca como `.pendiente.mjs`. El 10/10, con `aCentimos`
+        mal, se descartaba el parche 1 entero (fechas.js bien incluido) y los 9 siguientes caían por no encontrar
+        sus módulos. No se rescata si falla un test que ya estaba (regresión), si la deuda pasa de la mitad de los
+        tests nuevos o si, aun así, algo sigue en rojo (guardias incluidas): entonces se descarta como siempre."""
+        if not (self.root / "package.json").is_file():
+            return None
+        try:
+            p = subprocess.run(["node", "--test", "--test-reporter=tap"], cwd=self.root, capture_output=True,
+                               timeout=300)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        fails = tap_failures(p.stdout.decode("utf-8", "replace"), self.root)
+        if not fails:
+            return None
+        texts: dict[str, list[str]] = {}
+        todo, parked = [], []
+        for name, rel, line in fails:
+            if not is_test_path(rel) or not (self.root / rel).is_file():
+                return None
+            old = self.head_text(rel)
+            lines = texts.setdefault(rel, (self.root / rel).read_text(encoding="utf-8").split("\n"))
+            if line == 1 and Path(name.replace("\\", "/")).name == Path(rel).name:  # el archivo entero no carga
+                if old is not None:
+                    return None
+                parked.append(rel)
+                continue
+            src = lines[line - 1] if 0 < line <= len(lines) else ""
+            if SUITE_CALL.search(src):  # la suite (describe) falla porque falla un hijo, que sale aparte
+                continue
+            if old is not None and src.strip() and src.strip() in old:
+                return None  # ese test ya estaba antes del parche: es una regresión
+            new = TEST_CALL.sub(r"\1.todo\2(", src, count=1)
+            if new == src:
+                return None  # no es una llamada test(…)/it(…) que se pueda marcar
+            lines[line - 1] = new
+            todo.append(f"{rel}: {name}")
+        own = 0  # tests nuevos del parche (los de archivos nuevos y las líneas que no estaban)
+        for rel in {t for t in self.changed() if is_test_path(t)}:
+            old = self.head_text(rel) or ""
+            own += sum(1 for ln in (self.root / rel).read_text(encoding="utf-8", errors="replace").splitlines()
+                       if TEST_CALL.search(ln) and ln.strip() not in old)
+        debt = len(todo) + sum(len(TEST_CALL.findall((self.root / r).read_text(encoding="utf-8"))) for r in parked)
+        if not own or debt > MAX_DEBT_SHARE * own:
+            self.notes.append(f"- Rescate parcial: no ({debt} de {own} tests nuevos fallan, más de la mitad)")
+            return None
+        before = {rel: (self.root / rel).read_bytes() for rel in [*texts, *parked]}
+        for rel, lines in texts.items():
+            if rel not in parked:
+                (self.root / rel).write_text("\n".join(lines), encoding="utf-8", newline="\n")
+        for rel in parked:
+            (self.root / rel).rename(self.root / re.sub(r"\.test\.(m?js|cjs)$", r".pendiente.\1", rel))
+        out = self.verify()
+        if check_failed(out):
+            for rel in parked:
+                (self.root / re.sub(r"\.test\.(m?js|cjs)$", r".pendiente.\1", rel)).unlink(missing_ok=True)
+            for rel, data in before.items():
+                (self.root / rel).write_bytes(data)
+            self.notes.append("- Rescate parcial: no (con los tests nuevos en TODO sigue fallando algo)")
+            return None
+        notes = [*(f"{t} → TODO" for t in todo), *(f"{r} no carga → aparcado como .pendiente" for r in parked)]
+        return notes, out
+
+    SPEC_MARK = "\n\nLO QUE DICE "
+
+    def with_sections(self, task: str) -> str:
+        """Si la tarea cita secciones numeradas de un documento («las secciones 1 a 4 del contrato»), se le pegan
+        esas secciones. En Supersalto libre la tarea solo decía eso y la especificación estaba en CONTRATO.md: el
+        planificador la leía y la resumía, y los obreros escribían sin ella (archivos y firmas inventados)."""
+        if self.SPEC_MARK in task:
+            return task
+        refs = re.findall(r"secci[oó]n(?:es)?\s+(\d+)(?:\s*(?:a|-|y|hasta)\s*(\d+))?", task, re.I)
+        if not refs:
+            return task
+        wanted = {n for a, b in refs for n in range(int(a), int(b or a) + 1)}
+        named = [p for p in self.task_paths(task) if p.endswith(".md") and (self.root / p).is_file()]
+        docs = named or [p for p in ("CONTRATO.md", "ENCARGO.md") if (self.root / p).is_file()]
+        for doc in docs:
+            text = (self.root / doc).read_text(encoding="utf-8", errors="replace")
+            parts = re.split(r"(?m)^(?=#{2,3}\s*\d+[.)]?\s)", text)
+            got = [p.strip() for p in parts if (m := re.match(r"#{2,3}\s*(\d+)", p)) and int(m.group(1)) in wanted]
+            if got:
+                return f"{task}{self.SPEC_MARK}{doc} DE ESAS SECCIONES (es la especificación: nombres de archivo, " \
+                       f"funciones, firmas y números obligatorios):\n\n" + "\n\n".join(got)
+        return task
+
+    def spec_parts(self, task: str) -> tuple[list[dict], list[dict]]:
+        """(párrafos de las secciones que trae la tarea, párrafos de todo el contrato). Vacíos si la tarea no cita
+        secciones de un documento (modalidad guiada: la especificación ya viene en la tarea)."""
+        if self.SPEC_MARK not in task:
+            return [], []
+        current = spec_items(task.split(self.SPEC_MARK, 1)[1].split("\n", 1)[-1])
+        doc = re.match(r"\s*(\S+)", task.split(self.SPEC_MARK, 1)[1])
+        whole = current
+        if doc and (self.root / doc.group(1)).is_file():
+            whole = spec_items((self.root / doc.group(1)).read_text(encoding="utf-8", errors="replace")) or current
+        return current, whole
+
+    def spec_for(self, paths: list[str], task: str) -> str:
+        """El trozo literal del contrato para escribir (o probar) `paths`, o "" si el contrato no los nombra. Claude
+        dirigiendo (10/10, Supersalto libre: 97,1 %) le daba a cada obrero solo lo suyo, ya masticado (270–1.200
+        tokens); el jefe local le pasaba «implement moverX per spec» o el contrato entero, y el obrero tenía que
+        encontrarlo y deducirlo."""
+        current, whole = self.spec_parts(task)
+        if not whole:
+            return ""
+        own, deps = [], []
+        for p in paths:
+            o, d = spec_excerpt(p, current, whole)
+            own += o
+            deps += d
+        own = list(dict.fromkeys(own))
+        deps = [d for d in dict.fromkeys(deps) if d not in own]
+        if not own:
+            return ""
+        names = ", ".join(paths)
+        return (f"ESPECIFICACIÓN DE {names} (copiada literal del contrato: cumple cada nombre, firma, fórmula y "
+                f"número):\n" + "\n\n".join(own)
+                + (("\n\nLO QUE USA DE OTROS MÓDULOS (ya existen o los escribe otro: impórtalo de ahí, con estos "
+                    "nombres exactos):\n" + "\n\n".join(deps)) if deps else ""))
+
+    def task_head(self, task: str) -> str:
+        return task.split(self.SPEC_MARK, 1)[0].strip()
+
+    def contract_blocks(self, task: str, blocks: list) -> list[dict]:
+        """Los archivos de las secciones de este parche que el plan olvidó: el 10/10 el plan del hito 3 no traía
+        src/paso.js y el del 5 inventaba módulos (golpearBloque.js). Un bloque por archivo, con su trozo del contrato."""
+        current, _ = self.spec_parts(task)
+        planned = {str(b.get("path") or "") for b in blocks}
+        extra = []
+        for p in dict.fromkeys(o for i in current for o in i["owners"]):
+            if p in planned or Path(p).suffix not in self.CODE_SUFFIXES or is_test_path(p):
+                continue
+            target = self.root / p
+            big = target.is_file() and target.stat().st_size >= self.rewrite_under
+            extra.append({"id": f"contrato-{len(extra) + 1}", "kind": "edit" if big else "write", "path": p,
+                          "after": [], "title": p, "instructions": f"Haz en {p} lo que pide el contrato."})
+        if extra:
+            self.notes.append("- El plan no traía " + ", ".join(b["path"] for b in extra) + ": se añadieron "
+                              "(son de las secciones de este parche)")
+        return extra
+
+    def missing_modules(self, out: str, done: set[str]) -> list[str]:
+        """Módulos del proyecto que algo importa y no existen (rutas relativas), sin los ya intentados."""
+        found = []
+        for m in MISSING_MODULE.finditer(out or ""):
+            try:
+                rel = Path(m.group(1)).resolve().relative_to(self.root.resolve()).as_posix()
+            except ValueError:
+                continue
+            if Path(rel).suffix in JS and not (self.root / rel).exists() and rel not in done:
+                found.append(rel)
+        return list(dict.fromkeys(found))
+
+    def write_missing(self, task: str, out: str, done: set[str]) -> list[str]:
+        """Escribe, desde su trozo del contrato, los módulos que se importan y no existen (el 10/10, hito 5:
+        partida.js importaba ./nivel.js, que era del hito 1 rechazado, y la escalera gastó 4 rondas en otros
+        archivos). Sin trozo del contrato no se inventa nada: sigue la escalera."""
+        written = []
+        for rel in self.missing_modules(out, done):
+            done.add(rel)
+            spec = self.spec_for([rel], task)
+            if not spec:
+                continue
+            users = [p for p in self.changed() + js_modules(self.root) if (self.root / p).is_file()
+                     and Path(rel).name in (self.root / p).read_text(encoding="utf-8", errors="replace")]
+            block = {"id": f"falta-{len(written) + 1}", "kind": "write", "path": rel, "after": [], "title": rel,
+                     "instructions": (f"Crea {rel}: lo importan {', '.join(dict.fromkeys(users)) or 'otros módulos'} "
+                                      f"y no existe.\n\n{spec}{self.skill('modulos-es')}"),
+                     "files": list(dict.fromkeys(users))[:4]}
+            if self.run_blocks([block], f"Módulo que falta: {rel}"):
+                written.append(rel)
+        return written
+
     # --- todo
+    def receta_for(self, task: str) -> list | None:
+        """La receta de Claude para este parche: la del texto del hito que aparece en la tarea."""
+        flat = " ".join(task.split())
+        for r in self.recetas:
+            if " ".join(r["texto"].split())[:80] in flat:
+                return copy.deepcopy(r["blocks"])
+        return None
+
     def run(self, task: str) -> str:
+        self.receta = self.receta_for(task)
+        # lo que falló el intento anterior no es especificación: fuera de la tarea (iría a cada encargo) y al
+        # depurador como YA PROBADO
+        task, mark, prev = task.partition(PREV_MARK)
+        task = task.rstrip()
+        task = self.with_sections(task)
+        self.rewritten = set()
         rules = self.rules()
         api = api_map(self.root)
         if api:
             rules += f"\n\n### Módulos que ya existen (qué exporta cada uno)\n{api}"
-        files = self.select_files(task, rules)
+        files = [] if self.receta else self.select_files(task, rules)
         res = self.plan_and_run(task, files, rules, "Plan")
         touched = list(dict.fromkeys([*files, *res["written"]]))
         out = self.verify()
-        tried: list[str] = []
-        rounds = mech = 0
+        tried: list[str] = ([f"INTENTO ANTERIOR DE ESTE PARCHE: {' '.join(prev.split())[:900]}"] if mark else [])
+        rounds = mech = code_blames = 0
+        stuck = suspect = False
+        tried_missing: set[str] = set()
         while out and check_failed(out) and rounds < len(LADDER) and not self.late():
             if mech < MAX_MECHANICAL:
                 fixed = self.mechanical()
@@ -638,16 +1175,59 @@ class Cerebro(Boss):
                     self.notes.append("- Arreglo mecánico (sin modelo): " + "; ".join(fixed))
                     out = self.verify()
                     continue
+            made = self.write_missing(task, out, tried_missing)
+            if made:
+                self.say("Escritos desde el contrato los módulos que faltaban: " + ", ".join(made))
+                self.notes.append("- Módulos que se importaban y no existían, escritos desde el contrato (sin gastar "
+                                  "ronda): " + ", ".join(made))
+                touched = list(dict.fromkeys([*touched, *made]))
+                out = self.verify()
+                continue
             rounds += 1
-            self.say(f"Falla: arreglo {rounds} de {len(LADDER)} ({LADDER[rounds - 1]})")
-            d = self.diagnose(task, out, tried, touched) if LADDER[rounds - 1] == "quirurgico" else None
+            # con sospecha sobre el test, otro diagnóstico (que mire el test) en vez de reescribir código a ciegas
+            step = "quirurgico" if suspect else "reescribir" if stuck else LADDER[rounds - 1]
+            self.say(f"Falla: arreglo {rounds} de {len(LADDER)} ({step})")
+            before = self.snapshot()
+            fails_before = set(failing_tests(out))
+            d = self.diagnose(task, out, tried, touched, suspect or code_blames >= 2) if step == "quirurgico" else None
+            suspect = False
             if d:
                 tried.append(self.surgical(d, rounds))
                 touched = list(dict.fromkeys([*touched, d["archivo"]]))
             else:
                 tried.append(self.rewrite(task, out, None, tried, touched, rounds))
+            # una ronda que deja los archivos igual no cuenta como probada a medias: lo dice y la siguiente reescribe
+            after = self.snapshot()
+            stuck = after == before
+            if stuck:
+                tried[-1] += " (NO CAMBIÓ NADA: el archivo quedó idéntico)"
+                self.notes.append(f"- Arreglo {rounds}: no cambió nada; el siguiente reescribe")
             out = self.verify()
+            # 11/10 (Supersalto, receta de Claude): el código daba la meta en x 848 (bien: columna 53 × 16) y el test
+            # esperaba 832; el depurador culpó al código 4 rondas y reescribirlo rompió lo que pasaba. Una ronda que
+            # cambia código y hace fallar tests que pasaban se deshace: ese código cumplía, y el sospechoso es el test
+            code = [p for p in {*before, *after} if before.get(p) != after.get(p) and not is_test_path(p)]
+            broke = sorted(set(failing_tests(out)) - fails_before) if fails_before and code else []
+            if broke and check_failed(out):
+                self.restore(before)
+                suspect = True
+                tried[-1] += (" (DESHECHO: rompía tests que pasaban — " + "; ".join(broke[:4]) + ". Ese código "
+                              "cumplía: el culpable probablemente es el TEST que falla)")
+                self.notes.append(f"- Arreglo {rounds}: deshecho, rompía {len(broke)} test(s) que pasaban "
+                                  f"({'; '.join(broke[:3])[:200]}); se sospecha del test")
+                out = self.verify()
+            elif d and d.get("culpable") != "test" and not is_test_path(d["archivo"]):
+                code_blames += 1
         green = not (out and check_failed(out))
+        debt: list[str] = []
+        if not green and self.changed() and not self.late():
+            saved = self.salvage()
+            if saved:
+                debt, out = saved
+                green = True
+                self.say(f"Rescate parcial: se integra lo que funciona; {len(debt)} pendientes en TODO")
+                self.notes.append(f"- Rescate parcial ({len(debt)} pendientes, siguen en los tests como TODO): "
+                                  + "; ".join(debt)[:800])
         verdict = {"ok": True, "problems": [], "summary": ""}
         if green and self.changed() and not self.late():
             verdict = self.advisory_review(task, rules, touched)
@@ -655,7 +1235,10 @@ class Cerebro(Boss):
             return self.report(verdict, out)
         if "GUARDIAS DEL JEFE" in (out or ""):
             self.rejected.append("guardias: " + "; ".join(ln[2:] for ln in out.splitlines() if ln.startswith("- ")))
-        return self.report(verdict, out)
+        report = self.report(verdict, out)
+        if debt and not self.rejected:
+            report = f"{DEBT}: {len(debt)} tests nuevos fallan y quedan como TODO.\n\n{report}"
+        return report
 
     def advisory_review(self, task: str, rules: str, touched: list[str]) -> dict:
         """Con los tests en verde: revisión, una corrección y, si la corrección rompe algo, se deshace. Lo que quede
@@ -678,11 +1261,14 @@ class Cerebro(Boss):
         self.plan_and_run(fix, list(dict.fromkeys([*named, *touched]))[:8], rules, "Corrección", scope, spec=task)
         after = self.verify()
         if after and check_failed(after):
+            # lo que la corrección tocó y ya estaba en el último commit vuelve a esa versión: el 10/10 (Supersalto
+            # libre, hito 4) se borraban src/render.js y tests/proyecto.test.mjs, que no eran del parche
             for p in self.changed():
-                if p in before:
-                    (self.root / p).write_bytes(before[p])
-                else:
+                old = before.get(p, self.head_bytes(p))
+                if old is None:
                     (self.root / p).unlink(missing_ok=True)
+                else:
+                    (self.root / p).write_bytes(old)
             self.notes.append("- Corrección de la revisión: rompía los tests y se deshizo")
             return {**verdict, "ok": True}
         self.notes.append("- Corrección de la revisión: hecha y los tests siguen pasando")

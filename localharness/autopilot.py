@@ -29,6 +29,7 @@ from datetime import datetime
 from pathlib import Path
 
 from localharness.boss import REJECTED
+from localharness.cerebro import DEBT, PREV_MARK
 
 OPEN = ("running", "pending")
 NOTE = ("\n\n(AUTOPILOTO: nadie va a contestar hasta dentro de horas. No hagas preguntas ni pidas permiso: decide tú, "
@@ -37,6 +38,7 @@ NOTE = ("\n\n(AUTOPILOTO: nadie va a contestar hasta dentro de horas. No hagas p
 LOAD_WAIT_S = 420  # lo que espera a un modelo que está cargando antes de lanzar un parche
 GRACE_S = 300  # margen sobre el tope de LocalHarness antes de que el autopiloto cancele él
 CLOSE_MIN = 10  # minutos para cerrar un parche al que se le acabó el tiempo
+REPAIR = "Reparación"  # parches que el autopiloto añade al acabar la lista para rehacer lo que no entró
 CLOSE_MSG = ("Se te acabó el tiempo de este parche. NO empieces nada nuevo: en como mucho {minutes} minutos deja "
              "pasando `{check}` con lo que ya está hecho (si una parte no llega, quítala o recórtala con un `edit` en "
              "vez de terminarla), añade la línea del CHANGELOG si falta y termina con el informe. Lo que no dé tiempo, "
@@ -111,6 +113,39 @@ def run_check(command: str, cwd: str, timeout: float = 300) -> tuple[bool, str]:
     return p.returncode == 0, out[-3000:]
 
 
+def retry_worthy(r: "Result") -> bool:
+    """Un parche que se hizo y no entró (descartado por los tests o por el jefe, o sin cambios) merece otro intento.
+    Lo que falló por infraestructura, se quedó sin tiempo o descartaste tú, no."""
+    return r.outcome.startswith(("descartado (tests)", "descartado (revisión)", "sin cambios"))
+
+
+def failure_summary(r: "Result", limit: int = 1500) -> str:
+    """Lo que falló un intento, corto: el resultado, los arreglos que se probaron y el final de los tests."""
+    tried = [ln.strip("> ").strip() for ln in r.final.splitlines()
+             if ln.strip("> ").startswith(("- Arreglo", "- Diagnóstico", "- Rescate", "Rechazado"))]
+    lines = [f"Resultado: {r.outcome}.", *tried[:10]]
+    if r.check and "\n" in r.check:
+        lines.append("Tests:\n" + r.check.split("\n", 1)[1][-700:])
+    return "\n".join(lines)[:limit]
+
+
+TODO_CALL = re.compile(r"""\b(?:test|it)\.todo\s*\(\s*['"`](.+?)['"`]""")
+
+
+def debt_in(repo: Path) -> tuple[list[str], list[str]]:
+    """La deuda que dejó el rescate parcial del cerebro 2: tests en TODO y archivos de tests aparcados."""
+    todo, parked = [], []
+    for f in sorted(repo.rglob("*.mjs")) if repo.is_dir() else []:
+        rel = f.relative_to(repo).as_posix()
+        if "node_modules" in rel or rel.startswith("."):
+            continue
+        if ".pendiente." in f.name:
+            parked.append(rel)
+        elif ".test." in f.name:
+            todo += [f"{rel}: {m.group(1)}" for m in TODO_CALL.finditer(f.read_text(encoding="utf-8", errors="replace"))]
+    return todo, parked
+
+
 @dataclass
 class Result:
     n: int
@@ -134,8 +169,15 @@ class Autopilot:
                  clock: Callable[[], float] = time.monotonic, checker: Callable = run_check,
                  reload: Callable[[], list[str]] | None = None,
                  propose: Callable[[list[str]], list[str]] | None = None,
-                 after: Callable[[Result], None] | None = None):
+                 after: Callable[[Result], None] | None = None, line_retries: int = 0, repair_rounds: int = 0,
+                 before: Callable[[int], None] | None = None):
         self.api, self.items, self.check, self.reload = api, items, check, reload
+        self.before = before  # se llama antes de cada parche (p. ej. el banco en relevo: deja el repo como lo tenía otro)
+        # 11/10: con el hito 1 descartado, los 7 siguientes se construían sobre un motor que no existía.
+        # `line_retries`: un parche que no entra se repite al momento (mismo número) con lo que falló delante.
+        # `repair_rounds`: al acabar la lista, vueltas de reparación con el tiempo que sobre (en local es gratis).
+        self.line_retries, self.repair_rounds = line_retries, repair_rounds
+        self.repair_of: dict[int, int] = {}  # parche de reparación → parche de la lista que rehace
         self.after = after  # se llama con cada parche terminado, antes de guardarlo (puede rellenar r.extra)
         # modo continuo: al acabarse la lista, pide parches nuevos (los propone el modelo local) y sigue
         self.propose = propose
@@ -275,12 +317,14 @@ class Autopilot:
         return out
 
     # --- un parche
-    def patch(self, n: int, text: str) -> Result:
+    def patch(self, n: int, text: str, previous: Result | None = None) -> Result:
         r = Result(n=n, text=text)
         t0 = self.clock()
         # el número del parche lo pone el agente siguiendo CHANGELOG.md (la lista no sabe cuántos hay ya)
         prompt = f"Nuevo parche (el siguiente número según CHANGELOG.md): {text}{NOTE}"
-        t = self.adoptable(n)
+        if previous:
+            prompt += f"\n\n{PREV_MARK} (no salió; no repitas lo mismo)\n{failure_summary(previous)}"
+        t = None if previous else self.adoptable(n)
         if t:
             self.say(f"  sigo con la tarea #{t['id']}, que ya estaba en marcha (se reinició el autopiloto)")
         else:
@@ -319,7 +363,8 @@ class Autopilot:
                 try:
                     self.api("POST", f"/api/tasks/{tid}/approve")
                     self.api("POST", f"/api/tasks/{tid}/merge", {"confirm": True})
-                    r.outcome = "integrado"
+                    # el cerebro 2 rescató lo que funcionaba y dejó tests en TODO: se integra, pero se ve
+                    r.outcome = "integrado (con deuda)" if (t.get("final") or "").startswith(DEBT) else "integrado"
                 except ApiError as e:
                     r.outcome = f"no se pudo integrar: {e}"
             else:
@@ -351,11 +396,52 @@ class Autopilot:
         r.models = self.models_of(r.task_ids)
         return r
 
+    def attempt(self, n: int, text: str, previous: Result | None = None) -> Result:
+        """Un intento del parche, repetido una vez si los modelos ni llegaron a trabajar."""
+        self.ensure_locals()
+        for k in range(2):
+            try:
+                r = self.patch(n, text, previous)
+            except ApiError as e:
+                r = Result(n=n, text=text, outcome=f"falló: {e}")
+            if k or not self.infra_failure(r):
+                break
+            self.say(f"  → {r.outcome}: los modelos no llegaron a trabajar; lo repito una vez")
+            self.sleep(30)
+            self.ensure_locals()
+        return r
+
+    def repair_items(self, base: int) -> list[tuple[int | None, str]]:
+        """Lo que hay que reparar: los parches de la lista que no entraron (en orden, con lo que falló delante) y,
+        si el repo tiene deuda (tests en TODO o aparcados como .pendiente), saldarla."""
+        last = {r.n: r for r in self.results}
+        for r in self.results:  # lo que una reparación ya integró cuenta como hecho; si no, su último intento manda
+            item = self.repair_of.get(r.n)
+            if item and not last[item].outcome.startswith("integrado"):
+                last[item] = Result(n=item, text=last[item].text, outcome=r.outcome, check=r.check, final=r.final)
+        out: list[tuple[int | None, str]] = []
+        for n in range(1, base + 1):
+            r = last.get(n)
+            if r and not r.outcome.startswith("integrado"):
+                out.append((n, f"{r.text}\n\n{PREV_MARK} (no salió; no repitas lo mismo)\n{failure_summary(r)}"))
+        todo, parked = debt_in(Path(self.project.get("repo_path") or "."))
+        if todo or parked:
+            out.append((None, "Salda la deuda de tests que dejaron parches anteriores: "
+                       + (f"tests marcados como TODO ({'; '.join(todo[:12])})" if todo else "")
+                       + (" y " if todo and parked else "")
+                       + (f"archivos de tests aparcados ({', '.join(parked[:8])})" if parked else "")
+                       + ". Haz que el código cumpla la especificación y vuelve a activarlos (quita el .todo; "
+                       "renombra .pendiente.mjs a .test.mjs). Si un test espera algo que la especificación no dice o "
+                       "un valor mal calculado, corrige el test. Deja todos los tests pasando."))
+        return out
+
     # --- bucle
     def run(self) -> list[Result]:
         deadline = self.clock() + self.hours * 3600
         done = {r.n for r in self.results}
         fails = 0
+        base = len(self.items)  # los parches de la lista (sin las vueltas de reparación)
+        repairs, last_round = 0, len(self.items)
         keep_awake(True)
         no_quick_edit()
         try:
@@ -377,6 +463,20 @@ class Autopilot:
                     for t in new:
                         self.say(f"  + {t[:120]}")
                     self.items = [*self.items, *new]
+                if n > len(self.items) and repairs < self.repair_rounds and self.clock() < deadline \
+                        and not self.propose:
+                    new = self.repair_items(base)
+                    # otra vuelta solo si la anterior integró algo (si no, repetiría lo mismo)
+                    if new and (repairs == 0 or any(r.outcome.startswith("integrado")
+                                                    for r in self.results if r.n > last_round)):
+                        repairs += 1
+                        last_round = len(self.items)
+                        self.say(f"[{datetime.now():%H:%M}] Fin de la lista: vuelta de reparación {repairs} "
+                                 f"({len(new)} parches)")
+                        for k, (item, _) in enumerate(new, len(self.items) + 1):
+                            if item:
+                                self.repair_of[k] = item
+                        self.items = [*self.items, *(f"{REPAIR} {repairs} · {t}" for _, t in new)]
                 if n > len(self.items):
                     break
                 text = self.items[n - 1]
@@ -390,17 +490,21 @@ class Autopilot:
                     self.say(f"Se acabó el presupuesto ({spent:.2f} $ de {self.budget:.2f} $).")
                     break
                 self.say(f"[{datetime.now():%H:%M}] Parche {n:03d}/{len(self.items)}: {text}")
-                self.ensure_locals()
-                for attempt in range(2):
-                    try:
-                        r = self.patch(n, text)
-                    except ApiError as e:
-                        r = Result(n=n, text=text, outcome=f"falló: {e}")
-                    if attempt or not self.infra_failure(r):
-                        break
-                    self.say(f"  → {r.outcome}: los modelos no llegaron a trabajar; lo repito una vez")
-                    self.sleep(30)
-                    self.ensure_locals()
+                if self.before:
+                    self.before(n)
+                r = self.attempt(n, text)
+                tries = 0
+                while retry_worthy(r) and tries < self.line_retries and self.clock() < deadline:
+                    tries += 1
+                    self.say(f"  → {r.outcome}: no sigo sin esto; lo repito con lo que falló delante "
+                             f"(intento {tries + 1})")
+                    r2 = self.attempt(n, text, previous=r)
+                    r2.task_ids = [*r.task_ids, *r2.task_ids]
+                    r2.seconds += r.seconds
+                    r2.cost += r.cost
+                    r2.retried = True
+                    r2.models = self.models_of(r2.task_ids)
+                    r = r2
                 if self.after:
                     try:
                         self.after(r)
@@ -431,7 +535,7 @@ class Autopilot:
         total_s = sum(r.seconds for r in rs) or 1
         lines = [f"# Autopiloto · {self.project['name']} · {self.started_at:%d/%m/%Y %H:%M}", "",
                  f"Agente: **{self.agent['name']}** · parches: {len(rs)} de {len(self.items)} · integrados: "
-                 f"{sum(r.outcome == 'integrado' for r in rs)} · coste: {sum(r.cost for r in rs):.2f} $ · "
+                 f"{sum(r.outcome.startswith('integrado') for r in rs)} · coste: {sum(r.cost for r in rs):.2f} $ · "
                  f"tiempo: {total_s / 3600:.1f} h", "",
                  "| Parche | Resultado | Min | Coste | Tareas | Reintento |", "|---|---|---|---|---|---|"]
         for r in rs:

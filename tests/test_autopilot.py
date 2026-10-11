@@ -235,3 +235,52 @@ class AutopilotTests(unittest.TestCase):
     def test_unknown_agent(self):
         with self.assertRaises(ApiError):
             Autopilot(FakeApi([]), "poeta", "nadie", ["a"], state=Path("x"), report=Path("y"))
+
+
+class LineaYReparacionTests(AutopilotTests):
+    def test_parche_que_no_entra_se_repite_con_lo_que_fallo(self):
+        from localharness.boss import REJECTED
+        api = FakeApi([("failed", 0.0), ("review", 0.0), ("review", 0.0)])
+        api.finals[1] = f"{REJECTED} (no se integra): guardias\n- Arreglo 1 (diagnóstico): src/nivel.js — columna+1"
+        pilot, _ = self.make(api, ["motor", "jugador"], line_retries=1)
+        rs = pilot.run()
+        self.assertEqual([(r.n, r.outcome) for r in rs], [(1, "integrado"), (2, "integrado")])
+        self.assertEqual(rs[0].task_ids, [1, 2])
+        self.assertTrue(rs[0].retried)
+        prompts = [c[2]["prompt"] for c in api.calls if c[:2] == ("POST", "/api/tasks")]
+        self.assertNotIn("INTENTO ANTERIOR", prompts[0])
+        self.assertIn("## INTENTO ANTERIOR", prompts[1])
+        self.assertIn("- Arreglo 1 (diagnóstico): src/nivel.js", prompts[1])
+        self.assertNotIn("INTENTO ANTERIOR", prompts[2])
+
+    def test_sin_line_retries_sigue_como_siempre(self):
+        api = FakeApi([("done", 0.0), ("review", 0.0)])
+        pilot, _ = self.make(api, ["a", "b"])
+        self.assertEqual([r.outcome for r in pilot.run()], ["sin cambios", "integrado"])
+
+    def test_vuelta_de_reparacion_rehace_lo_que_no_entro(self):
+        api = FakeApi([("done", 0.0), ("review", 0.0), ("review", 0.0)])
+        pilot, _ = self.make(api, ["motor", "jugador"], repair_rounds=2)
+        rs = pilot.run()
+        self.assertEqual([(r.n, r.outcome) for r in rs], [(1, "sin cambios"), (2, "integrado"), (3, "integrado")])
+        self.assertTrue(rs[2].text.startswith("Reparación 1 · motor"))
+        self.assertIn("## INTENTO ANTERIOR", rs[2].text)
+        # la segunda vuelta no hace falta: ya no queda nada sin integrar
+        self.assertEqual(len(pilot.items), 3)
+
+    def test_reparacion_para_si_una_vuelta_no_integra_nada(self):
+        api = FakeApi([("done", 0.0), ("done", 0.0), ("done", 0.0)])
+        pilot, _ = self.make(api, ["motor"], repair_rounds=5)
+        rs = pilot.run()
+        self.assertEqual(len(rs), 2)  # el parche y una sola vuelta de reparación
+
+    def test_deuda_en_el_repo(self):
+        with tempfile.TemporaryDirectory() as d:
+            repo = Path(d)
+            (repo / "tests").mkdir()
+            (repo / "tests" / "a.test.mjs").write_text("test.todo('formatea', () => {});\nit('x', () => {});\n"
+                                                       "  it.todo(\"cuenta\", () => {});\n", encoding="utf-8")
+            (repo / "tests" / "b.pendiente.mjs").write_text("", encoding="utf-8")
+            todo, parked = autopilot.debt_in(repo)
+            self.assertEqual(todo, ["tests/a.test.mjs: formatea", "tests/a.test.mjs: cuenta"])
+            self.assertEqual(parked, ["tests/b.pendiente.mjs"])

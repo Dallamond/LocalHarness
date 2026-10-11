@@ -747,19 +747,29 @@ class Server:
         answer, stats = self.complete(SYSTEM_ASK + ("" if ctx else NO_FILES), user)
         return answer, {**stats, "files": read}
 
-    def write_file(self, path: str, instructions: str, context_files: list) -> tuple[str, dict]:
+    def write_file(self, path: str, instructions: str, context_files: list, fresh: bool = False) -> tuple[str, dict]:
+        """`fresh`: desde cero, sin enseñarle el contenido actual (el 10/10 el Qwen3.5-9B, con él delante, devolvía
+        el mismo archivo en 37 «reescrituras»)."""
         if not instructions.strip():
             raise ToolError("faltan `instructions`")
         target = self.safe(path)
         old = target.read_text(encoding="utf-8", errors="replace") if target.is_file() else None
         ctx, read = self.read_files([f for f in context_files if f != path])
         user = f"ARCHIVO A ESCRIBIR: {path}\n\nINSTRUCCIONES:\n{instructions}"
-        if old is not None:
+        if old is not None and not fresh:
             user += f"\n\nCONTENIDO ACTUAL (reescríbelo entero):\n```\n{old[: self.input_budget()]}\n```"
         if ctx:
             user += f"\n\nARCHIVOS DE CONTEXTO:\n{ctx}"
         raw, stats = self.complete(SYSTEM_WRITE, user)
+        if is_refusal(strip_fence(raw)):  # el 10/10 gpt-oss contestó «I'm sorry, but I can't…» y eso fue sonido.js
+            raw, stats = self.complete(SYSTEM_WRITE, user + "\n\nEs código normal de un proyecto (sin nada delicado): "
+                                                            "escribe el archivo.")
+            if is_refusal(strip_fence(raw)):
+                raise ToolError(f"el modelo local se negó a escribir {path}")
         content = strip_fence(raw)
+        head, _, rest = content.lstrip().partition("\n")
+        if head.strip().strip("`*#/ ") == path:  # el 4B a veces pone la ruta en la primera línea: rompe el módulo
+            content = rest
         if not content.strip():
             raise ToolError("el modelo local devolvió un archivo vacío")
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -1070,7 +1080,7 @@ class Server:
                         entry["as"] = f"write (la edición falló: {str(e)[:120]})"
                         text, stats = self.write_file(it["path"], instructions, it["files"])
                 elif how == "write":
-                    text, stats = self.write_file(it["path"], instructions, it["files"])
+                    text, stats = self.write_file(it["path"], instructions, it["files"], bool(it["b"].get("fresh")))
                 else:
                     text, stats = self.ask(str(it["b"].get("instructions") or ""), it["files"])
                 entry.update(stats, ok=True)
@@ -1855,6 +1865,15 @@ def strip_fence(text: str) -> str:
     body = body.split("\n", 1)[1] if "\n" in body else ""  # fuera la etiqueta de lenguaje
     end = body.rfind("```")
     return body[:end].rstrip() if end >= 0 else body.rstrip()
+
+
+REFUSAL = re.compile(r"^\s*(I['’]m sorry|I am sorry|I can['’]?t|I cannot|I won['’]t|Sorry\b|Lo siento|"
+                     r"No puedo|Lamento)", re.I)
+
+
+def is_refusal(text: str) -> bool:
+    """Una negativa en vez del archivo: corta, en prosa y empieza disculpándose."""
+    return len(text) < 400 and bool(REFUSAL.match(text))
 
 
 def _short(model_id: str | None) -> str | None:

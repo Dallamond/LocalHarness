@@ -121,7 +121,7 @@ const detalles = new Map();
 const horas = (s) => (s >= 3600 ? `${(s / 3600).toFixed(1)} h` : `${Math.round(s / 60)} min`);
 const miles = (n) => (n || 0).toLocaleString("es-ES");
 const fecha = (iso) => (iso ? new Date(iso).toLocaleString("es-ES", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—");
-const claseResultado = (r) => (r === "integrado" ? "integrado" : /descartado|falló|tiempo|no se pudo/.test(r || "") ? "mal" : "");
+const claseResultado = (r) => (/^integrado/.test(r || "") ? "integrado" : /descartado|falló|tiempo|no se pudo/.test(r || "") ? "mal" : "");
 
 async function cargar() {
   datos = await (await fetch("/api/banco")).json();
@@ -217,7 +217,7 @@ function curva(g, series) {
     if (!pts.length) continue;
     svg += `<polyline fill="none" stroke="${e.color}" stroke-width="2" stroke-linejoin="round" points="${pts.map((p) => `${x(p[0])},${y(p[1])}`).join(" ")}"/>`;
     for (const [n, v, r] of pts) {
-      svg += r === "integrado"
+      svg += /^integrado/.test(r || "")
         ? `<circle cx="${x(n)}" cy="${y(v)}" r="3.5" fill="${e.color}" stroke="var(--tarjeta)" stroke-width="2"/>`
         : `<circle cx="${x(n)}" cy="${y(v)}" r="4" fill="var(--tarjeta)" stroke="${e.color}" stroke-width="2"/>`;
     }

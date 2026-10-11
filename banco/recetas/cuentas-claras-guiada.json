@@ -1,0 +1,951 @@
+[
+ {
+  "n": 1,
+  "texto": "Dinero y fechas. Dos módulos independientes que se pueden escribir a la vez. (A) src/dinero.js exporta aCentimos(valor) y formatear(centimos). aCentimos: si valor es un número → Math.round(valor * 100); si es texto, quita '€' y los espacios, admite un signo '+' o '-' delante y: si lleva ',' los '.' son separadores de miles (se quitan) y la ',' es la coma decimal; si no lleva ',' y tiene forma de miles (/^\\d{1,3}(\\.\\d{3})+$/) los '.' se quitan; si no, el '.' es el decimal. Como mucho 2 decimales. Devuelve céntimos enteros; cualquier otra cosa lanza Error('importe no válido'). formatear(centimos) = '1.234,56 €' (miles con punto, coma decimal, dos decimales, espacio y €; '-3,00 €' si es negativo). tests/dinero.test.mjs: aCentimos('12,50') es 1250; '12.5' es 1250; '1.234,56' es 123456; '1.234' es 123400; '-3' es -300; ' 7 € ' es 700; 'abc', '' y '1,234' lanzan 'importe no válido'; formatear(123456) es '1.234,56 €', formatear(-300) es '-3,00 €', formatear(5) es '0,05 €'. (B) src/fechas.js exporta diasDelMes(mes 'AAAA-MM') (bisiestos: divisible entre 4 y no entre 100, o entre 400), esFechaValida(texto) (forma 'AAAA-MM-DD' y fecha real), mesDe(fecha) = los 7 primeros caracteres, sumarMeses(mes, n) (n puede ser negativo) y nombreMes(mes) = 'octubre 2026'. tests/fechas.test.mjs: esFechaValida('2026-02-29') false, '2024-02-29' true, '2026-04-31' false, '2026-10-9' false; diasDelMes('2000-02') 29 y '2100-02' 28; sumarMeses('2026-11', 2) es '2027-01'; sumarMeses('2026-02', -3) es '2025-11'; nombreMes('2026-01') es 'enero 2026'.",
+  "blocks": [
+   {
+    "id": "a",
+    "kind": "write",
+    "path": "src/dinero.js",
+    "after": [],
+    "title": "dinero",
+    "instructions": "Crea src/dinero.js (módulo ES, comentarios y nombres en castellano, función pura, <200 líneas). Exporta: aCentimos(valor) y formatear(centimos).\naCentimos: si typeof valor es number y finito → Math.round(valor*100). Si es string: quita '€' y todos los espacios, luego un signo opcional '+' o '-' al inicio (guárdalo). El resto s: si contiene ',' → quita todos los '.' y la ',' es decimal; si no contiene ',' y cumple /^\\d{1,3}(\\.\\d{3})+$/ → quita los '.'; si no, el '.' es el decimal. Valida con /^\\d+(\\.\\d{1,2})?$/ tras normalizar la coma a punto (también admite '.5'? NO: exige dígitos antes). Como mucho 2 decimales. Calcula céntimos enteros sin errores de float: separa parte entera y decimal como texto (decimal rellenado a 2 dígitos con padEnd) y devuelve entero*100+decimal, aplicando el signo. Cualquier otra cosa (vacío, 'abc', '1,234', no string/number) → throw new Error('importe no válido').\nEjemplos: '12,50'→1250; '12.5'→1250; '1.234,56'→123456; '1.234'→123400; '-3'→-300; ' 7 € '→700.\nformatear(centimos): '1.234,56 €' (miles con punto, coma decimal, 2 decimales, espacio y €); negativo '-3,00 €'; formatear(5) → '0,05 €'. Trabaja con valor absoluto entero, sin toLocaleString."
+   },
+   {
+    "id": "ta",
+    "kind": "write",
+    "path": "tests/dinero.test.mjs",
+    "after": [],
+    "title": "tests dinero",
+    "instructions": "Crea tests/dinero.test.mjs con node:test y node:assert/strict, importando { aCentimos, formatear } de '../src/dinero.js'. Casos con assert.equal: aCentimos('12,50')=1250; '12.5'=1250; '1.234,56'=123456; '1.234'=123400; '-3'=-300; ' 7 € '=700; aCentimos(12.5)=1250; assert.throws(()=>aCentimos('abc'),{message:'importe no válido'}) y lo mismo para '' y '1,234'. formatear(123456)='1.234,56 €'; formatear(-300)='-3,00 €'; formatear(5)='0,05 €'."
+   },
+   {
+    "id": "b",
+    "kind": "write",
+    "path": "src/fechas.js",
+    "after": [],
+    "title": "fechas",
+    "instructions": "Crea src/fechas.js (módulo ES, castellano, funciones puras, <200 líneas). Exporta: diasDelMes(mes 'AAAA-MM') → número de días (bisiesto: divisible entre 4 y no entre 100, o entre 400; febrero 29/28; abril, junio, septiembre, noviembre 30; resto 31). esFechaValida(texto) → true solo si es string con forma /^\\d{4}-\\d{2}-\\d{2}$/ y mes 1-12 y día 1..diasDelMes. mesDe(fecha) → fecha.slice(0,7). sumarMeses(mes, n) → 'AAAA-MM' tras sumar n meses (n puede ser negativo; calcula con índice año*12+(mes-1)+n y Math.floor, mes con padStart 2). nombreMes(mes) → 'octubre 2026' (nombres en minúscula: enero febrero marzo abril mayo junio julio agosto septiembre octubre noviembre diciembre, espacio y año). No uses Date. Ejemplos: sumarMeses('2026-11',2)='2027-01'; sumarMeses('2026-02',-3)='2025-11'; nombreMes('2026-01')='enero 2026'."
+   },
+   {
+    "id": "tb",
+    "kind": "write",
+    "path": "tests/fechas.test.mjs",
+    "after": [],
+    "title": "tests fechas",
+    "instructions": "Crea tests/fechas.test.mjs con node:test y node:assert/strict, importando { diasDelMes, esFechaValida, mesDe, sumarMeses, nombreMes } de '../src/fechas.js'. Casos con assert.equal: esFechaValida('2026-02-29')=false; '2024-02-29'=true; '2026-04-31'=false; '2026-10-9'=false; diasDelMes('2000-02')=29; '2100-02'=28; mesDe('2026-10-09')='2026-10'; sumarMeses('2026-11',2)='2027-01'; sumarMeses('2026-02',-3)='2025-11'; nombreMes('2026-01')='enero 2026'."
+   },
+   {
+    "id": "c",
+    "kind": "edit",
+    "path": "CHANGELOG.md",
+    "after": [],
+    "title": "changelog",
+    "instructions": "Añade al final una línea nueva: '- Parche 001 · 09/10/2026 · Dinero y fechas: src/dinero.js (aCentimos, formatear) y src/fechas.js (diasDelMes, esFechaValida, mesDe, sumarMeses, nombreMes) con sus tests.'"
+   }
+  ]
+ },
+ {
+  "n": 2,
+  "texto": "Movimientos y HTML seguro. Dos módulos independientes que se pueden escribir a la vez. (A) src/movimientos.js exporta CATEGORIAS = ['comida', 'casa', 'transporte', 'ocio', 'salud', 'ropa', 'ingresos', 'otros'], crearMovimiento(datos, id), ordenar(lista), anadir(lista, mov), borrar(lista, id) y editar(lista, id, cambios). crearMovimiento recibe {fecha, concepto, importe, categoria} y devuelve {id, fecha, concepto (sin espacios a los lados), centimos: aCentimos(importe) de src/dinero.js, categoria (si no viene, 'otros')}; lanza Error 'fecha no válida' (esFechaValida de src/fechas.js), 'falta concepto' (vacío tras quitar espacios), 'categoría no válida' (no está en CATEGORIAS), 'importe cero' (centimos 0) o el de aCentimos. ordenar devuelve una lista NUEVA por fecha de más nueva a más vieja y, con la misma fecha, por id de mayor a menor; anadir = ordenar con el nuevo; borrar quita ese id; editar mezcla cambios en el de ese id (sin cambiar el id) y reordena. Ninguna toca la lista que recibe. tests/movimientos.test.mjs: crearMovimiento({fecha: '2026-09-01', concepto: ' Pan ', importe: '-1,20'}, 3) da {id: 3, fecha: '2026-09-01', concepto: 'Pan', centimos: -120, categoria: 'otros'}; con fecha '2026-09-31' lanza 'fecha no válida'; con categoria 'viajes' lanza 'categoría no válida'; ordenar de ids 1 (2026-09-01), 2 (2026-09-03) y 3 (2026-09-01) da 2, 3, 1; borrar y editar no cambian la lista original. (B) src/html.js exporta escapar(texto): cambia & < > \" ' por &amp; &lt; &gt; &quot; &#39;; null o undefined dan ''; un número se convierte a texto. tests/html.test.mjs: escapar('<b>\"a\" & \\'b\\'</b>') es '&lt;b&gt;&quot;a&quot; &amp; &#39;b&#39;&lt;/b&gt;'; escapar(undefined) es ''; escapar(7) es '7'.",
+  "blocks": [
+   {
+    "id": "A",
+    "kind": "write",
+    "path": "src/movimientos.js",
+    "after": [],
+    "files": [
+     "src/dinero.js",
+     "src/fechas.js"
+    ],
+    "title": "movimientos",
+    "instructions": "Crea src/movimientos.js (ES module, comentarios y nombres en castellano, <200 líneas, funciones puras que no modifican lo que reciben). Importa { aCentimos } de './dinero.js' y { esFechaValida } de './fechas.js' (mira sus firmas). Exporta: CATEGORIAS = ['comida','casa','transporte','ocio','salud','ropa','ingresos','otros']; crearMovimiento(datos, id) con datos {fecha, concepto, importe, categoria} devuelve {id, fecha, concepto (con trim), centimos: aCentimos(importe), categoria (si no viene, 'otros')}. Errores (new Error) en este orden: 'fecha no válida' si !esFechaValida(fecha); 'falta concepto' si concepto vacío tras trim (o no es texto); 'categoría no válida' si la categoría no está en CATEGORIAS; luego centimos=aCentimos(importe) (deja propagar su error); 'importe cero' si centimos es 0. ordenar(lista): devuelve lista NUEVA ordenada por fecha de más nueva a más vieja (comparar strings ISO) y con igual fecha por id de mayor a menor. anadir(lista, mov) = ordenar([...lista, mov]). borrar(lista, id) = lista nueva sin ese id. editar(lista, id, cambios) = lista nueva donde el de ese id es {...mov, ...cambios, id} y luego ordenar. Ninguna modifica la lista recibida."
+   },
+   {
+    "id": "B",
+    "kind": "write",
+    "path": "src/html.js",
+    "after": [],
+    "title": "html",
+    "instructions": "Crea src/html.js (ES module, castellano). Exporta escapar(texto): null o undefined dan ''; si no, String(texto) y reemplaza & < > \" ' por &amp; &lt; &gt; &quot; &#39; (el & primero / en un solo replace con mapa)."
+   },
+   {
+    "id": "TA",
+    "kind": "write",
+    "path": "tests/movimientos.test.mjs",
+    "after": [],
+    "title": "tests movimientos",
+    "instructions": "Crea tests/movimientos.test.mjs con node:test y node:assert/strict, importando de '../src/movimientos.js' (CATEGORIAS, crearMovimiento, ordenar, anadir, borrar, editar). Casos: crearMovimiento({fecha:'2026-09-01', concepto:' Pan ', importe:'-1,20'}, 3) deepEqual {id:3, fecha:'2026-09-01', concepto:'Pan', centimos:-120, categoria:'otros'}; con fecha '2026-09-31' assert.throws con message 'fecha no válida'; con categoria 'viajes' (fecha e importe válidos, concepto 'x') lanza 'categoría no válida'; concepto '  ' lanza 'falta concepto'; importe '0' lanza 'importe cero'. ordenar de [{id:1,fecha:'2026-09-01'},{id:2,fecha:'2026-09-03'},{id:3,fecha:'2026-09-01'}] da ids [2,3,1]. borrar(lista,2) devuelve sin id 2 y la lista original sigue con 3 elementos. editar(lista,1,{fecha:'2026-09-10'}) deja el id 1 primero con id intacto, y el original no cambia. anadir no modifica la original y ordena."
+   },
+   {
+    "id": "TB",
+    "kind": "write",
+    "path": "tests/html.test.mjs",
+    "after": [],
+    "title": "tests html",
+    "instructions": "Crea tests/html.test.mjs con node:test y node:assert/strict, importando escapar de '../src/html.js'. Casos: escapar('<b>\"a\" & \\'b\\'</b>') === '&lt;b&gt;&quot;a&quot; &amp; &#39;b&#39;&lt;/b&gt;'; escapar(undefined) === ''; escapar(null) === ''; escapar(7) === '7'."
+   },
+   {
+    "id": "C",
+    "kind": "edit",
+    "path": "CHANGELOG.md",
+    "after": [],
+    "title": "changelog",
+    "instructions": "Añade al final una línea nueva exactamente: - Parche 002 · 09/10/2026 · Movimientos y HTML seguro: src/movimientos.js (CATEGORIAS, crearMovimiento, ordenar, anadir, borrar, editar) y src/html.js (escapar) con sus tests."
+   }
+  ]
+ },
+ {
+  "n": 3,
+  "texto": "Filtros y rutas. Dos módulos independientes que se pueden escribir a la vez. (A) src/filtros.js exporta normalizar(texto) (minúsculas y sin tildes: normalize('NFD') y quitar /[̀-ͯ]/g) y filtrar(lista, filtro) con filtro {mes, categoria, texto, tipo}, todos opcionales: mes → mesDe(fecha) igual (src/fechas.js); categoria igual; tipo 'gasto' (centimos < 0), 'ingreso' (> 0) o 'todos' (por defecto); texto → normalizar(concepto) contiene normalizar(texto). Conserva el orden. tests/filtros.test.mjs con cuatro movimientos escritos a mano: sin filtro devuelve los 4; filtra por mes, por categoría, por tipo 'gasto', y 'PANADERIA' encuentra 'Panadería'. (B) src/rutas.js exporta VISTAS = ['resumen', 'movimientos', 'nuevo', 'presupuestos', 'importar'], leerRuta(hash) y crearRuta(vista, params). leerRuta quita '#' y '/' del principio, separa por '?', la vista vacía es 'resumen', los parámetros salen de URLSearchParams como objeto normal, y una vista que no está en VISTAS da {vista: 'no-encontrada', params: {}}. crearRuta da '#/' + vista y, si hay parámetros no vacíos, '?' con las claves ordenadas alfabéticamente y encodeURIComponent en clave y valor. tests/rutas.test.mjs: leerRuta('') es {vista: 'resumen', params: {}}; leerRuta('#/movimientos?mes=2026-10') es {vista: 'movimientos', params: {mes: '2026-10'}}; leerRuta('#/luna') es no-encontrada; crearRuta('movimientos', {mes: '2026-10', categoria: 'ocio'}) es '#/movimientos?categoria=ocio&mes=2026-10'; crearRuta('resumen', {texto: ''}) es '#/resumen'.",
+  "blocks": [
+   {
+    "id": "a",
+    "kind": "write",
+    "path": "src/filtros.js",
+    "after": [],
+    "files": [
+     "src/fechas.js"
+    ],
+    "title": "filtros",
+    "instructions": "Crea src/filtros.js (ES module, comentarios en castellano, <200 líneas). Importa { mesDe } de './fechas.js'. Exporta normalizar(texto): String(texto).toLowerCase() luego .normalize('NFD') y .replace(/[̀-ͯ]/g, ''). Exporta filtrar(lista, filtro = {}) con filtro {mes, categoria, texto, tipo}, todos opcionales; devuelve un array NUEVO conservando el orden: si mes → mesDe(m.fecha) === mes; si categoria → m.categoria === categoria; tipo 'gasto' → m.centimos < 0, 'ingreso' → m.centimos > 0, 'todos' o ausente → todos; si texto → normalizar(m.concepto).includes(normalizar(texto)). No muta la lista."
+   },
+   {
+    "id": "b",
+    "kind": "write",
+    "path": "tests/filtros.test.mjs",
+    "after": [],
+    "files": [
+     "src/fechas.js"
+    ],
+    "title": "test filtros",
+    "instructions": "Crea tests/filtros.test.mjs con node:test y node:assert/strict, importando { filtrar, normalizar } de '../src/filtros.js'. Cuatro movimientos a mano {id,fecha,concepto,centimos,categoria}: 1 '2026-09-10' 'Supermercado' -5000 'comida'; 2 '2026-10-01' 'Nómina' 150000 'ingresos'; 3 '2026-10-05' 'Panadería' -250 'comida'; 4 '2026-10-07' 'Cine' -900 'ocio'. Tests: sin filtro ({} ) devuelve los 4 en el mismo orden; mes '2026-10' devuelve ids [2,3,4]; categoria 'comida' ids [1,3]; tipo 'gasto' ids [1,3,4]; tipo 'ingreso' ids [2]; texto 'PANADERIA' devuelve ids [3]; normalizar('Panadería') === 'panaderia'."
+   },
+   {
+    "id": "c",
+    "kind": "write",
+    "path": "src/rutas.js",
+    "after": [],
+    "title": "rutas",
+    "instructions": "Crea src/rutas.js (ES module, comentarios en castellano). Exporta const VISTAS = ['resumen','movimientos','nuevo','presupuestos','importar']. leerRuta(hash): quita de principio los caracteres '#' y '/' (replace(/^[#/]+/, '')), separa por la primera '?' en vista y consulta; vista vacía → 'resumen'; params = Object.fromEntries(new URLSearchParams(consulta)); si la vista no está en VISTAS devuelve {vista:'no-encontrada', params:{}}; si no {vista, params}. crearRuta(vista, params = {}): base '#/' + vista; filtra las entradas cuyo valor sea '' / undefined / null; si quedan, ordena claves alfabéticamente y añade '?' + pares encodeURIComponent(clave)+'='+encodeURIComponent(valor) unidos por '&'."
+   },
+   {
+    "id": "d",
+    "kind": "write",
+    "path": "tests/rutas.test.mjs",
+    "after": [],
+    "title": "test rutas",
+    "instructions": "Crea tests/rutas.test.mjs con node:test y node:assert/strict, importando { VISTAS, leerRuta, crearRuta } de '../src/rutas.js'. Casos con deepEqual/equal: leerRuta('') → {vista:'resumen', params:{}}; leerRuta('#/movimientos?mes=2026-10') → {vista:'movimientos', params:{mes:'2026-10'}}; leerRuta('#/luna') → {vista:'no-encontrada', params:{}}; crearRuta('movimientos',{mes:'2026-10',categoria:'ocio'}) === '#/movimientos?categoria=ocio&mes=2026-10'; crearRuta('resumen',{texto:''}) === '#/resumen'; VISTAS tiene 5 elementos."
+   },
+   {
+    "id": "e",
+    "kind": "edit",
+    "path": "CHANGELOG.md",
+    "after": [],
+    "title": "changelog",
+    "instructions": "Añade al final una línea: '- Parche 003 · 09/10/2026 · Filtros y rutas: src/filtros.js (normalizar, filtrar) y src/rutas.js (VISTAS, leerRuta, crearRuta) con sus tests.'"
+   }
+  ]
+ },
+ {
+  "n": 4,
+  "texto": "Resumen del mes y almacén. Dos módulos independientes que se pueden escribir a la vez. (A) src/resumen.js exporta resumenMes(lista, mes) = {mes, ingresos (suma de los positivos), gastos (suma de los negativos, en positivo), saldo = ingresos - gastos, porCategoria: [{categoria, centimos}] solo de gastos y en positivo, de mayor a menor y con empate por nombre de categoría, numero: cuántos movimientos tiene ese mes}; saldoHasta(lista, mes) = suma de centimos de todos los movimientos de ese mes o anteriores; evolucion(lista, mes, n) = los n meses que acaban en mes, del más viejo al más nuevo, cada uno {mes, ingresos, gastos, saldo} (usa sumarMeses de src/fechas.js). tests/resumen.test.mjs con movimientos escritos a mano: un mes con un ingreso de 100000 y gastos de comida 2000 y 1000 y ocio 500 da ingresos 100000, gastos 3500, saldo 96500 y porCategoria [{categoria: 'comida', centimos: 3000}, {categoria: 'ocio', centimos: 500}]; un mes sin nada da todo 0 y porCategoria []; evolucion de 2 meses devuelve 2 objetos en orden. (B) src/almacen.js exporta CLAVE = 'cuentas-claras', estadoVacio() = {version: 1, movimientos: [], presupuestos: {}, siguienteId: 1}, cargar(almacen) y guardar(almacen, estado). almacen es cualquier objeto con getItem(clave) y setItem(clave, texto), como localStorage (en los tests, uno falso con un Map). guardar escribe JSON.stringify(estado) en CLAVE; cargar lo lee y, si no hay nada, el JSON está roto, version no es 1 o movimientos no es un array, devuelve estadoVacio(). tests/almacen.test.mjs: guardar y cargar devuelve lo mismo; sin nada da estadoVacio(); con '{roto' da estadoVacio().",
+  "blocks": [
+   {
+    "id": "a",
+    "kind": "write",
+    "path": "src/resumen.js",
+    "files": [
+     "src/fechas.js"
+    ],
+    "instructions": "Crea src/resumen.js (ES module, nombres en castellano, funciones puras, <200 líneas). Importa { mesDe, sumarMeses } de './fechas.js'. Un movimiento es {id, fecha:'AAAA-MM-DD', concepto, categoria, centimos} (gasto negativo, ingreso positivo). Exporta: resumenMes(lista, mes) => {mes, ingresos (suma de centimos positivos del mes), gastos (suma de los negativos del mes, en positivo), saldo: ingresos-gastos, porCategoria: [{categoria, centimos}] solo de gastos, centimos en positivo, ordenado de mayor a menor y con empate por nombre de categoría (localeCompare), numero: cuántos movimientos tiene ese mes}. Un movimiento es del mes si mesDe(m.fecha)===mes. saldoHasta(lista, mes) = suma de centimos de todos los movimientos cuyo mesDe sea <= mes (comparación de strings). evolucion(lista, mes, n) = array de n objetos {mes, ingresos, gastos, saldo}, de los n meses que acaban en mes, del más viejo al más nuevo (usa sumarMeses(mes+'-01', -i) — sumarMeses devuelve 'AAAA-MM'). No modifiques la lista recibida."
+   },
+   {
+    "id": "b",
+    "kind": "write",
+    "path": "src/almacen.js",
+    "instructions": "Crea src/almacen.js (ES module, castellano, <200 líneas). Exporta CLAVE = 'cuentas-claras'; estadoVacio() = {version: 1, movimientos: [], presupuestos: {}, siguienteId: 1} (objeto nuevo en cada llamada); guardar(almacen, estado) hace almacen.setItem(CLAVE, JSON.stringify(estado)); cargar(almacen) lee almacen.getItem(CLAVE) y devuelve el objeto parseado; devuelve estadoVacio() si no hay nada (null/undefined), si JSON.parse falla (try/catch), si el resultado no es objeto, si version !== 1 o si movimientos no es un array. almacen es cualquier objeto con getItem/setItem como localStorage. No uses localStorage directamente."
+   },
+   {
+    "id": "c",
+    "kind": "write",
+    "path": "tests/resumen.test.mjs",
+    "files": [
+     "src/resumen.js"
+    ],
+    "after": [
+     "a"
+    ],
+    "instructions": "Tests con node:test y node:assert/strict (import test from 'node:test'; import assert from 'node:assert/strict') de src/resumen.js. Lista a mano con movimientos {id,fecha,concepto,categoria,centimos}: en 2026-10: ingreso 100000 (categoria 'nomina'), gastos comida -2000 y -1000, ocio -500. Casos: resumenMes(lista,'2026-10') deepEqual {mes:'2026-10', ingresos:100000, gastos:3500, saldo:96500, porCategoria:[{categoria:'comida',centimos:3000},{categoria:'ocio',centimos:500}], numero:4}; mes sin nada ('2026-01') da ingresos 0, gastos 0, saldo 0, porCategoria [], numero 0; saldoHasta(lista,'2026-10') con además un movimiento de 2026-09 de -1000 da 95500 y saldoHasta(lista,'2026-09') da -1000; evolucion(lista,'2026-10',2) devuelve 2 objetos con mes '2026-09' y '2026-10' en ese orden, con los valores correctos."
+   },
+   {
+    "id": "d",
+    "kind": "write",
+    "path": "tests/almacen.test.mjs",
+    "files": [
+     "src/almacen.js"
+    ],
+    "after": [
+     "b"
+    ],
+    "instructions": "Tests con node:test y node:assert/strict de src/almacen.js. Almacén falso con un Map: {getItem(k){return mapa.has(k)?mapa.get(k):null}, setItem(k,v){mapa.set(k,v)}}. Casos: guardar y luego cargar devuelve deepEqual lo mismo (estado con un movimiento, presupuestos {comida: 20000}, siguienteId 2); almacén sin nada -> deepEqual estadoVacio(); setItem(CLAVE,'{roto') -> estadoVacio(); version 2 -> estadoVacio(); movimientos no array -> estadoVacio()."
+   },
+   {
+    "id": "e",
+    "kind": "edit",
+    "path": "CHANGELOG.md",
+    "instructions": "Añade al final una línea: - Parche 004 · 09/10/2026 · Resumen del mes y almacén: src/resumen.js (resumenMes, saldoHasta, evolucion) y src/almacen.js (CLAVE, estadoVacio, cargar, guardar) con sus tests."
+   }
+  ]
+ },
+ {
+  "n": 5,
+  "texto": "CSV. (A) src/csv.js exporta CABECERA = 'fecha;concepto;importe;categoria', importeCsv(centimos) ('-12,50', '0,05', '1234,00': coma decimal, sin miles ni €), aCsv(lista) (cabecera y una línea por movimiento en el orden recibido, separadas por '\\n' y con '\\n' al final; el concepto va entre comillas dobles si lleva ';', '\"' o salto de línea, y sus comillas se duplican), partirLinea(linea) (separa por ';' respetando las comillas) y deCsv(texto, primerId = 1) = {movimientos, errores}. deCsv quita el BOM (﻿), parte por /\\r?\\n/, salta las líneas vacías, la primera no vacía tiene que ser la cabecera (sin distinguir mayúsculas; si no, devuelve {movimientos: [], errores: [{linea, motivo: 'cabecera no válida'}]}), y cada línea se convierte con crearMovimiento de src/movimientos.js con ids seguidos desde primerId (solo los válidos consumen id). Una línea con menos de 4 campos da el error 'faltan columnas'; si crearMovimiento lanza, el motivo es su mensaje. linea es el número de línea del archivo empezando en 1. tests/csv.test.mjs: aCsv de un movimiento con concepto 'Bar \"Pepe\"; cañas' y -1250 da 'fecha;concepto;importe;categoria\\n2026-09-01;\"Bar \"\"Pepe\"\"; cañas\";-12,50;ocio\\n'; deCsv de un texto con cabecera, una línea buena, una con fecha '2026-02-30' y una con 3 campos da 1 movimiento y errores [{linea: 3, motivo: 'fecha no válida'}, {linea: 4, motivo: 'faltan columnas'}]; deCsv(aCsv(lista)) devuelve los mismos movimientos (salvo ids); docs/ejemplo.csv (léelo con readFileSync en el test) da 30 movimientos y 0 errores.",
+  "blocks": [
+   {
+    "id": "csv",
+    "kind": "write",
+    "path": "src/csv.js",
+    "title": "módulo csv",
+    "after": [],
+    "files": [
+     "src/movimientos.js",
+     "src/dinero.js"
+    ],
+    "instructions": "Crea src/csv.js (ES module, comentarios en castellano, <200 líneas, funciones puras). Importa crearMovimiento de './movimientos.js'. Un movimiento tiene forma {id, fecha, concepto, centimos, categoria}. Exporta: (1) const CABECERA = 'fecha;concepto;importe;categoria'. (2) importeCsv(centimos): texto con coma decimal, sin miles ni €, siempre 2 decimales, signo '-' si negativo: -1250 -> '-12,50', 5 -> '0,05', 123400 -> '1234,00' (usa Math.abs, Math.floor(abs/100) y abs%100 con padStart 2). (3) aCsv(lista): devuelve [CABECERA, ...una línea por movimiento en el orden recibido `${fecha};${concepto};${importeCsv(centimos)};${categoria}`].join('\\n') + '\\n'. El concepto va entre comillas dobles si contiene ';', '\"' o '\\n' (o '\\r'), duplicando las comillas internas. (4) partirLinea(linea): separa por ';' respetando comillas dobles (dentro de comillas, \"\" es una comilla literal y ';' no separa); devuelve array de strings. (5) deCsv(texto, primerId = 1) -> {movimientos, errores}. Quita un BOM inicial (﻿), parte por /\\r?\\n/ enumerando con número de línea empezando en 1, salta las líneas vacías (trim()==='' ), la primera no vacía debe ser la cabecera: comparar su trim().toLowerCase() con CABECERA; si no coincide devuelve {movimientos: [], errores: [{linea, motivo: 'cabecera no válida'}]}. Cada línea siguiente: campos = partirLinea(linea); si campos.length < 4 -> errores.push({linea, motivo: 'faltan columnas'}); si no, try { crearMovimiento({fecha: campos[0], concepto: campos[1], importe: campos[2], categoria: campos[3]}, id) } catch (e) { errores.push({linea, motivo: e.message}) }. Solo los movimientos válidos consumen id (id empieza en primerId y sube 1 por válido). Si no hay ninguna línea no vacía, devuelve cabecera no válida con linea 1. Nota: crearMovimiento recibe el importe como texto tipo '1.200,00' o '-12,50' y lo convierte él (aCentimos)."
+   },
+   {
+    "id": "test",
+    "kind": "write",
+    "path": "tests/csv.test.mjs",
+    "title": "tests csv",
+    "after": [
+     "csv"
+    ],
+    "files": [
+     "src/csv.js",
+     "src/movimientos.js"
+    ],
+    "instructions": "Crea tests/csv.test.mjs con node:test y node:assert/strict (import { test } from 'node:test'; import assert from 'node:assert/strict'; import { readFileSync } from 'node:fs'; import { aCsv, deCsv, importeCsv, partirLinea, CABECERA } from '../src/csv.js'). Tests: (a) aCsv([{id:1,fecha:'2026-09-01',concepto:'Bar \"Pepe\"; cañas',centimos:-1250,categoria:'ocio'}]) === 'fecha;concepto;importe;categoria\\n2026-09-01;\"Bar \"\"Pepe\"\"; cañas\";-12,50;ocio\\n'. (b) importeCsv(-1250)='-12,50', importeCsv(5)='0,05', importeCsv(123400)='1234,00'. (c) deCsv de texto 'fecha;concepto;importe;categoria\\n2026-09-01;Café;-1,50;comida\\n2026-02-30;Mal;-1,00;otros\\n2026-09-02;Corta;-1,00' da movimientos.length 1 y errores deepEqual [{linea:3,motivo:'fecha no válida'},{linea:4,motivo:'faltan columnas'}]. (d) ida y vuelta: lista de 2-3 movimientos (con un concepto con ';' y comillas), deCsv(aCsv(lista), 1).movimientos con el id quitado (map sin id) deepEqual a la lista sin id, errores []. (e) docs/ejemplo.csv leído con readFileSync(new URL('../docs/ejemplo.csv', import.meta.url), 'utf8'): deCsv da 30 movimientos y 0 errores. (f) cabecera no válida: deCsv('hola\\n1;2;3;4') deepEqual {movimientos:[],errores:[{linea:1,motivo:'cabecera no válida'}]}. (g) partirLinea('a;\"b;c\";d') deepEqual ['a','b;c','d']."
+   },
+   {
+    "id": "log",
+    "kind": "edit",
+    "path": "CHANGELOG.md",
+    "title": "changelog",
+    "after": [],
+    "instructions": "Añade al final del archivo la línea: - Parche 005 · 09/10/2026 · CSV: src/csv.js (CABECERA, importeCsv, aCsv, partirLinea, deCsv) con sus tests."
+   }
+  ]
+ },
+ {
+  "n": 6,
+  "texto": "Presupuestos y estado de la app. Dos módulos independientes que se pueden escribir a la vez. (A) src/presupuestos.js exporta estadoPresupuestos(presupuestos, lista, mes): presupuestos es {categoria: limite en céntimos}; para cada categoría con limite > 0 devuelve {categoria, limite, gastado (gastos de esa categoría en ese mes, en positivo), restante = limite - gastado, porcentaje = Math.round(gastado * 100 / limite), estado: 'ok' si porcentaje < 80, 'aviso' si va de 80 a 100 (100 incluido) y 'pasado' si pasa de 100}, ordenado por porcentaje de mayor a menor y con empate por categoría. tests/presupuestos.test.mjs: limite 10000 con 5000 gastados da porcentaje 50 y 'ok'; con 8000, 'aviso'; con 10000, 'aviso'; con 10050, 101 y 'pasado'; los ingresos y los gastos de otro mes no cuentan; un limite 0 no sale. (B) src/estado.js exporta reducir(estado, accion), pura (no toca el estado que recibe), con estado = el de estadoVacio de src/almacen.js. Acciones: {tipo: 'anadir', datos} → crearMovimiento(datos, siguienteId), anadir a la lista y siguienteId + 1; {tipo: 'borrar', id}; {tipo: 'editar', id, datos} → crearMovimiento(datos, id) sustituye al de ese id y se reordena; {tipo: 'presupuesto', categoria, importe} → presupuestos[categoria] = aCentimos(importe), y si importe es '' o da 0, se borra la categoría; {tipo: 'importar', texto} → deCsv(texto, siguienteId) de src/csv.js, añade los válidos, reordena y siguienteId suma cuántos entraron; otro tipo lanza Error('acción desconocida'). Los errores de crearMovimiento se dejan pasar. tests/estado.test.mjs: añadir dos movimientos da siguienteId 3 y los ids en orden de fecha; borrar quita uno; presupuesto '150' guarda 15000 y '' lo borra; importar un CSV de 2 líneas buenas sube siguienteId en 2; el estado original no cambia.",
+  "blocks": [
+   {
+    "id": "a",
+    "kind": "write",
+    "path": "src/presupuestos.js",
+    "files": [
+     "src/resumen.js"
+    ],
+    "title": "presupuestos",
+    "after": [],
+    "instructions": "Crea src/presupuestos.js (ES module, comentarios en castellano, <200 líneas). Exporta estadoPresupuestos(presupuestos, lista, mes). presupuestos = {categoria: limite en céntimos}; lista = movimientos {id,fecha:'AAAA-MM-DD',concepto,centimos,categoria} (gasto = centimos negativo); mes = 'AAAA-MM'. Para cada categoría con limite > 0 devuelve {categoria, limite, gastado, restante, porcentaje, estado}: gastado = suma de -centimos de los movimientos con centimos<0, esa categoría y fecha que empieza por mes (en positivo; ingresos no cuentan); restante = limite - gastado; porcentaje = Math.round(gastado*100/limite); estado: 'ok' si porcentaje < 80, 'aviso' si 80..100 (100 incluido), 'pasado' si > 100. Ordenado por porcentaje descendente y, en empate, por categoría (localeCompare). No muta nada. Puedes usar mesDe de src/fechas.js si encaja, o fecha.slice(0,7)."
+   },
+   {
+    "id": "b",
+    "kind": "write",
+    "path": "tests/presupuestos.test.mjs",
+    "files": [],
+    "title": "tests presupuestos",
+    "after": [],
+    "instructions": "Crea tests/presupuestos.test.mjs con node:test y node:assert/strict, importando estadoPresupuestos de ../src/presupuestos.js. Firma: estadoPresupuestos(presupuestos, lista, mes) con movimientos {id,fecha,concepto,centimos,categoria}. Casos: limite 10000 en 'comida' con un gasto de centimos -5000 en 2026-10 → porcentaje 50, estado 'ok', gastado 5000, restante 5000; con -8000 → 'aviso' (80); con -10000 → 'aviso' (100); con -10050 → porcentaje 101, 'pasado', restante -50; un ingreso (centimos positivo) y un gasto de otro mes (2026-09) en la misma categoría no cuentan; un limite 0 no aparece en el resultado; orden por porcentaje descendente con dos categorías. Usa assert.deepEqual con valores concretos."
+   },
+   {
+    "id": "c",
+    "kind": "write",
+    "path": "src/estado.js",
+    "files": [
+     "src/almacen.js",
+     "src/movimientos.js",
+     "src/csv.js",
+     "src/dinero.js"
+    ],
+    "title": "reductor",
+    "after": [],
+    "instructions": "Crea src/estado.js (ES module, castellano, <200 líneas). Exporta reducir(estado, accion), pura: nunca muta el estado recibido, devuelve un objeto nuevo {...estado, ...}. estado tiene la forma de estadoVacio() de src/almacen.js ({version,movimientos,presupuestos,siguienteId}). Importa crearMovimiento, ordenar, anadir, borrar de src/movimientos.js, aCentimos de src/dinero.js, deCsv de src/csv.js (deCsv(texto, primerId) devuelve {movimientos, errores}). Acciones por accion.tipo: 'anadir' {datos} → mov = crearMovimiento(datos, estado.siguienteId); movimientos = anadir(estado.movimientos, mov); siguienteId+1. 'borrar' {id} → movimientos = borrar(estado.movimientos, id). 'editar' {id, datos} → mov = crearMovimiento(datos, id); movimientos = ordenar(estado.movimientos.map(m => m.id === id ? mov : m)) (NO uses la función editar de movimientos.js, tiene otra firma). 'presupuesto' {categoria, importe} → copia de presupuestos; si importe === '' o aCentimos(importe) da 0, se borra la clave; si no, presupuestos[categoria] = aCentimos(importe). 'importar' {texto} → r = deCsv(texto, estado.siguienteId); movimientos = ordenar([...estado.movimientos, ...r.movimientos]); siguienteId = estado.siguienteId + r.movimientos.length. Cualquier otro tipo: throw new Error('acción desconocida'). Los errores de crearMovimiento se dejan pasar (sin try/catch)."
+   },
+   {
+    "id": "d",
+    "kind": "write",
+    "path": "tests/estado.test.mjs",
+    "files": [
+     "src/almacen.js",
+     "src/movimientos.js"
+    ],
+    "title": "tests estado",
+    "after": [],
+    "instructions": "Crea tests/estado.test.mjs con node:test y node:assert/strict, importando reducir de ../src/estado.js y estadoVacio de ../src/almacen.js. datos de movimiento: {fecha:'2026-10-05', concepto:'Pan', importe:'-3,50', categoria:'comida'} (importe como texto con aCentimos; gasto negativo). Casos: (1) añadir dos movimientos (primero fecha 2026-10-05, luego 2026-10-10) da siguienteId 3 y los ids en el orden de ordenar (fecha descendente: [2,1]); (2) borrar quita uno por id; (3) acción presupuesto {categoria:'comida', importe:'150'} guarda presupuestos.comida === 15000 y luego importe '' lo borra (no existe la clave); (4) importar un CSV de 2 líneas buenas sube siguienteId en 2: texto = 'fecha;concepto;importe;categoria\\n2026-10-01;Pan;-3,50;comida\\n2026-10-02;Sueldo;1000,00;ingresos\\n' (comprueba la cabecera real en CABECERA de src/csv.js y úsala importándola); (5) el estado original no cambia (JSON.stringify igual antes y después); (6) tipo desconocido lanza Error con message 'acción desconocida'; (7) editar cambia el concepto de un id."
+   },
+   {
+    "id": "e",
+    "kind": "edit",
+    "path": "CHANGELOG.md",
+    "files": [
+     "CHANGELOG.md"
+    ],
+    "title": "changelog",
+    "after": [],
+    "instructions": "Añade al final una línea nueva: '- Parche 006 · 09/10/2026 · Presupuestos y estado: src/presupuestos.js (estadoPresupuestos) y src/estado.js (reducir) con sus tests.'"
+   }
+  ]
+ },
+ {
+  "n": 7,
+  "texto": "Navegación y tabla de movimientos. Dos módulos independientes que se pueden escribir a la vez. (A) src/navegacion.js exporta navegacion(vistaActual): '<nav>' con un enlace <a href=\"crearRuta(v)\"> por cada vista de VISTAS (src/rutas.js), con texto 'Resumen', 'Movimientos', 'Nuevo', 'Presupuestos' e 'Importar', y aria-current=\"page\" solo en la actual. tests/navegacion.test.mjs: navegacion('nuevo') empieza por '<nav', tiene href=\"#/resumen\" y los otros cuatro, y aria-current=\"page\" aparece una vez, en el enlace de nuevo. (B) src/vista-movimientos.js exporta tablaMovimientos(lista): si está vacía, '<p class=\"vacio\">No hay movimientos</p>'; si no, '<table class=\"movimientos\">' con cabecera y un '<tr data-id=\"ID\">' por movimiento en el orden recibido con la fecha, el concepto escapado (escapar de src/html.js), la categoría, el importe con formatear (src/dinero.js) y un '<button type=\"button\" data-borrar=\"ID\">Borrar</button>'. tests/vista-movimientos.test.mjs: con 2 movimientos hay 2 '<tr data-id='; sale '-12,50 €'; un concepto '<i>x</i>' sale como '&lt;i&gt;x&lt;/i&gt;'; la lista vacía da la clase vacio y ninguna tabla.",
+  "blocks": [
+   {
+    "id": "A",
+    "kind": "write",
+    "path": "src/navegacion.js",
+    "title": "navegacion",
+    "after": [],
+    "files": [
+     "src/rutas.js",
+     "src/html.js"
+    ],
+    "instructions": "Crea src/navegacion.js (ESM, comentarios en castellano, <200 líneas). Importa { VISTAS, crearRuta } de './rutas.js'. Exporta function navegacion(vistaActual) que devuelve un string HTML: '<nav>' + un <a href=\"RUTA\">TEXTO</a> por cada vista de VISTAS en ese orden + '</nav>'. RUTA = crearRuta(vista). Textos: resumen→'Resumen', movimientos→'Movimientos', nuevo→'Nuevo', presupuestos→'Presupuestos', importar→'Importar'. Solo el enlace cuya vista === vistaActual lleva ' aria-current=\"page\"' (formato: <a href=\"#/nuevo\" aria-current=\"page\">Nuevo</a>). Los demás no llevan el atributo. El string debe empezar por '<nav' exactamente."
+   },
+   {
+    "id": "B",
+    "kind": "write",
+    "path": "src/vista-movimientos.js",
+    "title": "tablaMovimientos",
+    "after": [],
+    "files": [
+     "src/html.js",
+     "src/dinero.js",
+     "src/movimientos.js"
+    ],
+    "instructions": "Crea src/vista-movimientos.js (ESM, comentarios en castellano, <200 líneas). Importa { escapar } de './html.js' y { formatear } de './dinero.js'. Exporta function tablaMovimientos(lista). Si lista.length===0 devuelve exactamente '<p class=\"vacio\">No hay movimientos</p>'. Si no, devuelve '<table class=\"movimientos\">' con <thead> (columnas Fecha, Concepto, Categoría, Importe, y una vacía para acciones) y <tbody> con un `<tr data-id=\"ID\">` por movimiento en el orden recibido (no reordenar, no mutar), con <td> de: fecha, escapar(concepto), categoria (escapada también), formatear(importe) (importe en céntimos), y <td><button type=\"button\" data-borrar=\"ID\">Borrar</button></td>. Cierra </tbody></table>. Los movimientos tienen campos id, fecha, concepto, categoria, importe. Mira src/dinero.js para ver cómo es formatear."
+   },
+   {
+    "id": "C",
+    "kind": "write",
+    "path": "tests/navegacion.test.mjs",
+    "title": "test navegacion",
+    "after": [
+     "A"
+    ],
+    "files": [
+     "src/navegacion.js"
+    ],
+    "instructions": "Crea tests/navegacion.test.mjs con node:test y node:assert/strict, importando { navegacion } de '../src/navegacion.js'. Un test: const h = navegacion('nuevo'); assert h.startsWith('<nav'); incluye href=\"#/resumen\", href=\"#/movimientos\", href=\"#/nuevo\", href=\"#/presupuestos\", href=\"#/importar\"; h.split('aria-current=\"page\"').length-1 === 1; y que h incluye '<a href=\"#/nuevo\" aria-current=\"page\">Nuevo</a>'."
+   },
+   {
+    "id": "D",
+    "kind": "write",
+    "path": "tests/vista-movimientos.test.mjs",
+    "title": "test tabla",
+    "after": [
+     "B"
+    ],
+    "files": [
+     "src/vista-movimientos.js",
+     "src/dinero.js"
+    ],
+    "instructions": "Crea tests/vista-movimientos.test.mjs con node:test y node:assert/strict, importando { tablaMovimientos } de '../src/vista-movimientos.js'. Movimientos de ejemplo: {id:1,fecha:'2026-10-02',concepto:'Pan',categoria:'comida',importe:-1250} y {id:2,fecha:'2026-10-01',concepto:'<i>x</i>',categoria:'otros',importe:-300}. Tests: con los 2 hay 2 apariciones de '<tr data-id=' (cuenta con split); el HTML incluye '-12,50 €' (copia el carácter exacto que produce formatear en src/dinero.js, p.ej. espacio normal o no separable: compruébalo); un concepto '<i>x</i>' sale como '&lt;i&gt;x&lt;/i&gt;' y no aparece '<i>x</i>' crudo; incluye 'data-borrar=\"1\"'; lista vacía: incluye 'class=\"vacio\"' y no incluye '<table'."
+   },
+   {
+    "id": "E",
+    "kind": "edit",
+    "path": "CHANGELOG.md",
+    "title": "changelog",
+    "after": [],
+    "instructions": "Añade al final del archivo una línea nueva: '- Parche 007 · 09/10/2026 · Navegación y tabla de movimientos: src/navegacion.js (navegacion) y src/vista-movimientos.js (tablaMovimientos) con sus tests.'"
+   }
+  ]
+ },
+ {
+  "n": 8,
+  "texto": "Gráfico y vista de presupuestos. Dos módulos independientes que se pueden escribir a la vez. (A) src/grafico.js exporta graficoBarras(evolucion) (la lista de evolucion de src/resumen.js): '<svg class=\"grafico\" viewBox=\"0 0 ANCHO 100\">' con, por cada mes, '<rect class=\"ingresos\" ...>' y '<rect class=\"gastos\" ...>' (en ese orden, con data-mes, x, y, width y height); la barra más alta de todo el gráfico mide height 100 y las demás Math.round(valor * 100 / maximo); y = 100 - height; si todo es 0, las alturas son 0. tests/grafico.test.mjs: con dos meses (ingresos 1000 y gastos 500; ingresos 2000 y gastos 0) las alturas son 50, 25, 100 y 0, y hay 2 rect de cada clase. (B) src/vista-presupuestos.js exporta vistaPresupuestos(estados) (la lista de estadoPresupuestos): por cada uno '<div class=\"presupuesto ESTADO\" data-categoria=\"CATEGORIA\">' con el nombre, '<progress value=\"P\" max=\"100\">' con P = Math.min(porcentaje, 100) y el texto 'gastado de limite (porcentaje %)' con formatear; si no hay ninguno, '<p class=\"vacio\">Sin presupuestos</p>'; y siempre un '<form id=\"form-presupuesto\">' con un select name=\"categoria\" (todas las categorías menos 'ingresos') y un input name=\"importe\". tests/vista-presupuestos.test.mjs: un estado 'pasado' de 150 % da class=\"presupuesto pasado\" y progress value=\"100\"; uno 'ok' de 40 % da value=\"40\"; siempre está form-presupuesto.",
+  "blocks": [
+   {
+    "id": "a",
+    "kind": "write",
+    "path": "src/grafico.js",
+    "after": [],
+    "title": "grafico",
+    "instructions": "Crea src/grafico.js (ES module, comentarios en castellano, <200 líneas). Exporta function graficoBarras(evolucion) donde evolucion es lista de {mes, ingresos, gastos, saldo} (céntimos; gastos puede ser positivo o negativo: usa Math.abs). Calcula maximo = el mayor de todos los Math.abs(ingresos) y Math.abs(gastos). altura(v)= maximo===0 ? 0 : Math.round(Math.abs(v)*100/maximo). Devuelve texto: `<svg class=\"grafico\" viewBox=\"0 0 ANCHO 100\">` + por cada mes i (en orden) dos rect: primero `<rect class=\"ingresos\" data-mes=\"MES\" x=\"X\" y=\"Y\" width=\"10\" height=\"H\"></rect>` con X=i*30, luego `<rect class=\"gastos\" data-mes=\"MES\" x=\"X\" y=\"Y\" width=\"10\" height=\"H\"></rect>` con X=i*30+12; Y=100-H. ANCHO = evolucion.length*30. Cierra con </svg>. Usa escapar de ./html.js para el mes. Los atributos deben escribirse exactamente en ese orden y con comillas dobles."
+   },
+   {
+    "id": "b",
+    "kind": "write",
+    "path": "tests/grafico.test.mjs",
+    "after": [],
+    "title": "test grafico",
+    "instructions": "Crea tests/grafico.test.mjs con node:test y node:assert/strict, importando graficoBarras de ../src/grafico.js. Test: evolucion=[{mes:'2026-09',ingresos:100000,gastos:50000,saldo:50000},{mes:'2026-10',ingresos:200000,gastos:0,saldo:200000}]. Comprueba que el html contiene 'class=\"grafico\"', exactamente 2 rect class=\"ingresos\" y 2 class=\"gastos\" (cuenta con split o match), y que las alturas son height=\"50\", height=\"25\", height=\"100\", height=\"0\" en ese orden: extrae con regex /<rect class=\"(ingresos|gastos)\"[^>]*height=\"(\\d+)\"/g y compara el array de alturas con [50,25,100,0] (ojo: ingresos mes1 =50, gastos mes1=25, ingresos mes2=100, gastos mes2=0 ... usa ingresos 1000 y gastos 500 euros -> 100000 y 50000 céntimos para mes1 daría 50 y 25 con máximo 200000). Segundo test: todo 0 -> todas las alturas 0."
+   },
+   {
+    "id": "c",
+    "kind": "write",
+    "path": "src/vista-presupuestos.js",
+    "after": [],
+    "files": [
+     "src/vista-movimientos.js",
+     "src/movimientos.js",
+     "src/dinero.js"
+    ],
+    "title": "vista presupuestos",
+    "instructions": "Crea src/vista-presupuestos.js (ES module, castellano, estilo como src/vista-movimientos.js). Importa escapar de ./html.js, formatear de ./dinero.js y CATEGORIAS de ./movimientos.js. Exporta vistaPresupuestos(estados): estados es lista de {categoria, limite, gastado, restante, porcentaje, estado}. Por cada uno: `<div class=\"presupuesto ESTADO\" data-categoria=\"CATEGORIA\">` con `<span class=\"nombre\">CATEGORIA</span>`, `<progress value=\"P\" max=\"100\"></progress>` con P=Math.min(porcentaje,100), y `<span class=\"texto\">${formatear(gastado)} de ${formatear(limite)} (${porcentaje} %)</span>` y cierre </div>. Categoría escapada con escapar. Si la lista está vacía: `<p class=\"vacio\">Sin presupuestos</p>` en lugar de los divs. Siempre al final `<form id=\"form-presupuesto\">` con `<select name=\"categoria\">` con un <option value=\"c\">c</option> por cada CATEGORIAS distinta de 'ingresos', `<input name=\"importe\" type=\"text\" placeholder=\"Límite en €\">` y `<button type=\"submit\">Guardar</button>`, </form>."
+   },
+   {
+    "id": "d",
+    "kind": "write",
+    "path": "tests/vista-presupuestos.test.mjs",
+    "after": [],
+    "title": "test vista presupuestos",
+    "instructions": "Crea tests/vista-presupuestos.test.mjs (node:test, node:assert/strict) importando vistaPresupuestos de ../src/vista-presupuestos.js. Tests: (1) estado {categoria:'ocio',limite:10000,gastado:15000,restante:-5000,porcentaje:150,estado:'pasado'} -> html incluye 'class=\"presupuesto pasado\"', 'data-categoria=\"ocio\"' y '<progress value=\"100\" max=\"100\">'. (2) estado 'ok' porcentaje 40 -> incluye '<progress value=\"40\" max=\"100\">'. (3) lista vacía -> incluye '<p class=\"vacio\">Sin presupuestos</p>'. (4) siempre incluye '<form id=\"form-presupuesto\">', 'name=\"categoria\"', 'name=\"importe\"' y no incluye 'value=\"ingresos\"'."
+   },
+   {
+    "id": "e",
+    "kind": "edit",
+    "path": "CHANGELOG.md",
+    "after": [],
+    "title": "changelog",
+    "instructions": "Añade al final una línea nueva exacta: - Parche 008 · 09/10/2026 · Gráfico y vista de presupuestos: src/grafico.js (graficoBarras) y src/vista-presupuestos.js (vistaPresupuestos) con sus tests."
+   }
+  ]
+ },
+ {
+  "n": 9,
+  "texto": "Resumen y formulario. Dos módulos independientes que se pueden escribir a la vez. (A) src/vista-resumen.js exporta vistaResumen(estado, mes): '<section class=\"resumen\" data-mes=\"MES\">' con un h1 con nombreMes (src/fechas.js), los ingresos, gastos y saldo de resumenMes (src/resumen.js) con formatear, un '<li data-categoria=\"C\">' por categoría de porCategoria (en ese orden) y el graficoBarras (src/grafico.js) de evolucion(movimientos, mes, 6). tests/vista-resumen.test.mjs con un estado escrito a mano: tiene data-mes=\"2026-09\", 'septiembre 2026', el saldo formateado, un li por categoría con gasto y '<svg'. (B) src/formulario.js exporta formularioMovimiento(datos = {}, errores = []): '<form id=\"form-movimiento\">' con un '<p class=\"error\">' (escapado) por error, input type=\"date\" name=\"fecha\", input name=\"concepto\", input name=\"importe\" (inputmode=\"decimal\"), un select name=\"categoria\" con un option por cada CATEGORIAS (src/movimientos.js) y selected en datos.categoria, los value con datos escapados, y un botón Guardar. tests/formulario.test.mjs: hay 8 option; con categoria 'ocio' sale '<option value=\"ocio\" selected'; un concepto '\"a\"' sale como value=\"&quot;a&quot;\"; un error se ve en un p.error.",
+  "blocks": [
+   {
+    "id": "a",
+    "kind": "write",
+    "path": "src/vista-resumen.js",
+    "files": [
+     "src/resumen.js",
+     "src/grafico.js",
+     "src/fechas.js",
+     "src/dinero.js",
+     "src/html.js",
+     "src/vista-presupuestos.js"
+    ],
+    "instructions": "Crea src/vista-resumen.js (ES module, comentarios en castellano, <200 líneas). Exporta vistaResumen(estado, mes) donde estado = {movimientos:[...]} y mes='AAAA-MM'. Usa resumenMes(estado.movimientos, mes) de ./resumen.js, evolucion(estado.movimientos, mes, 6), graficoBarras de ./grafico.js, nombreMes de ./fechas.js (mira su firma leyendo el archivo; el h1 debe dar 'septiembre 2026' para '2026-09'), formatear de ./dinero.js, escapar de ./html.js. Devuelve texto HTML: '<section class=\"resumen\" data-mes=\"MES\">' (mes escapado) que contiene un <h1> con nombreMes, ingresos, gastos y saldo formateados con formatear (p.ej. <p class=\"ingresos\">Ingresos: ...</p>, class gastos, class saldo), una <ul> con un '<li data-categoria=\"C\">' por cada elemento de porCategoria (mismo orden; texto: categoria escapada y formatear(centimos)), luego el graficoBarras(evolucion) y '</section>'. Si porCategoria está vacío no pongas li."
+   },
+   {
+    "id": "b",
+    "kind": "write",
+    "path": "src/formulario.js",
+    "files": [
+     "src/movimientos.js",
+     "src/html.js",
+     "src/vista-presupuestos.js"
+    ],
+    "instructions": "Crea src/formulario.js (ES module, comentarios en castellano). Exporta formularioMovimiento(datos = {}, errores = []). Devuelve texto HTML: '<form id=\"form-movimiento\">' seguido de un '<p class=\"error\">ERROR</p>' por cada error (texto pasado por escapar de ./html.js), luego <input type=\"date\" name=\"fecha\" value=\"...\">, <input type=\"text\" name=\"concepto\" value=\"...\">, <input type=\"text\" name=\"importe\" inputmode=\"decimal\" value=\"...\">, un <select name=\"categoria\"> con un <option value=\"C\"> por CADA elemento de CATEGORIAS (importado de ./movimientos.js, todas, sin filtrar) y el atributo selected cuando C === datos.categoria, de forma que salga exactamente '<option value=\"ocio\" selected>ocio</option>' (el texto '<option value=\"ocio\" selected' debe aparecer), y <button type=\"submit\">Guardar</button> y '</form>'. Todos los value con datos.fecha/concepto/importe/categoria pasados por escapar (undefined -> cadena vacía; escapar ya lo gestiona, compruébalo). Un concepto '\"a\"' debe salir como value=\"&quot;a&quot;\"."
+   },
+   {
+    "id": "c",
+    "kind": "write",
+    "path": "tests/vista-resumen.test.mjs",
+    "after": [
+     "a"
+    ],
+    "files": [
+     "src/vista-resumen.js",
+     "src/resumen.js",
+     "src/dinero.js",
+     "tests/vista-presupuestos.test.mjs"
+    ],
+    "instructions": "Test con node:test y node:assert/strict (imports ES), mismo estilo que tests/vista-presupuestos.test.mjs. Estado a mano {movimientos:[...]} con ids/fecha/concepto/categoria/centimos (mira src/movimientos.js para la forma): un ingreso 200000 en 2026-09-01 categoria 'ingresos' (usa la categoría que exista en CATEGORIAS), gastos negativos en 2026-09 de categorías 'comida' (-5000) y 'ocio' (-3000), y algún movimiento de agosto. html = vistaResumen(estado,'2026-09'). Comprueba con assert.ok(html.includes(...)): 'data-mes=\"2026-09\"', 'septiembre 2026', formatear(saldo esperado) calculado a mano (ej. 200000-8000=192000 -> formatear(192000)), '<li data-categoria=\"comida\"' y '<li data-categoria=\"ocio\"', y '<svg'."
+   },
+   {
+    "id": "d",
+    "kind": "write",
+    "path": "tests/formulario.test.mjs",
+    "after": [
+     "b"
+    ],
+    "files": [
+     "src/formulario.js",
+     "src/movimientos.js",
+     "tests/vista-presupuestos.test.mjs"
+    ],
+    "instructions": "Test con node:test y node:assert/strict. Casos: (1) formularioMovimiento() contiene exactamente 8 ocurrencias de '<option' (usa html.split('<option').length-1 === 8 y comprueba que CATEGORIAS.length es 8). (2) con {categoria:'ocio'} incluye '<option value=\"ocio\" selected'. (3) con {concepto:'\"a\"'} incluye 'value=\"&quot;a&quot;\"'. (4) con errores ['Fecha <mala>'] incluye '<p class=\"error\">Fecha &lt;mala&gt;</p>'. (5) incluye '<form id=\"form-movimiento\">', 'type=\"date\" name=\"fecha\"' o equivalente según el HTML real, 'inputmode=\"decimal\"' y 'Guardar'."
+   },
+   {
+    "id": "e",
+    "kind": "edit",
+    "path": "CHANGELOG.md",
+    "after": [],
+    "instructions": "Añade al final una línea nueva: '- Parche 009 · 09/10/2026 · Resumen y formulario: src/vista-resumen.js (vistaResumen) y src/formulario.js (formularioMovimiento) con sus tests.'"
+   }
+  ]
+ },
+ {
+  "n": 10,
+  "texto": "Página y estilos. Dos partes independientes que se pueden escribir a la vez. (A) index.html: '<!doctype html>', '<html lang=\"es\">', meta charset utf-8 y meta name=\"viewport\", título 'Cuentas claras', '<link rel=\"stylesheet\" href=\"estilos.css\">', '<main id=\"app\"></main>' y '<script type=\"module\" src=\"src/main.js\"></script>'. tests/pagina.test.mjs (lee archivos como texto con readFileSync): index.html tiene lang=\"es\", main con id app, el link a estilos.css y el script módulo de src/main.js. (B) estilos.css: colores en variables de :root, modo oscuro con '@media (prefers-color-scheme: dark)', la nav con enlaces redondeados y el aria-current resaltado, la tabla a todo el ancho, los gastos en rojo y los ingresos en verde (clases gasto/ingreso y los rect del gráfico), y un '@media (max-width: 600px)' para móvil. tests/estilos.test.mjs: estilos.css contiene 'prefers-color-scheme: dark' y 'max-width'.",
+  "blocks": [
+   {
+    "id": "a",
+    "kind": "write",
+    "path": "index.html",
+    "after": [],
+    "instructions": "Crea index.html: '<!doctype html>', '<html lang=\"es\">', head con '<meta charset=\"utf-8\">', '<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">', '<title>Cuentas claras</title>', '<link rel=\"stylesheet\" href=\"estilos.css\">'; body con '<main id=\"app\"></main>' y '<script type=\"module\" src=\"src/main.js\"></script>'."
+   },
+   {
+    "id": "b",
+    "kind": "write",
+    "path": "estilos.css",
+    "after": [],
+    "instructions": "Crea estilos.css (<200 líneas). Variables de color en :root (--fondo, --texto, --tarjeta, --borde, --acento, --gasto rojo, --ingreso verde). '@media (prefers-color-scheme: dark)' que redefine las variables en :root. body usa las variables, fuente sans-serif. nav: display flex, gap; 'nav a' con border-radius 999px, padding, sin subrayado; 'nav a[aria-current=\"page\"]' resaltado con fondo --acento y texto blanco. table con width:100%, border-collapse. '.gasto' color var(--gasto), '.ingreso' color var(--ingreso); 'rect.ingresos' fill var(--ingreso), 'rect.gastos' fill var(--gasto); '.grafico' width 100%. Formularios: input/select/button con padding y bordes. Al final '@media (max-width: 600px)' que reduce padding de main, hace nav wrap y la tabla con font-size menor."
+   },
+   {
+    "id": "c",
+    "kind": "write",
+    "path": "tests/pagina.test.mjs",
+    "after": [],
+    "instructions": "Test node:test + node:assert/strict, ES modules. Con readFileSync lee index.html (ruta relativa a import.meta.url vía new URL) y comprueba con assert.match/ok: contiene lang=\"es\", <main id=\"app\">, <link rel=\"stylesheet\" href=\"estilos.css\"> y <script type=\"module\" src=\"src/main.js\">. Un test por cosa."
+   },
+   {
+    "id": "d",
+    "kind": "write",
+    "path": "tests/estilos.test.mjs",
+    "after": [],
+    "instructions": "Test node:test + node:assert/strict, ES modules. Lee estilos.css con readFileSync (new URL('../estilos.css', import.meta.url)) y comprueba que incluye 'prefers-color-scheme: dark' y 'max-width'. Un test por cosa."
+   },
+   {
+    "id": "e",
+    "kind": "edit",
+    "path": "CHANGELOG.md",
+    "after": [],
+    "instructions": "Añade al final una línea: '- Parche 010 · 09/10/2026 · Página y estilos: index.html y estilos.css con sus tests.'"
+   }
+  ]
+ },
+ {
+  "n": 11,
+  "texto": "La app en marcha. src/main.js (no se prueba en node: es lo único que toca el navegador): estado = cargar(localStorage) (src/almacen.js); pintar() lee leerRuta(location.hash) (src/rutas.js) y escribe en document.getElementById('app').innerHTML navegacion(vista) + la vista: 'resumen' → vistaResumen(estado, params.mes o el mes de hoy); 'movimientos' → tablaMovimientos(filtrar(estado.movimientos, params)); 'nuevo' → formularioMovimiento con los errores del último envío; 'presupuestos' → vistaPresupuestos(estadoPresupuestos(...)); 'no-encontrada' → un aviso. Escucha 'hashchange' (repinta), 'submit' en #app con preventDefault (form-movimiento → reducir 'anadir' y va a '#/movimientos'; si lanza, guarda el mensaje y repinta el formulario; form-presupuesto → 'presupuesto') y 'click' en [data-borrar] → 'borrar'. Cada cambio pasa por reducir (src/estado.js) y guarda con guardar(localStorage, estado). tests/main.test.mjs leyendo src/main.js como texto: contiene 'hashchange', 'localStorage', 'innerHTML', 'reducir', 'leerRuta' y no contiene 'node:' ni 'require('.",
+  "blocks": [
+   {
+    "id": "main",
+    "kind": "write",
+    "path": "src/main.js",
+    "title": "main.js",
+    "after": [],
+    "files": [
+     "src/almacen.js",
+     "src/estado.js",
+     "src/rutas.js",
+     "src/filtros.js",
+     "src/navegacion.js",
+     "src/vista-resumen.js",
+     "src/vista-movimientos.js",
+     "src/vista-presupuestos.js",
+     "src/formulario.js",
+     "src/presupuestos.js"
+    ],
+    "instructions": "Crea src/main.js (módulo ES, <200 líneas, comentarios y nombres en castellano). NO debe contener el texto 'node:' ni 'require('. Imports: cargar, guardar de './almacen.js'; reducir de './estado.js'; leerRuta de './rutas.js'; filtrar de './filtros.js'; navegacion de './navegacion.js'; vistaResumen de './vista-resumen.js'; tablaMovimientos de './vista-movimientos.js'; vistaPresupuestos de './vista-presupuestos.js'; formularioMovimiento de './formulario.js'; estadoPresupuestos de './presupuestos.js'; escapar de './html.js'. Estado: `let estado = cargar(localStorage);` `let erroresNuevo = []; let datosNuevo = {};`. Función `aplicar(accion)`: estado = reducir(estado, accion); guardar(localStorage, estado). Función `mesDeHoy()` = new Date().toISOString().slice(0,7). Función `pintar()`: const {vista, params} = leerRuta(location.hash); calcula html de la vista: 'resumen' → vistaResumen(estado, params.mes || mesDeHoy()); 'movimientos' → tablaMovimientos(filtrar(estado.movimientos, params)); 'nuevo' → formularioMovimiento(datosNuevo, erroresNuevo); 'presupuestos' → vistaPresupuestos(estadoPresupuestos(estado.presupuestos, estado.movimientos, params.mes || mesDeHoy())); cualquier otra (incluye 'importar' y 'no-encontrada') → '<p class=\"vacio\">Página no encontrada</p>' (para 'importar' pon '<p class=\"vacio\">Importar: próximamente</p>'). Luego document.getElementById('app').innerHTML = navegacion(vista) + html. Escuchas: window.addEventListener('hashchange', pintar). document.addEventListener('submit', e => ...) (o sobre el elemento #app): e.preventDefault(); si e.target.id === 'form-movimiento': datos = Object.fromEntries(new FormData(e.target)); datosNuevo = datos; try { aplicar({tipo:'anadir', datos}); erroresNuevo=[]; datosNuevo={}; location.hash = '#/movimientos'; } catch (err) { erroresNuevo=[err.message]; pintar(); } ; si e.target.id === 'form-presupuesto': const d = Object.fromEntries(new FormData(e.target)); try { aplicar({tipo:'presupuesto', categoria:d.categoria, importe:d.importe}); } catch(err){} pintar(). Escucha 'click' en document: const b = e.target.closest('[data-borrar]'); si b → aplicar({tipo:'borrar', id: Number(b.dataset.borrar)}); pintar(). Al final del archivo llama pintar() una vez. Si la ruta cambia a '#/nuevo' desde otra, no hace falta limpiar errores."
+   },
+   {
+    "id": "test",
+    "kind": "write",
+    "path": "tests/main.test.mjs",
+    "title": "test main",
+    "after": [],
+    "instructions": "Crea tests/main.test.mjs con node:test y node:assert/strict. Lee src/main.js como texto con readFileSync(new URL('../src/main.js', import.meta.url), 'utf8'). Tests: (1) contiene 'hashchange', 'localStorage', 'innerHTML', 'reducir' y 'leerRuta' (assert.ok(texto.includes(x)) por cada uno); (2) no contiene 'node:' ni 'require('."
+   },
+   {
+    "id": "log",
+    "kind": "edit",
+    "path": "CHANGELOG.md",
+    "title": "changelog",
+    "after": [],
+    "instructions": "Añade al final una línea nueva exactamente: `- Parche 011 · 09/10/2026 · La app en marcha: src/main.js lee la ruta, pinta las vistas, gestiona formularios y borrado y guarda en localStorage.` (el siguiente número tras la línea del Parche 010; comprueba que el formato igual que las anteriores)."
+   }
+  ]
+ },
+ {
+  "n": 12,
+  "texto": "Importar, exportar y filtros en pantalla. Dos módulos independientes que se pueden escribir a la vez. (A) src/vista-importar.js exporta vistaImportar(resultado): '<section class=\"importar\">' con, si resultado no es null, '<p class=\"aviso\">Añadidos N movimientos</p>' y una lista con 'línea L: motivo' (motivo escapado) por error; siempre un '<form id=\"form-importar\">' con '<textarea name=\"csv\">' y un '<button type=\"button\" id=\"exportar\">Exportar CSV</button>'. tests/vista-importar.test.mjs: vistaImportar(null) tiene el textarea y no dice 'Añadidos'; con {anadidos: 2, errores: [{linea: 3, motivo: 'x'}]} dice 'Añadidos 2 movimientos' y 'línea 3'. (B) src/vista-filtros.js exporta formularioFiltros(filtro = {}): '<form id=\"form-filtros\">' con input type=\"month\" name=\"mes\", un select name=\"categoria\" (primera opción value=\"\" 'todas' y luego CATEGORIAS), un select name=\"tipo\" (todos, gasto, ingreso) e input type=\"search\" name=\"texto\", con los valores de filtro puestos (selected y value escapado). tests/vista-filtros.test.mjs: con {mes: '2026-09', categoria: 'ocio'} sale name=\"mes\" value=\"2026-09\" y '<option value=\"ocio\" selected'; sin filtro sale '<option value=\"todos\" selected'. Luego, en src/main.js: 'importar' pinta vistaImportar con el resultado del último envío de form-importar (deCsv para contar y reducir 'importar' para añadir); el botón #exportar descarga aCsv(estado.movimientos) como 'cuentas.csv' con un Blob y un enlace temporal; 'movimientos' pinta formularioFiltros(params) encima de la tabla y form-filtros cambia el hash con crearRuta('movimientos', datos del formulario).",
+  "blocks": [
+   {
+    "id": "A",
+    "kind": "write",
+    "path": "src/vista-importar.js",
+    "files": [
+     "src/formulario.js",
+     "src/html.js"
+    ],
+    "instructions": "Crea src/vista-importar.js (ES module, comentarios en castellano). Importa escapar de './html.js'. Exporta function vistaImportar(resultado) que devuelve un string HTML: '<section class=\"importar\">' ... '</section>'. Si resultado no es null: '<p class=\"aviso\">Añadidos N movimientos</p>' (N = resultado.anadidos) y, si hay errores, '<ul class=\"errores\">' con un '<li class=\"error\">línea L: motivo</li>' por cada elemento de resultado.errores ({linea, motivo}); motivo pasado por escapar. Siempre: '<form id=\"form-importar\"><textarea name=\"csv\" rows=\"10\"></textarea><button type=\"submit\">Importar</button></form>' y '<button type=\"button\" id=\"exportar\">Exportar CSV</button>'. Menos de 200 líneas."
+   },
+   {
+    "id": "B",
+    "kind": "write",
+    "path": "src/vista-filtros.js",
+    "files": [
+     "src/formulario.js",
+     "src/html.js"
+    ],
+    "instructions": "Crea src/vista-filtros.js (ES module, comentarios en castellano, estilo como src/formulario.js). Importa escapar de './html.js' y CATEGORIAS de './movimientos.js'. Exporta function formularioFiltros(filtro = {}) que devuelve HTML: '<form id=\"form-filtros\">' con: <input type=\"month\" name=\"mes\" value=\"${escapar(filtro.mes ?? '')}\">; <select name=\"categoria\"> con primera opción '<option value=\"\">todas</option>' (con ' selected' si !filtro.categoria) y luego una '<option value=\"cat\" selected>cat</option>' por cada CATEGORIAS (selected solo si coincide con filtro.categoria; el formato exacto con selected debe ser '<option value=\"ocio\" selected>' y sin selected '<option value=\"ocio\">'); <select name=\"tipo\"> con opciones value todos, gasto, ingreso (texto igual al valor), selected la de filtro.tipo, o 'todos' si filtro.tipo está vacío; el formato exacto '<option value=\"todos\" selected>'; <input type=\"search\" name=\"texto\" value=\"${escapar(filtro.texto ?? '')}\">; y <button type=\"submit\">Filtrar</button>. Todos los valores por escapar."
+   },
+   {
+    "id": "TA",
+    "kind": "write",
+    "path": "tests/vista-importar.test.mjs",
+    "after": [
+     "A"
+    ],
+    "files": [
+     "src/vista-importar.js",
+     "tests/vista-resumen.test.mjs"
+    ],
+    "instructions": "Crea tests/vista-importar.test.mjs con node:test y node:assert/strict. Test 1: vistaImportar(null) incluye 'name=\"csv\"' y 'id=\"form-importar\"' y 'id=\"exportar\"' y NO incluye 'Añadidos'. Test 2: vistaImportar({anadidos: 2, errores: [{linea: 3, motivo: 'x'}]}) incluye 'Añadidos 2 movimientos' y 'línea 3: x'. Test 3: motivo '<b>' sale como '&lt;b&gt;'."
+   },
+   {
+    "id": "TB",
+    "kind": "write",
+    "path": "tests/vista-filtros.test.mjs",
+    "after": [
+     "B"
+    ],
+    "files": [
+     "src/vista-filtros.js",
+     "tests/formulario.test.mjs"
+    ],
+    "instructions": "Crea tests/vista-filtros.test.mjs con node:test y node:assert/strict. Test 1: formularioFiltros({mes:'2026-09', categoria:'ocio'}) incluye 'name=\"mes\"', 'value=\"2026-09\"' y '<option value=\"ocio\" selected'. Test 2: formularioFiltros() incluye '<option value=\"todos\" selected' y 'id=\"form-filtros\"' y 'type=\"search\"'. Test 3: formularioFiltros({texto:'a\"b'}) incluye 'value=\"a&quot;b\"'."
+   },
+   {
+    "id": "M",
+    "kind": "edit",
+    "path": "src/main.js",
+    "after": [
+     "A",
+     "B"
+    ],
+    "files": [
+     "src/main.js",
+     "src/csv.js",
+     "src/rutas.js"
+    ],
+    "instructions": "Edita src/main.js (mínimo). 1) Imports: vistaImportar de './vista-importar.js', formularioFiltros de './vista-filtros.js', crearRuta junto a leerRuta de './rutas.js', aCsv y deCsv de './csv.js'. 2) Variable `let resultadoImportar = null;`. 3) En pintar: case 'movimientos': html = formularioFiltros(params) + tablaMovimientos(filtrar(estado.movimientos, params)); case 'importar': html = vistaImportar(resultadoImportar). 4) En el listener submit, nueva rama else if (e.target.id === 'form-importar'): const d = Object.fromEntries(new FormData(e.target)); const r = deCsv(d.csv || '', estado.siguienteId); aplicar({tipo:'importar', texto: d.csv || ''}); resultadoImportar = {anadidos: r.movimientos.length, errores: r.errores}; pintar(). Otra rama else if 'form-filtros': const d = Object.fromEntries(new FormData(e.target)); if (d.tipo === 'todos') d.tipo = ''; location.hash = crearRuta('movimientos', d). 5) En el listener click, antes o después del borrar: const ex = e.target.closest('#exportar'); si existe: const blob = new Blob([aCsv(estado.movimientos)], {type:'text/csv'}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'cuentas.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url). Mantén main.js bajo 200 líneas, sin 'node:' ni 'require('."
+   },
+   {
+    "id": "C",
+    "kind": "edit",
+    "path": "CHANGELOG.md",
+    "after": [],
+    "files": [
+     "CHANGELOG.md"
+    ],
+    "instructions": "Añade al final una línea: '- Parche 012 · 09/10/2026 · Importar, exportar y filtros en pantalla: src/vista-importar.js (vistaImportar) y src/vista-filtros.js (formularioFiltros) con sus tests, y main.js los conecta.'"
+   }
+  ]
+ },
+ {
+  "n": 13,
+  "texto": "Revisión 1 (solo tests, busca bugs): dinero, fechas y movimientos. REGLA DE TODAS LAS REVISIONES: los valores esperados de abajo son la especificación y no se cambian; si un test falla, se arregla src/, no el test. Añade a tests/ (sin repetir lo que ya haya): aCentimos('+2,5') es 250; aCentimos(4.1) es 410; aCentimos('12,') y aCentimos('1,2,3') lanzan 'importe no válido'; formatear(100000000) es '1.000.000,00 €'; esFechaValida('2026-13-01') false; diasDelMes('1900-02') 28; sumarMeses('2026-05', -17) es '2024-12'; crearMovimiento con importe '0' lanza 'importe cero'; editar(lista, 1, {fecha: '2026-09-09', centimos: -999}) cambia solo ese movimiento y lo pone el primero.",
+  "blocks": [
+   {
+    "id": "d",
+    "kind": "edit",
+    "path": "tests/dinero.test.mjs",
+    "files": [
+     "tests/dinero.test.mjs",
+     "src/dinero.js"
+    ],
+    "after": [],
+    "title": "tests dinero",
+    "instructions": "Añade AL FINAL del archivo (sin tocar lo existente, sin duplicar imports ya presentes) tests con node:test y assert/strict: aCentimos('+2,5') === 250; aCentimos(4.1) === 410; aCentimos('12,') lanza Error con message 'importe no válido'; aCentimos('1,2,3') lanza 'importe no válido'; formatear(100000000) === '1.000.000,00 €'. Usa assert.throws(() => ..., {message: 'importe no válido'})."
+   },
+   {
+    "id": "f",
+    "kind": "edit",
+    "path": "tests/fechas.test.mjs",
+    "files": [
+     "tests/fechas.test.mjs",
+     "src/fechas.js"
+    ],
+    "after": [],
+    "title": "tests fechas",
+    "instructions": "Añade AL FINAL (sin tocar lo existente ni duplicar imports) tests: esFechaValida('2026-13-01') === false; diasDelMes('1900-02') === 28; sumarMeses('2026-05', -17) === '2024-12'. node:test y assert/strict."
+   },
+   {
+    "id": "m",
+    "kind": "edit",
+    "path": "tests/movimientos.test.mjs",
+    "files": [
+     "tests/movimientos.test.mjs",
+     "src/movimientos.js"
+    ],
+    "after": [],
+    "title": "tests movimientos",
+    "instructions": "Añade AL FINAL (sin tocar lo existente ni duplicar imports; importa lo que falte) tests: crearMovimiento({fecha:'2026-09-09',concepto:'x',importe:'0'},1) lanza Error con message 'importe cero'. Y editar: lista de 3 movimientos {id,fecha,concepto,centimos,categoria} con ids 1,2,3 y fechas '2026-09-01','2026-09-02','2026-09-03'; editar(lista, 1, {fecha:'2026-09-09', centimos:-999}) devuelve resultado cuyo primer elemento es el id 1 con fecha '2026-09-09' y centimos -999, los otros dos elementos (ids 3 y 2, en ese orden) son idénticos (deepEqual) a los originales, y la lista original no cambia."
+   },
+   {
+    "id": "c",
+    "kind": "edit",
+    "path": "CHANGELOG.md",
+    "files": [
+     "CHANGELOG.md"
+    ],
+    "after": [],
+    "title": "changelog",
+    "instructions": "Añade al final una línea nueva: '- Parche 013 · 09/10/2026 · Revisión 1: tests de dinero, fechas y movimientos (casos límite).'"
+   }
+  ]
+ },
+ {
+  "n": 14,
+  "texto": "Revisión 2 (solo tests, busca bugs): CSV, almacén y rutas. Misma regla. deCsv con BOM y '\\r\\n' funciona igual que sin ellos; un concepto entre comillas con ';' dentro se lee entero; deCsv('hola;que;tal\\n...') da 'cabecera no válida' en la línea 1 y ningún movimiento; con primerId 10, los ids son 10, 11...; cargar con JSON de version 0 da estadoVacio(); leerRuta('#/movimientos?texto=caf%C3%A9%20con') da params {texto: 'café con'} y crearRuta('movimientos', {texto: 'café con'}) da '#/movimientos?texto=caf%C3%A9%20con'.",
+  "blocks": [
+   {
+    "id": "1",
+    "kind": "write",
+    "path": "tests/revision2.test.mjs",
+    "files": [
+     "src/csv.js",
+     "src/rutas.js",
+     "src/almacen.js"
+    ],
+    "instructions": "Crea tests/revision2.test.mjs con node:test y node:assert/strict (ES modules). Importa { deCsv, CABECERA } de '../src/csv.js', { cargar, estadoVacio, CLAVE } de '../src/almacen.js', { leerRuta, crearRuta } de '../src/rutas.js'. Usa csv base = CABECERA + '\\n2026-10-01;Cafe;-1,50;comida\\n2026-10-02;Sueldo;1000,00;nomina' (mira src/movimientos.js CATEGORIAS para usar categorías válidas; ajusta si hace falta). Tests: 1) deCsv('﻿' + base con '\\r\\n') da deepEqual el mismo resultado que deCsv(base con '\\n'). 2) Línea con concepto entre comillas con ';' dentro, p.ej. '2026-10-01;\"cafe; con leche\";-1,50;comida', da movimientos[0].concepto === 'cafe; con leche' y 0 errores. 3) deCsv('hola;que;tal\\n2026-10-01;Cafe;-1,50;comida') da movimientos [] y errores deepEqual [{linea:1, motivo:'cabecera no válida'}]. 4) deCsv(base, 10) da ids [10,11]. 5) cargar con almacén falso (objeto con getItem/setItem sobre un Map) cuyo CLAVE contiene JSON.stringify({version:0,movimientos:[],presupuestos:{},siguienteId:1}) devuelve deepEqual estadoVacio(). 6) leerRuta('#/movimientos?texto=caf%C3%A9%20con') deepEqual {vista:'movimientos', params:{texto:'café con'}}. 7) crearRuta('movimientos',{texto:'café con'}) === '#/movimientos?texto=caf%C3%A9%20con'. No modifiques src/. Ejecuta nada."
+   },
+   {
+    "id": "2",
+    "kind": "edit",
+    "path": "CHANGELOG.md",
+    "after": [],
+    "instructions": "Añade al final una línea: '- Parche 014 · 09/10/2026 · Revisión 2: tests de CSV, almacén y rutas (casos límite).'"
+   }
+  ]
+ },
+ {
+  "n": 15,
+  "texto": "Prueba de humo con el ejemplo (busca bugs). tests/humo.test.mjs: parte de estadoVacio() (src/almacen.js), reducir 'importar' con el texto de docs/ejemplo.csv y comprueba: siguienteId 31; resumenMes de '2026-09' da ingresos 125750, gastos 71825, saldo 53925 y numero 18; porCategoria por orden es casa, comida, transporte, ropa, ocio, salud; saldoHasta('2026-09') es 133045; con presupuestos comida '150', ocio '50' y transporte '200', estadoPresupuestos de '2026-09' da ocio 102 % 'pasado', comida 99 % 'aviso' y transporte 56 % 'ok', en ese orden; vistaResumen(estado, '2026-09') contiene '1.257,50 €'. Si algo no cuadra, arregla src/ (los números son la especificación).",
+  "blocks": [
+   {
+    "id": "t",
+    "kind": "write",
+    "path": "tests/humo.test.mjs",
+    "after": [],
+    "files": [
+     "src/almacen.js",
+     "src/estado.js",
+     "src/resumen.js",
+     "src/presupuestos.js",
+     "src/vista-resumen.js",
+     "tests/csv.test.mjs"
+    ],
+    "title": "Prueba de humo",
+    "instructions": "Crea tests/humo.test.mjs (node:test y node:assert/strict, módulos ES). Imports: readFileSync de node:fs; estadoVacio de ../src/almacen.js; reducir de ../src/estado.js; resumenMes y saldoHasta de ../src/resumen.js; estadoPresupuestos de ../src/presupuestos.js; vistaResumen de ../src/vista-resumen.js. Lee docs/ejemplo.csv con readFileSync(new URL('../docs/ejemplo.csv', import.meta.url), 'utf8'). Construye estado = reducir(estadoVacio(), {tipo:'importar', texto}). Luego conPres = tres reducir seguidos con {tipo:'presupuesto', categoria:'comida', importe:'150'}, 'ocio' importe '50', 'transporte' importe '200'. Tests (uno por punto, con assert.equal / assert.deepEqual): 1) estado.siguienteId === 31. 2) resumenMes(estado.movimientos,'2026-09') tiene ingresos 125750, gastos 71825, saldo 53925, numero 18. 3) resumenMes(...).porCategoria.map(c=>c.categoria) deepEqual ['casa','comida','transporte','ropa','ocio','salud']. 4) saldoHasta(estado.movimientos,'2026-09') === 133045. 5) estadoPresupuestos(conPres.presupuestos, conPres.movimientos,'2026-09') mapeado a {categoria,porcentaje,estado} deepEqual [{categoria:'ocio',porcentaje:102,estado:'pasado'},{categoria:'comida',porcentaje:99,estado:'aviso'},{categoria:'transporte',porcentaje:56,estado:'ok'}]. 6) vistaResumen(estado,'2026-09') incluye '1.257,50 €' (assert.ok(html.includes(...))). No modifiques src/."
+   },
+   {
+    "id": "c",
+    "kind": "edit",
+    "path": "CHANGELOG.md",
+    "after": [],
+    "instructions": "Añade al final una línea nueva: '- Parche 015 · 09/10/2026 · Prueba de humo: tests/humo.test.mjs recorre el ejemplo completo (importar, resumen, presupuestos y vista).' Sin tocar el resto."
+   }
+  ]
+ },
+ {
+  "n": 16,
+  "texto": "Revisión 3 (solo tests, busca bugs): vistas. Misma regla. navegacion marca solo la vista actual; tablaMovimientos respeta el orden recibido y escapa el concepto; graficoBarras con un solo mes a 0 da height=\"0\"; vistaPresupuestos con un porcentaje de 150 pone progress value=\"100\"; formularioMovimiento sin datos no pone selected en ninguna opción; vistaImportar escapa el motivo de los errores ('<no>' sale como '&lt;no&gt;').",
+  "blocks": [
+   {
+    "id": "t",
+    "kind": "write",
+    "path": "tests/revision3.test.mjs",
+    "title": "Tests revisión 3 vistas",
+    "after": [],
+    "files": [
+     "src/navegacion.js",
+     "src/vista-movimientos.js",
+     "src/grafico.js",
+     "src/vista-presupuestos.js",
+     "src/formulario.js",
+     "src/vista-importar.js",
+     "tests/vista-movimientos.test.mjs"
+    ],
+    "instructions": "Crea tests/revision3.test.mjs (módulo ES, solo node:test y node:assert/strict; test(...) y assert.ok(html.includes(...)) / assert.equal). NO modifiques src/. Importa navegacion de ../src/navegacion.js, tablaMovimientos de ../src/vista-movimientos.js, graficoBarras de ../src/grafico.js, vistaPresupuestos de ../src/vista-presupuestos.js, formularioMovimiento de ../src/formulario.js, vistaImportar de ../src/vista-importar.js. Tests (valores concretos):\n1) navegacion('movimientos'): el HTML contiene exactamente 1 aparición de 'aria-current=\"page\"' (cuenta con split) y esa está en el enlace con texto Movimientos: html.includes('aria-current=\"page\">Movimientos</a>').\n2) tablaMovimientos([{id:1,fecha:'2026-01-01',concepto:'A',categoria:'ocio',centimos:-100},{id:5,fecha:'2026-03-01',concepto:'B',categoria:'ocio',centimos:-200},{id:3,fecha:'2026-02-01',concepto:'C',categoria:'ocio',centimos:-300}]): los índices de 'data-id=\"1\"', 'data-id=\"5\"', 'data-id=\"3\"' en el html cumplen idx1 < idx5 < idx3 (respeta el orden recibido). Otro test: concepto '<b>x</b>' sale como '&lt;b&gt;x&lt;/b&gt;' y el html no incluye '<b>x'.\n3) graficoBarras([{mes:'2026-10',ingresos:0,gastos:0,saldo:0}]) incluye 'height=\"0\"' y no incluye 'NaN'.\n4) vistaPresupuestos([{categoria:'ocio',limite:10000,gastado:15000,restante:-5000,porcentaje:150,estado:'pasado'}]) incluye '<progress value=\"100\" max=\"100\">'.\n5) formularioMovimiento() sin datos: no incluye 'selected'.\n6) vistaImportar({anadidos:0, errores:[{linea:2, motivo:'<no>'}]}) incluye '&lt;no&gt;' y no incluye '<no>'.\nSi algún test falla porque el código real difiere, ajusta el test solo si la expectativa era errónea; informa."
+   },
+   {
+    "id": "c",
+    "kind": "edit",
+    "path": "CHANGELOG.md",
+    "title": "Línea changelog",
+    "after": [],
+    "instructions": "Añade al final del archivo una línea nueva exactamente: `- Parche 016 · 09/10/2026 · Revisión 3: tests de vistas (navegación, tabla, gráfico, presupuestos, formulario e importar) con casos límite.` Conserva el resto intacto."
+   }
+  ]
+ },
+ {
+  "n": 17,
+  "texto": "Pulido de la interfaz. Dos partes independientes. (A) estilos.css: tarjetas para las cifras del resumen (ingresos, gastos, saldo) en fila que pasan a columna en móvil; tabla con filas alternas y los importes alineados a la derecha; barras de presupuesto de color según el estado (ok verde, aviso ámbar, pasado rojo); foco visible en enlaces, botones y campos (:focus-visible). (B) Accesibilidad en las vistas sin cambiar firmas: cada input y select va dentro de un <label> con texto; la tabla lleva <thead> con <th>; el svg del gráfico lleva role=\"img\" y aria-label. tests/accesibilidad.test.mjs: formularioMovimiento y formularioFiltros no tienen ningún input sin label alrededor (cuenta '<label' >= número de '<input' + '<select' en formularioMovimiento); graficoBarras contiene role=\"img\"; tablaMovimientos de una lista no vacía contiene '<th'.",
+  "blocks": [
+   {
+    "id": "css",
+    "kind": "edit",
+    "path": "estilos.css",
+    "after": [],
+    "files": [
+     "estilos.css"
+    ],
+    "title": "Pulido CSS",
+    "instructions": "Edita estilos.css SIN quitar nada de lo que hay (los tests exigen que sigan @media (prefers-color-scheme: dark) y @media (max-width: 600px)). Añade: (1) variable --aviso: #f59e0b en :root (y en el bloque dark, #fbbf24). (2) `.cifras { display:flex; gap:15px; margin:15px 0; }` y `.cifras p { flex:1; margin:0; padding:15px; background-color:var(--tarjeta); border:1px solid var(--borde); border-radius:8px; text-align:center; font-weight:600; }`; dentro del @media (max-width: 600px) existente añade `.cifras { flex-direction: column; }`. (3) `tbody tr:nth-child(even) { background-color: rgba(128,128,128,0.08); }` y `th.importe, td.importe { text-align: right; font-variant-numeric: tabular-nums; }`. (4) Barras de presupuesto: `.presupuesto progress { width:100%; height:12px; accent-color: var(--ingreso); }`, `.presupuesto.ok progress { accent-color: var(--ingreso); }`, `.presupuesto.aviso progress { accent-color: var(--aviso); }`, `.presupuesto.pasado progress { accent-color: var(--gasto); }`. (5) Foco visible: `a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid var(--acento); outline-offset: 2px; }`. Además cambia la regla existente `input:focus, select:focus` quitando `outline: none;` (para no anular el foco). Usa edits pequeños."
+   },
+   {
+    "id": "form",
+    "kind": "edit",
+    "path": "src/formulario.js",
+    "after": [],
+    "files": [
+     "src/formulario.js"
+    ],
+    "title": "Labels en formularioMovimiento",
+    "instructions": "En formularioMovimiento, sin cambiar la firma, envuelve cada control en un <label> con texto antes del control. Sustituye las 4 líneas de input/select por: `<label>Fecha <input type=\"date\" name=\"fecha\" value=\"${escapar(datos.fecha)}\"></label>`, `<label>Concepto <input type=\"text\" name=\"concepto\" ...></label>`, `<label>Importe <input type=\"text\" name=\"importe\" inputmode=\"decimal\" ...></label>`, `<label>Categoría <select name=\"categoria\"> ...opciones... </select></label>`. Mantén exactamente los mismos atributos y valores. Los textos de label no deben contener '<option'."
+   },
+   {
+    "id": "filtros",
+    "kind": "edit",
+    "path": "src/vista-filtros.js",
+    "after": [],
+    "files": [
+     "src/vista-filtros.js"
+    ],
+    "title": "Labels en formularioFiltros",
+    "instructions": "En formularioFiltros, sin cambiar la firma, envuelve cada input/select en <label> con texto antes del control: Mes (input type=month name=mes), Categoría (select name=categoria), Tipo (select name=tipo), Texto (input type=search name=texto). Mantén los mismos atributos, valores y opciones."
+   },
+   {
+    "id": "pres",
+    "kind": "edit",
+    "path": "src/vista-presupuestos.js",
+    "after": [],
+    "files": [
+     "src/vista-presupuestos.js"
+    ],
+    "title": "Labels en presupuestos",
+    "instructions": "En el form id=\"form-presupuesto\" de vistaPresupuestos envuelve el select en `<label>Categoría <select name=\"categoria\">...</select></label>` y el input en `<label>Límite <input name=\"importe\" type=\"text\" placeholder=\"Límite en €\"></label>`. Mantén literalmente `<select name=\"categoria\">` y `<input name=\"importe\"` (tests). Además añade aria-label=\"Progreso de ${escapar(est.categoria)}\" al <progress>."
+   },
+   {
+    "id": "imp",
+    "kind": "edit",
+    "path": "src/vista-importar.js",
+    "after": [],
+    "files": [
+     "src/vista-importar.js"
+    ],
+    "title": "Labels en importar",
+    "instructions": "Revisa los <input>/<select>/<textarea> de vistaImportar y envuélvelos cada uno en un <label> con texto descriptivo si aún no lo están (si ya lo están, no cambies nada). No cambies la firma ni textos que ya existan (hay tests que buscan trozos de HTML); mantén los atributos."
+   },
+   {
+    "id": "tabla",
+    "kind": "edit",
+    "path": "src/vista-movimientos.js",
+    "after": [],
+    "files": [
+     "src/vista-movimientos.js"
+    ],
+    "title": "Importes a la derecha",
+    "instructions": "En tablaMovimientos, cambia `<td>${formatear(mov.centimos)}</td>` por `<td class=\"importe\">${formatear(mov.centimos)}</td>`, el `<th>Importe</th>` por `<th class=\"importe\">Importe</th>`, y el `<th></th>` final por `<th><span class=\"solo-lector\">Acciones</span></th>`. Añade `scope=\"col\"` a todos los <th>. No cambies nada más."
+   },
+   {
+    "id": "graf",
+    "kind": "edit",
+    "path": "src/grafico.js",
+    "after": [],
+    "files": [
+     "src/grafico.js"
+    ],
+    "title": "svg accesible",
+    "instructions": "En graficoBarras, cambia la apertura del svg a: `<svg class=\"grafico\" role=\"img\" aria-label=\"Gráfico de barras de ingresos y gastos por mes\" viewBox=\"0 0 ${ancho} 100\">`. Nada más."
+   },
+   {
+    "id": "resumen",
+    "kind": "edit",
+    "path": "src/vista-resumen.js",
+    "after": [],
+    "files": [
+     "src/vista-resumen.js"
+    ],
+    "title": "Tarjetas de cifras",
+    "instructions": "En vistaResumen, en la plantilla de `section`, envuelve las tres líneas ${pIngresos} ${pGastos} ${pSaldo} en `<div class=\"cifras\">` ... `</div>`. No cambies los <p> ni nada más."
+   },
+   {
+    "id": "css2",
+    "kind": "edit",
+    "path": "estilos.css",
+    "after": [
+     "css"
+    ],
+    "files": [
+     "estilos.css"
+    ],
+    "title": "solo-lector y label",
+    "instructions": "Añade al final de estilos.css (fuera de media queries): `.solo-lector { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }` y `label { display:block; margin-bottom:10px; font-weight:500; }`."
+   },
+   {
+    "id": "test",
+    "kind": "write",
+    "path": "tests/accesibilidad.test.mjs",
+    "after": [],
+    "files": [
+     "src/formulario.js",
+     "src/vista-filtros.js",
+     "src/grafico.js",
+     "src/vista-movimientos.js"
+    ],
+    "title": "Tests accesibilidad",
+    "instructions": "Crea tests/accesibilidad.test.mjs con node:test y node:assert/strict (ES modules). Importa formularioMovimiento de ../src/formulario.js, formularioFiltros de ../src/vista-filtros.js, graficoBarras de ../src/grafico.js, tablaMovimientos de ../src/vista-movimientos.js. Helper cuenta(html, texto) que cuenta ocurrencias con split(texto).length-1. Tests: (1) formularioMovimiento(): cuenta('<label') >= cuenta('<input') + cuenta('<select'), y además cuenta('<input')===3 y cuenta('<select')===1. (2) formularioFiltros(): lo mismo con >=, y cuenta('<input')===2, cuenta('<select')===2. (3) graficoBarras([{mes:'2026-10',ingresos:1000,gastos:-500,saldo:500}]) incluye 'role=\"img\"' y 'aria-label='. (4) tablaMovimientos([{id:1,fecha:'2026-10-01',concepto:'Café',categoria:'comida',centimos:-250}]) incluye '<th' y '<thead>'."
+   }
+  ]
+ },
+ {
+  "n": 18,
+  "texto": "Revisión final (busca bugs en todo). Lee src/ entero y busca: imports que faltan o sobran, funciones que modifican lo que reciben en vez de devolver datos nuevos, texto del usuario que llega al HTML sin escapar, código de Node (node:, require, process) en src/, archivos de más de 200 líneas y firmas distintas de las de los parches anteriores. Arregla lo que encuentres sin cambiar firmas, añade un test por cada bug arreglado y deja todos los tests pasando.",
+  "blocks": [
+   {
+    "id": "a",
+    "kind": "edit",
+    "path": "src/vista-movimientos.js",
+    "instructions": "En la fila de la tabla cambia `<td>${mov.fecha}</td>` por `<td>${escapar(mov.fecha)}</td>` y `data-id=\"${mov.id}\"` por `data-id=\"${escapar(mov.id)}\"` y `data-borrar=\"${mov.id}\"` por `data-borrar=\"${escapar(mov.id)}\"`. No cambies nada más.",
+    "files": [
+     "src/vista-movimientos.js"
+    ],
+    "after": []
+   },
+   {
+    "id": "b",
+    "kind": "edit",
+    "path": "src/vista-resumen.js",
+    "instructions": "Cambia `<h1>${nombreMes(mes)}</h1>` por `<h1>${escapar(nombreMes(mes))}</h1>`. No cambies nada más.",
+    "files": [
+     "src/vista-resumen.js"
+    ],
+    "after": []
+   },
+   {
+    "id": "c",
+    "kind": "write",
+    "path": "tests/revision-final.test.mjs",
+    "instructions": "Crea un test con node:test y node:assert/strict (ESM). Importa tablaMovimientos de ../src/vista-movimientos.js. Test 1: tablaMovimientos([{id:1,fecha:'<b>x</b>',concepto:'a',categoria:'ocio',centimos:-100}]) (mira la firma en el fichero) debe contener '&lt;b&gt;x&lt;/b&gt;' y no contener '<b>x</b>'. Test 2: lee con node:fs readFileSync todos los .js de src/ y comprueba que ninguno tiene más de 200 líneas y que ninguno excepto main.js no contiene 'node:' ni 'require(' ni 'process.'.",
+    "files": [
+     "src/vista-movimientos.js"
+    ],
+    "after": [
+     "a"
+    ]
+   },
+   {
+    "id": "d",
+    "kind": "edit",
+    "path": "CHANGELOG.md",
+    "instructions": "Añade al final la línea: `- Parche 018 · 09/10/2026 · Revisión final: las fechas e ids de la tabla de movimientos y el título del resumen pasan por escapar; test de tamaño y de código de Node en src/.`",
+    "after": []
+   }
+  ]
+ }
+]

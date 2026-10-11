@@ -18,11 +18,12 @@ class LocalBossAdapter(Adapter):
     is_cli = False
 
     def __init__(self, binary: str | None = None, check: str | None = None, cerebro: int | None = None,
-                 roles: dict | None = None, **_):
+                 roles: dict | None = None, recetas: str | None = None, **_):
         super().__init__(binary)
         self.check = check
         self.cerebro = cerebro  # 2 = cerebro.Cerebro (diagnóstico, escalera de arreglo, pensamiento por papel)
         self.roles = roles  # cambios a cerebro.ROLES para este agente
+        self.recetas = recetas  # cerebro 2: planes de Claude por parche (banco/recetas/*.json), para medir el resto
 
     def build_command(self, spec: RunSpec) -> list[str]:  # no es una CLI
         raise NotImplementedError
@@ -48,7 +49,8 @@ class LocalBossAdapter(Adapter):
         v2 = str(self.cerebro or "") == "2"
         if v2:
             from localharness.cerebro import Cerebro
-            boss = Cerebro(server, check=check, say=say, deadline=deadline, roles=self.roles)
+            boss = Cerebro(server, check=check, say=say, deadline=deadline, roles=self.roles,
+                           recetas=self.recetas)
         else:
             boss = Boss(server, check=check, say=say, deadline=deadline)
         on_event(Event("progress", text=f"Jefe local{' (cerebro 2)' if v2 else ''}: planifican, reparten, "
