@@ -260,7 +260,12 @@ class Ejecucion:
         repo = proyectos / nombre
         crear_repo(prueba, modalidad, repo)
         cuerpo = {"name": f"banco-{nombre}", "repo_path": str(repo)}
-        api("POST", "/api/projects", cuerpo)
+        try:
+            api("POST", "/api/projects", cuerpo)
+        except ApiError:
+            # el 11/10 el alta contestó 500 pero el proyecto quedó dado de alta: si está, se sigue
+            if not any(p.get("name") == cuerpo["name"] for p in api("GET", "/api/projects")):
+                raise
         carpeta.mkdir(parents=True)
         items = prueba.lista(modalidad)
         (carpeta / "resultado.json").write_text(json.dumps({

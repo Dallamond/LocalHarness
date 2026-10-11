@@ -129,6 +129,27 @@ class ColaTest(unittest.TestCase):
         self.assertEqual(m["totales"]["pareja"]["aprobados"], 3)
         self.assertEqual(banco_cola.resumen(datos), [])  # los casos no salen en el resumen de pruebas largas
 
+    @unittest.skipUnless(NODE, "hace falta node para el examen")
+    def test_fallo_pasajero_de_la_api_se_reintenta(self):
+        from localharness.autopilot import ApiError
+        api = FakeApi([("src/a.js", "export const x = 1;\n"), ("src/b.js", "export const y = 2;\n")])
+        primera = [True]
+
+        def falla_una_vez(method, path, body=None):
+            if method == "POST" and path == "/api/projects" and primera[0]:
+                primera[0] = False
+                raise ApiError("POST /api/projects: HTTP 500 Internal Server Error")
+            if method == "GET" and path == "/api/projects" and not hasattr(api, "project"):
+                return []  # aún no hay ningún proyecto (el FakeApi solo guarda el último)
+            return api(method, path, body)
+        self.anadir("x")
+        esperas = []
+        banco_cola.correr(falla_una_vez, say=lambda _: None, path=self.cola, datos=self.tmp / "datos",
+                          proyectos=self.tmp / "proyectos", base=self.banco, espera=esperas.append, sleep=lambda _: None)
+        t = banco_cola.leer(self.cola)["tandas"][0]
+        self.assertEqual((t["estado"], len(t["hechas"]), t.get("fallos")), ("hecha", 1, 0), t)
+        self.assertEqual(esperas, [30])
+
     def test_parar_antes_no_corre_nada(self):
         self.anadir("x")
         banco_cola.editar(lambda c: c.update(parar="despues"), self.cola)

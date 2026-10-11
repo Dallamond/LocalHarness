@@ -29,6 +29,7 @@ from localharness import autopilot, banco
 COLA = banco.DATOS / "cola.json"
 LOG = banco.DATOS / "cola.log"
 ESTADOS = ("pendiente", "en marcha", "hecha", "parada", "error")
+REINTENTOS_API = 2  # fallos pasajeros de la API seguidos que aguanta una tanda
 NOMBRE_OK = re.compile(r"^[a-z0-9][a-z0-9._-]{0,60}$")
 
 
@@ -240,7 +241,7 @@ def parar(modo: str, api: Callable | None = None, path: Path | None = None) -> N
 
 def correr(api: Callable, say: Callable[[str], None] = print, path: Path | None = None, datos: Path = banco.DATOS,
            proyectos: Path = banco.PROYECTOS, base: Path = banco.BANCO, piloto: type = autopilot.Autopilot,
-           **kw) -> None:
+           espera: Callable[[float], None] = time.sleep, **kw) -> None:
     """Procesa la cola hasta vaciarla o hasta que pidan parar. Lo llama `banco cola` (el proceso aparte)."""
     def parada() -> bool:
         return leer(path).get("parar") is not None
@@ -287,10 +288,22 @@ def correr(api: Callable, say: Callable[[str], None] = print, path: Path | None 
                         x = _tanda(c, tid)
                         x["hechas"].append(ide)
                         x["actual"] = None
+                        x["fallos"] = 0
                     t = editar(hecha, path)
                     t = _tanda(t, tid)
                 fin = "hecha" if len(t["hechas"]) >= len(plan(t)) else "parada"
                 editar(lambda c: _tanda(c, tid).update(estado=fin), path)
+            except autopilot.ApiError as e:
+                # un fallo pasajero de la API (un 500, LocalHarness reiniciándose): se reintenta la misma ejecución
+                # hasta 2 veces seguidas antes de dar la tanda por fallida; las hechas se conservan
+                fallos = int(_tanda(leer(path), tid).get("fallos") or 0) + 1
+                if fallos <= REINTENTOS_API:
+                    say(f"=== fallo de la API ({e}); lo reintento ({fallos}/{REINTENTOS_API})")
+                    editar(lambda c: _tanda(c, tid).update(fallos=fallos, actual=None), path)
+                    espera(30)
+                    continue
+                say(f"=== la tanda {tid} falló: {e}")
+                editar(lambda c: _tanda(c, tid).update(estado="error", error=str(e)[:500], actual=None), path)
             except Exception as e:  # noqa: BLE001 — una tanda que falla no para la cola
                 say(f"=== la tanda {tid} falló: {e}")
                 # sin `actual`: al reabrirla empieza una ejecución nueva en vez de retomar la que falló
@@ -302,8 +315,12 @@ def correr(api: Callable, say: Callable[[str], None] = print, path: Path | None 
 # --- resultados: por configuración (prueba × modalidad × contendiente), con varias tiradas
 def _fila(d: dict) -> dict:
     t = d.get("totales") or {}
+    ps = d.get("parches") or []
     return {"nota": t.get("nota"), "integrados": t.get("integrados"), "parches": d.get("parches_total"),
-            "minutos": round((t.get("segundos") or 0) / 60, 1), "estado": d.get("estado")}
+            "minutos": round((t.get("segundos") or 0) / 60, 1), "estado": d.get("estado"), "hechos": len(ps),
+            "inicio": d.get("inicio"), "prueba": d.get("prueba"),
+            # la nota del examen oculto tras cada parche (la gráfica en vivo de la pestaña Banco)
+            "curva": [[x["n"], (x.get("examen") or {}).get("nota"), x.get("resultado")] for x in ps]}
 
 
 def ejecucion_corta(ide: str, datos: Path | None = None) -> dict | None:
@@ -378,12 +395,6 @@ def estado(path: Path | None = None, datos: Path | None = None, log: Path | None
         notas = [r["nota"] for r in t["resultados"] if r["nota"] is not None]
         t["media"] = round(mean(notas), 1) if notas else None
         t["en_curso"] = ejecucion_corta(t["actual"], datos) if t.get("actual") else None
-        if t["en_curso"]:
-            try:
-                d = json.loads((datos / t["actual"] / "resultado.json").read_text(encoding="utf-8"))
-                t["en_curso"]["hechos"] = len(d.get("parches") or [])
-            except (OSError, ValueError):
-                pass
     try:
         cola["log"] = log.read_text(encoding="utf-8", errors="replace")[-4000:]
     except OSError:

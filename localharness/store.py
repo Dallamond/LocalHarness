@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -54,9 +55,73 @@ MIGRATIONS = [
 ]
 
 
+class _Filas:
+    """El resultado de un execute ya leído entero (fetchone, fetchall, iterar, lastrowid, rowcount)."""
+
+    def __init__(self, filas: list, lastrowid: int | None, rowcount: int):
+        self._filas, self.lastrowid, self.rowcount = filas, lastrowid, rowcount
+        self._i = 0
+
+    def fetchone(self):
+        if self._i >= len(self._filas):
+            return None
+        self._i += 1
+        return self._filas[self._i - 1]
+
+    def fetchall(self) -> list:
+        resto, self._i = self._filas[self._i:], len(self._filas)
+        return resto
+
+    def __iter__(self):
+        return iter(self.fetchall())
+
+
+class _ConexionConCerrojo:
+    """Una conexión sqlite compartida entre hilos (el bucle de la API, `asyncio.to_thread`, los endpoints síncronos)
+    con un cerrojo: cada execute se hace y se lee entero dentro de él. Sin esto, dos hilos a la vez rompían la
+    conexión: el 11/10 el alta de un proyecto del banco (mientras se guardaban los eventos de la tarea anterior) dejó
+    el proyecto insertado pero contestó un 500 y paró la cola."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        self._c = conn
+        self._cerrojo = threading.RLock()
+
+    def execute(self, sql: str, params: Any = ()) -> _Filas:
+        with self._cerrojo:
+            cur = self._c.execute(sql, params)
+            return _Filas(cur.fetchall() if cur.description else [], cur.lastrowid, cur.rowcount)
+
+    def executemany(self, sql: str, seq: Any) -> _Filas:
+        with self._cerrojo:
+            cur = self._c.executemany(sql, seq)
+            return _Filas([], cur.lastrowid, cur.rowcount)
+
+    def executescript(self, sql: str) -> None:
+        with self._cerrojo:
+            self._c.executescript(sql)
+
+    def commit(self) -> None:
+        with self._cerrojo:
+            self._c.commit()
+
+    def close(self) -> None:
+        with self._cerrojo:
+            self._c.close()
+
+    def __getattr__(self, nombre: str) -> Any:  # row_factory, total_changes…
+        return getattr(self._c, nombre)
+
+    def __setattr__(self, nombre: str, valor: Any) -> None:
+        if nombre in ("_c", "_cerrojo"):
+            object.__setattr__(self, nombre, valor)
+        else:
+            setattr(self._c, nombre, valor)
+
+
 class Store:
     def __init__(self, path: str | Path = ":memory:"):
-        self.db = sqlite3.connect(str(path), check_same_thread=False)  # la API lo usa desde el hilo del bucle y el de git
+        # la API la usa desde el hilo del bucle, desde `asyncio.to_thread` y desde los endpoints síncronos: cerrojo
+        self.db = _ConexionConCerrojo(sqlite3.connect(str(path), check_same_thread=False))
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys=ON")
         self.migrate()

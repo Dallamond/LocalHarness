@@ -21,6 +21,7 @@ interface Cont {
 interface Ejec { id: string; prueba: string; modalidad: string; estado: string; contendiente: string; inicio: string;
   totales: { nota?: number | null } | null }
 interface Corta { id: string; nota: number | null; integrados: number | null; parches: number | null; minutos: number;
+  curva?: [number, number | null, string][]; inicio?: string;
   estado: string; hechos?: number }
 interface Tanda {
   id: string; prueba: string; modalidad: string; repeticiones: number; contendiente: Cont;
@@ -247,6 +248,53 @@ const modelosDe = (c: Cont) => Object.entries(c.modelos ?? {}).map(([s, m]) => `
 const extras = (c: Cont) => [c.linea ? `línea ×${c.linea}` : "", c.reparar ? `reparación ×${c.reparar}` : "",
   c.relevo ? `relevo de ${c.relevo.split("/")[1]}` : ""].filter(Boolean).join(" · ");
 const tono = (n: number | null | undefined) => (n == null ? "" : n >= 80 ? "nota-alta" : n >= 40 ? "nota-media" : "nota-baja");
+// ---------- en vivo: la tanda que corre
+const enMarcha = computed(() => (cola.value?.corriendo ? cola.value.tandas.find((t) => t.estado === "en marcha") : undefined));
+
+/** Repertorio: los casos de la vuelta en curso, cada uno hecho (con su nota), en curso o pendiente. */
+const tira = computed(() => {
+  const t = enMarcha.value;
+  if (!t?.repertorio || !t.casos?.length) return null;
+  const n = t.casos.length;
+  const hechas = t.resultados.length;
+  const vuelta = Math.min(Math.floor(hechas / n), t.repeticiones - 1);
+  const celdas = t.casos.map((caso, k) => {
+    const i = vuelta * n + k;
+    const r = t.resultados[i];
+    return { caso, titulo: fichaCaso(caso)?.titulo ?? caso, grupo: fichaCaso(caso)?.grupo ?? "",
+      estado: r ? "hecho" : i === hechas && t.en_curso ? "curso" : "pendiente", r };
+  });
+  const notas = t.resultados.map((r) => r.nota ?? 0);
+  const gastado = t.resultados.reduce((a, r) => a + (r.minutos || 0), 0);
+  const restantes = t.total - hechas;
+  return {
+    celdas, vuelta: vuelta + 1, vueltas: t.repeticiones, hechas, total: t.total,
+    aprobados: notas.filter((x) => x >= 100).length, media: notas.length ? Math.round((notas.reduce((a, b) => a + b, 0) / notas.length) * 10) / 10 : null,
+    gastado, falta: hechas ? (gastado / hechas) * restantes : null,
+  };
+});
+
+/** Prueba larga: la curva de nota parche a parche de la ejecución en curso y de las repeticiones anteriores. */
+const W = 640, H = 220, M = { l: 36, r: 12, t: 12, b: 28 };
+const grafica = computed(() => {
+  const t = enMarcha.value;
+  if (!t || t.repertorio || !t.en_curso) return null;
+  const total = Math.max(t.en_curso.parches ?? 1, ...t.resultados.map((r) => r.curva?.length ?? 0), 1);
+  const x = (n: number) => M.l + ((n - 0.5) / total) * (W - M.l - M.r);
+  const y = (v: number) => H - M.b - (v / 100) * (H - M.t - M.b);
+  const linea = (curva: Corta["curva"]) => (curva ?? []).filter((c) => c[1] != null)
+    .map((c, i) => `${i ? "L" : "M"}${x(c[0]).toFixed(1)},${y(c[1] as number).toFixed(1)}`).join(" ");
+  const puntos = (t.en_curso.curva ?? []).filter((c) => c[1] != null)
+    .map((c) => ({ n: c[0], v: c[1] as number, cx: x(c[0]), cy: y(c[1] as number), res: c[2] }));
+  const ticksX = Array.from({ length: total }, (_, i) => i + 1).filter((n) => total <= 12 || n % Math.ceil(total / 12) === 0 || n === 1);
+  return {
+    actual: linea(t.en_curso.curva), previas: t.resultados.map((r) => linea(r.curva)).filter(Boolean), puntos,
+    ticksX: ticksX.map((n) => ({ n, x: x(n) })), ticksY: [0, 25, 50, 75, 100].map((v) => ({ v, y: y(v) })),
+    hechos: t.en_curso.hechos ?? 0, total, ultima: puntos.at(-1)?.v ?? null, rep: t.resultados.length + 1, reps: t.repeticiones,
+  };
+});
+const ICONO: Record<string, string> = { "nota-alta": "fa-check", "nota-media": "fa-circle-half-stroke", "nota-baja": "fa-xmark" };
+
 const minutos = (m: number) => (m >= 60 ? `${Math.floor(m / 60)} h ${Math.round(m % 60)} min` : `${Math.round(m)} min`);
 
 const grupos = computed(() => {
@@ -264,6 +312,53 @@ const grupos = computed(() => {
     </div>
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="aviso" class="aviso">{{ aviso }}</p>
+
+    <Card v-if="enMarcha" :title="`En vivo · ${titulo(enMarcha.prueba)}${enMarcha.repertorio ? '' : ` · ${enMarcha.modalidad}`}`"
+          :subtitle="`${enMarcha.contendiente.nombre} · ${enMarcha.contendiente.agente}`">
+      <template v-if="tira">
+        <div class="vivo__cifras">
+          <div><b>{{ tira.hechas }}/{{ tira.total }}</b><span>casos hechos{{ tira.vueltas > 1 ? ` · vuelta ${tira.vuelta}/${tira.vueltas}` : "" }}</span></div>
+          <div><b>{{ tira.aprobados }}</b><span>aprobados (nota 100)</span></div>
+          <div><b>{{ tira.media ?? "—" }}{{ tira.media != null ? " %" : "" }}</b><span>nota media</span></div>
+          <div><b>{{ minutos(tira.gastado) }}</b><span>{{ tira.falta != null ? `quedan unos ${minutos(tira.falta)}` : "calculando lo que queda…" }}</span></div>
+        </div>
+        <div class="barra" role="progressbar" :aria-valuenow="tira.hechas" :aria-valuemax="tira.total"><span :style="{ width: `${(100 * tira.hechas) / tira.total}%` }" /></div>
+        <ol class="tira">
+          <li v-for="c in tira.celdas" :key="c.caso" class="tira__caso" :class="[`is-${c.estado}`, c.r ? tono(c.r.nota) : '']"
+              :title="c.r ? `${c.titulo} · nota ${c.r.nota} · ${minutos(c.r.minutos)}` : c.titulo">
+            <span class="tira__grupo">{{ GRUPO[c.grupo] ?? c.grupo }}</span>
+            <span class="tira__titulo">{{ c.titulo }}</span>
+            <span v-if="c.r" class="tira__nota"><i class="fa-solid" :class="ICONO[tono(c.r.nota)]" aria-hidden="true" /> {{ c.r.nota }}</span>
+            <span v-else-if="c.estado === 'curso'" class="tira__nota"><i class="fa-solid fa-spinner fa-spin" aria-hidden="true" /> en curso</span>
+            <span v-else class="tira__nota tira__nota--vacia">pendiente</span>
+            <a v-if="c.r && c.grupo === 'tangible'" class="tira__abrir" :href="`/banco/abrir/${c.r.id}/`" target="_blank" rel="noopener">abrir</a>
+          </li>
+        </ol>
+      </template>
+      <template v-else-if="grafica">
+        <div class="vivo__cifras">
+          <div><b>{{ grafica.hechos }}/{{ grafica.total }}</b><span>parches · repetición {{ grafica.rep }}/{{ grafica.reps }}</span></div>
+          <div><b>{{ grafica.ultima ?? "—" }}{{ grafica.ultima != null ? " %" : "" }}</b><span>nota tras el último parche</span></div>
+          <div><b>{{ enMarcha.media ?? "—" }}{{ enMarcha.media != null ? " %" : "" }}</b><span>media de las repeticiones acabadas</span></div>
+        </div>
+        <div class="barra"><span :style="{ width: `${(100 * grafica.hechos) / grafica.total}%` }" /></div>
+        <svg class="curva" :viewBox="`0 0 ${W} ${H}`" role="img" :aria-label="`Nota del examen tras cada parche: ${grafica.puntos.map((p) => `${p.n}: ${p.v}`).join(', ')}`">
+          <g class="curva__eje">
+            <line v-for="t in grafica.ticksY" :key="t.v" :x1="M.l" :x2="W - M.r" :y1="t.y" :y2="t.y" />
+            <text v-for="t in grafica.ticksY" :key="`y${t.v}`" :x="M.l - 6" :y="t.y + 4" text-anchor="end">{{ t.v }}</text>
+            <text v-for="t in grafica.ticksX" :key="`x${t.n}`" :x="t.x" :y="H - 8" text-anchor="middle">{{ t.n }}</text>
+          </g>
+          <path v-for="(d, i) in grafica.previas" :key="i" :d="d" class="curva__previa" />
+          <path :d="grafica.actual" class="curva__actual" />
+          <g v-for="pt in grafica.puntos" :key="pt.n" class="curva__punto">
+            <circle :cx="pt.cx" :cy="pt.cy" r="12" class="curva__hit"><title>Parche {{ pt.n }}: {{ pt.v }} % · {{ pt.res }}</title></circle>
+            <circle :cx="pt.cx" :cy="pt.cy" r="4" />
+          </g>
+        </svg>
+        <p class="hint">Nota del examen oculto tras cada parche. En gris, las repeticiones anteriores de esta tanda. Pasa el ratón por un punto para ver el detalle.</p>
+      </template>
+      <p v-else class="empty">Preparando la ejecución…</p>
+    </Card>
 
     <Card title="Cola" :subtitle="cola?.corriendo ? 'Las tandas se hacen en orden; cada repetición, una ejecución completa.' : 'Pulsa Empezar y se hará sola, tanda tras tanda.'">
       <template #actions>
@@ -495,6 +590,132 @@ const grupos = computed(() => {
 </template>
 
 <style scoped>
+.vivo__cifras {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.vivo__cifras div {
+  display: grid;
+}
+.vivo__cifras b {
+  font-size: 1.5rem;
+  font-variant-numeric: tabular-nums;
+}
+.vivo__cifras span {
+  color: var(--ink-dim);
+  font-size: 0.85rem;
+}
+.barra {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line);
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+.barra span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+.tira {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 6px;
+}
+.tira__caso {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel-raised);
+  min-height: 78px;
+}
+.tira__caso.is-pendiente {
+  border-style: dashed;
+  opacity: 0.7;
+}
+.tira__caso.is-curso {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.tira__caso.nota-alta {
+  background: var(--ok-weak);
+}
+.tira__caso.nota-media {
+  background: var(--warn-weak);
+}
+.tira__caso.nota-baja {
+  background: var(--crit-weak);
+}
+.tira__grupo {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+}
+.tira__titulo {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.25;
+}
+.tira__nota {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.tira__nota--vacia {
+  font-weight: 400;
+  color: var(--ink-faint);
+}
+.tira__abrir {
+  font-size: 0.8rem;
+}
+.curva {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.curva__eje line {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.curva__eje text {
+  fill: var(--ink-faint);
+  font-size: 11px;
+}
+.curva__previa {
+  fill: none;
+  stroke: var(--ink-faint);
+  stroke-width: 1.5;
+  opacity: 0.45;
+}
+.curva__actual {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+.curva__punto circle:last-child {
+  fill: var(--accent);
+  stroke: var(--panel);
+  stroke-width: 2;
+  pointer-events: none;
+}
+.curva__hit {
+  fill: transparent;
+  cursor: default;
+}
+.curva__punto:hover circle:last-child {
+  r: 6;
+}
 .aviso {
   margin: 0 0 12px;
   color: var(--ok);

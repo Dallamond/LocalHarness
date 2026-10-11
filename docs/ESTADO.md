@@ -53,6 +53,17 @@ también: «Añadir a la cola» no hacía nada (validación muda del navegador: 
 él mismo y dice el motivo junto al botón. Ojo: dentro de un test, `node --test` hijo necesita el entorno SIN
 `NODE_TEST_CONTEXT` o no da su resumen.
 
+**12/10 00:50 — Panel «En vivo» y cola robusta.** Lucas lanzó el repertorio básico y no tenía dónde verlo con
+gráficas ni en tiempo real (el visor `/banco` solo lista pruebas largas). Hecho: tarjeta «En vivo» arriba de la
+pestaña Banco (repertorio: tira de casos hecho/en curso/pendiente con nota e icono, progreso, aprobados, media y
+tiempo restante; prueba larga: curva de nota por parche de la ejecución en curso sobre las repeticiones anteriores).
+Además, tras 2 casos (100 % los dos) el alta del proyecto del 3.º dio **500** y paró la cola: la conexión sqlite se
+compartía entre hilos sin cerrojo → `store._ConexionConCerrojo` (cada execute se lee entero dentro de un RLock); el
+banco sigue si el proyecto quedó dado de alta; la cola reintenta 2 fallos de API seguidos. Tanda reabierta (sigue en
+el caso 3).
+**PENDIENTE (lo pidió Lucas para la próxima):** pruebas más cortas: poder **elegir X casos** del repertorio (p. ej. 5)
+en vez de los 22 de golpe (selector de casos en el formulario, o repertorios pequeños por grupo).
+
 ## ▶ 10/10/2026 13:00 — Cerebro 2 medido (17,2 %) y tres arreglos; relanzado `qwen9b-qwen4b-cerebro2-20261010-1301`
 **Medido:** `qwen9b-qwen4b-cerebro2-20261010-1050` = 4/18 integrados, **17,2 %** (lógica 0/8): sin mejora sobre el
 20,7 % de la línea base. **Causa raíz** (eventos 220–237): los 59 bloques de código del plan llegaban al obrero SIN la
