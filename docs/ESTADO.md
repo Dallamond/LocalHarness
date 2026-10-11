@@ -36,6 +36,13 @@ código 4 rondas × 2 intentos, reescribió `nivel.js`/`mapa.js` y metió una de
 - Lanzado `supersalto-libre/gptoss-qwen4b-recetas-relevo-20261011-2145` (receta + relevo de Claude + `linea` 1): mide
   el bucle local hito por hito. Después: prueba completa del Jefe local 2 con `linea` y `reparar`.
 
+**23:30 — Pestaña Banco (`/pruebas`, commit 9fe7b00):** cola de tandas montada desde la web (prueba × modalidad ×
+modelos por servidor + pensamiento × agente × repeticiones, con `linea`, `reparar`, `relevo` y topes); la procesa
+`python -m localharness banco cola` (proceso aparte que arranca el servidor: `banco_cola.empezar`), con parar «al acabar»
+o «ya». Resultados agrupados por contendiente (tiradas, media, mejor/peor). Falta: que Lucas la pruebe en el navegador
+tras reiniciar LocalHarness (no se reinició para no cortar el relevo). Relevo a las 23:30: hitos 1–3 integrados (con
+deuda), 28,6 / 37,1 / 60 % frente a 31,4 / 48,6 / 62,9 % de Claude en el mismo punto.
+
 ## ▶ 10/10/2026 13:00 — Cerebro 2 medido (17,2 %) y tres arreglos; relanzado `qwen9b-qwen4b-cerebro2-20261010-1301`
 **Medido:** `qwen9b-qwen4b-cerebro2-20261010-1050` = 4/18 integrados, **17,2 %** (lógica 0/8): sin mejora sobre el
 20,7 % de la línea base. **Causa raíz** (eventos 220–237): los 59 bloques de código del plan llegaban al obrero SIN la
