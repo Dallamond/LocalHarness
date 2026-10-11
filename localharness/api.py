@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 from localharness.local_servers import autostart_llama, servers_status, start_on, suggest_servers  # noqa: F401
 from localharness import bench, local_servers, profiles
-from localharness import banco, compare
+from localharness import autopilot, banco, banco_cola, compare
 from localharness import (actions, analytics, catalog, context, designer, hardware, hf, library, llama, maintenance, mcp_local,
                           modelinfo, orchestrator, roles, settings, usage, workspace)
 from localharness.adapters import ADAPTERS
@@ -63,6 +63,26 @@ class SwapIn(BaseModel):
     server: str = llama.PRINCIPAL
     path: str
     options: dict[str, Any] | None = None
+
+
+class BancoTandaIn(BaseModel):
+    prueba: str
+    modalidad: str
+    repeticiones: int = Field(default=1, ge=1, le=50)
+    contendiente: dict[str, Any]  # como banco/contendientes/*.json, con su `nombre`
+
+
+class BancoMoverIn(BaseModel):
+    delta: int = Field(ge=-50, le=50)
+
+
+class BancoPararIn(BaseModel):
+    modo: Literal["despues", "ya"] = "despues"
+
+
+class BancoContendienteIn(BaseModel):
+    contendiente: dict[str, Any]
+    sobrescribir: bool = False
 
 
 class UseIn(BaseModel):
@@ -1555,6 +1575,70 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
             return banco.ejecucion(f"{grupo}/{nombre}", banco.DATOS)
         except FileNotFoundError:
             raise HTTPException(404, "No existe esa ejecución del banco") from None
+
+    # --- cola del banco (pestaña Banco): tandas prueba × contendiente × repeticiones (localharness/banco_cola.py)
+    def yo(request: Request) -> str:  # la URL del propio servidor (la del socket: con Vite delante, no la del Host)
+        host, port = request.scope.get("server") or ("127.0.0.1", 8095)
+        return f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{port}"
+
+    @app.get("/api/banco/cola")
+    def banco_cola_estado() -> dict:
+        return {**banco_cola.estado(), "resumen": banco_cola.resumen()}
+
+    @app.post("/api/banco/cola", status_code=201)
+    def banco_cola_anadir(body: BancoTandaIn) -> dict:
+        try:
+            return banco_cola.anadir(body.prueba, body.modalidad, body.repeticiones, body.contendiente)
+        except (ValueError, FileNotFoundError) as e:
+            raise HTTPException(422, str(e)) from None
+
+    @app.delete("/api/banco/cola/{tid}")
+    def banco_cola_quitar(tid: str) -> dict:
+        try:
+            banco_cola.quitar(tid)
+        except KeyError:
+            raise HTTPException(404, "No existe esa tanda") from None
+        except ValueError as e:
+            raise HTTPException(409, str(e)) from None
+        return {"ok": True}
+
+    @app.post("/api/banco/cola/{tid}/mover")
+    def banco_cola_mover(tid: str, body: BancoMoverIn) -> dict:
+        try:
+            banco_cola.mover(tid, body.delta)
+        except KeyError:
+            raise HTTPException(404, "No existe esa tanda") from None
+        return {"ok": True}
+
+    @app.post("/api/banco/cola/{tid}/reabrir")
+    def banco_cola_reabrir(tid: str) -> dict:
+        try:
+            banco_cola.reabrir(tid)
+        except KeyError:
+            raise HTTPException(404, "No existe esa tanda") from None
+        return {"ok": True}
+
+    @app.post("/api/banco/cola/empezar")
+    def banco_cola_empezar(request: Request) -> dict:
+        return {"arrancada": banco_cola.empezar(yo(request))}
+
+    @app.post("/api/banco/cola/parar")
+    def banco_cola_parar(request: Request, body: BancoPararIn) -> dict:
+        try:
+            banco_cola.parar(body.modo, autopilot.http(yo(request)))
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+        return {"ok": True}
+
+    @app.post("/api/banco/contendientes", status_code=201)
+    def banco_guardar_contendiente(body: BancoContendienteIn) -> dict:
+        try:
+            f = banco_cola.guardar_contendiente(body.contendiente, body.sobrescribir)
+        except FileExistsError as e:
+            raise HTTPException(409, str(e)) from None
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+        return {"ok": True, "archivo": f.name}
 
     @app.get("/banco", include_in_schema=False)
     def banco_pagina() -> FileResponse:

@@ -216,6 +216,12 @@ class Ejecucion:
                              f"(tiene: {', '.join(prueba.modalidades)})")
         ahora = ahora or datetime.now()
         sello = f"{ahora:%Y%m%d-%H%M}"
+        # dos en el mismo minuto (una repetición que cae enseguida, en la cola del banco): -2, -3…
+        base_sello, k = sello, 1
+        while (datos / f"{prueba.nombre}-{modalidad}" / f"{cont['nombre']}-{sello}").exists() \
+                or (proyectos / f"{prueba.nombre}-{modalidad}-{cont['nombre']}-{sello}").exists():
+            k += 1
+            sello = f"{base_sello}-{k}"
         nombre = f"{prueba.nombre}-{modalidad}-{cont['nombre']}-{sello}"
         carpeta = datos / f"{prueba.nombre}-{modalidad}" / f"{cont['nombre']}-{sello}"
         repo = proyectos / nombre

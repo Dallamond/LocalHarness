@@ -26,6 +26,7 @@ const links = [
   { to: "/modelos", text: "Modelos locales", icon: "fa-microchip" },
   { to: "/analiticas", text: "Analíticas", icon: "fa-chart-column" },
   { to: "/comparativa", text: "Comparativa", icon: "fa-scale-balanced" },
+  { to: "/pruebas", text: "Banco", icon: "fa-flask" },
   { to: "/ajustes", text: "Ajustes", icon: "fa-sliders" },
 ];
 </script>

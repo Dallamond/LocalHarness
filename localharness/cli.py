@@ -400,6 +400,10 @@ def cmd_banco(args) -> int:
                   f"nota {t.get('nota')}")
         return 0
     api = autopilot.http(args.url)
+    if args.accion == "cola":  # el proceso de la cola de la pestaña Banco (lo arranca el servidor)
+        from localharness import banco_cola
+        banco_cola.correr(api, say=lambda s: print(s, flush=True))
+        return 0
     if args.accion == "seguir":
         if not args.carpeta:
             return _fail("banco seguir necesita la carpeta de la ejecución (data/banco/<prueba>-<modalidad>/<...>)")
@@ -676,7 +680,7 @@ def main(argv: list[str] | None = None) -> int:
         .set_defaults(fn=cmd_delegation_test)
 
     p = sub.add_parser("banco", help="banco de pruebas: mismo proyecto desde cero por contendiente, con nota")
-    p.add_argument("accion", choices=["lista", "correr", "seguir"])
+    p.add_argument("accion", choices=["lista", "correr", "seguir", "cola"])
     p.add_argument("carpeta", nargs="?", help="seguir: carpeta de la ejecución en data/banco")
     p.add_argument("--prueba"); p.add_argument("--modalidad", default="guiada")
     p.add_argument("--contendiente", nargs="+", help="uno o varios (se corren uno tras otro)")

@@ -170,8 +170,9 @@ class Autopilot:
                  reload: Callable[[], list[str]] | None = None,
                  propose: Callable[[list[str]], list[str]] | None = None,
                  after: Callable[[Result], None] | None = None, line_retries: int = 0, repair_rounds: int = 0,
-                 before: Callable[[int], None] | None = None):
+                 before: Callable[[int], None] | None = None, stop: Callable[[], bool] | None = None):
         self.api, self.items, self.check, self.reload = api, items, check, reload
+        self.stop = stop  # si devuelve True, no empieza el parche siguiente (la cola del banco: «parar»)
         self.before = before  # se llama antes de cada parche (p. ej. el banco en relevo: deja el repo como lo tenía otro)
         # 11/10: con el hito 1 descartado, los 7 siguientes se construían sobre un motor que no existía.
         # `line_retries`: un parche que no entra se repite al momento (mismo número) con lo que falló delante.
@@ -483,6 +484,9 @@ class Autopilot:
                 if n in done:
                     continue
                 spent = sum(r.cost for r in self.results)
+                if self.stop and self.stop():
+                    self.say("Parado a petición.")
+                    break
                 if self.clock() > deadline:
                     self.say("Se acabó el tiempo.")
                     break
