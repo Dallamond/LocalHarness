@@ -48,26 +48,29 @@ const form = reactive({
 });
 
 async function cargar() {
-  try {
-    const [b, l, c] = await Promise.all([
-      api<{ pruebas: Ficha[]; contendientes: Cont[]; ejecuciones: Ejec[] }>("/api/banco"),
-      api<LlamaInfo>("/api/llama"),
-      api<Cola>("/api/banco/cola"),
-    ]);
-    pruebas.value = b.pruebas;
-    guardados.value = b.contendientes;
-    ejecuciones.value = b.ejecuciones;
-    llama.value = l;
-    cola.value = c;
-    if (!form.prueba && b.pruebas.length) form.prueba = b.pruebas[0].nombre;
-    for (const s of l.servers) {
+  // cada parte por su lado: si una falla (p. ej. un servidor viejo sin la cola), el resto se ve igual
+  const [b, l, c] = await Promise.allSettled([
+    api<{ pruebas: Ficha[]; contendientes: Cont[]; ejecuciones: Ejec[] }>("/api/banco"),
+    api<LlamaInfo>("/api/llama"),
+    api<Cola>("/api/banco/cola"),
+  ]);
+  const fallos: string[] = [];
+  if (b.status === "fulfilled") {
+    pruebas.value = b.value.pruebas;
+    guardados.value = b.value.contendientes;
+    ejecuciones.value = b.value.ejecuciones;
+    if (!form.prueba && b.value.pruebas.length) form.prueba = b.value.pruebas[0].nombre;
+  } else fallos.push(`pruebas: ${(b.reason as Error).message}`);
+  if (l.status === "fulfilled") {
+    llama.value = l.value;
+    for (const s of l.value.servers) {
       if (!(s.id in form.modelos)) form.modelos[s.id] = KEEP;
       if (!(s.id in form.pensamiento)) form.pensamiento[s.id] = "normal";
     }
-    error.value = "";
-  } catch (e) {
-    error.value = (e as Error).message;
-  }
+  } else fallos.push(`modelos: ${(l.reason as Error).message}`);
+  if (c.status === "fulfilled") cola.value = c.value;
+  else fallos.push(`cola: ${(c.reason as Error).message} (¿LocalHarness sin reiniciar tras actualizar?)`);
+  error.value = fallos.join(" · ");
 }
 async function refrescarCola() {
   try {
