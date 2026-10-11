@@ -159,12 +159,46 @@ async function hacer(fn: () => Promise<unknown>, ok = "") {
     busy.value = false;
   }
 }
-const anadir = () => hacer(() => post("/api/banco/cola", { prueba: form.prueba, modalidad: form.modalidad,
-  repeticiones: form.repeticiones, contendiente: contendiente() }), "Tanda añadida a la cola.");
-const guardar = () => hacer(async () => {
+// El formulario no usa la validación del navegador (con un campo fuera de rango bloqueaba el envío sin decir nada,
+// y el aviso quedaba dentro del desplegable cerrado): se revisa aquí y el motivo sale junto al botón.
+const formError = ref("");
+const formAviso = ref("");
+function revisar(): string {
+  const n = (v: unknown) => typeof v === "number" && Number.isFinite(v);
+  if (!form.prueba) return "Elige una prueba.";
+  if (!form.modalidad) return "Elige una modalidad.";
+  if (!n(form.repeticiones) || !Number.isInteger(form.repeticiones) || form.repeticiones < 1 || form.repeticiones > 50)
+    return "Repeticiones: un número entero de 1 a 50.";
+  if (!/^[a-z0-9][a-z0-9._-]{0,60}$/.test(form.nombre.trim()))
+    return "Nombre del contendiente: minúsculas, números, «-», «_» o «.» (máx. 60), sin espacios.";
+  if (!n(form.horas) || form.horas < 0.1 || form.horas > 48) return "Horas como máximo: de 0,1 a 48 (en «Topes y descripción»).";
+  if (!n(form.minutos_tarea) || form.minutos_tarea < 1 || form.minutos_tarea > 240) return "Minutos por tarea: de 1 a 240 (en «Topes y descripción»).";
+  if (!n(form.presupuesto) || form.presupuesto < 0 || form.presupuesto > 100) return "Presupuesto: de 0 a 100 (en «Topes y descripción»).";
+  if (!gastaPlan.value && form.presupuesto < 1) return "Con un agente local el presupuesto tiene que ser al menos 1 (si no, el autopiloto se para nada más empezar).";
+  return "";
+}
+async function enviar(fn: () => Promise<unknown>, ok: string) {
+  formError.value = revisar();
+  formAviso.value = "";
+  if (formError.value) return;
+  busy.value = true;
+  try {
+    await fn();
+    formAviso.value = ok;
+    await refrescarCola();
+  } catch (e) {
+    formError.value = `No se pudo: ${(e as Error).message}`;
+  } finally {
+    busy.value = false;
+  }
+}
+const anadir = () => enviar(() => post("/api/banco/cola", { prueba: form.prueba, modalidad: form.modalidad,
+  repeticiones: form.repeticiones, contendiente: contendiente() }),
+`Añadida a la cola: ${form.repeticiones}× ${form.nombre.trim()}. ${cola.value?.corriendo ? "Se hará cuando acabe lo que hay delante." : "Pulsa Empezar en la tarjeta Cola."}`);
+const guardar = () => enviar(async () => {
   await post("/api/banco/contendientes", { contendiente: contendiente() });
   await cargar();
-}, `Guardado como banco/contendientes/${form.nombre}.json`);
+}, `Guardado como banco/contendientes/${form.nombre.trim()}.json`);
 const empezar = () => hacer(() => post("/api/banco/cola/empezar"));
 const parar = (modo: "despues" | "ya") => hacer(() => post("/api/banco/cola/parar", { modo }));
 const mover = (t: Tanda, delta: number) => hacer(() => post(`/api/banco/cola/${t.id}/mover`, { delta }));
@@ -270,7 +304,7 @@ const grupos = computed(() => {
     </Card>
 
     <Card title="Nueva tanda" subtitle="Lo que elijas aquí es el «contendiente»: se guarda dentro de la tanda (y, si quieres, como archivo para reutilizarlo).">
-      <form class="bform" @submit.prevent="anadir">
+      <form class="bform" novalidate @submit.prevent="anadir">
         <label class="field">
           <span class="label">Prueba</span>
           <select v-model="form.prueba" class="input">
@@ -347,9 +381,9 @@ const grupos = computed(() => {
         <details class="wide avanzado">
           <summary>Topes y descripción</summary>
           <div class="bform">
-            <label class="field"><span class="label">Horas como máximo</span><input v-model.number="form.horas" type="number" min="0.1" max="48" step="0.5" class="input" /></label>
+            <label class="field"><span class="label">Horas como máximo</span><input v-model.number="form.horas" type="number" min="0.1" max="48" step="any" class="input" /></label>
             <label class="field"><span class="label">Minutos por tarea</span><input v-model.number="form.minutos_tarea" type="number" min="1" max="240" class="input" /></label>
-            <label class="field"><span class="label">Presupuesto de Claude ($ nominales)</span><input v-model.number="form.presupuesto" type="number" min="0" max="100" step="0.5" class="input" /><span class="hint">Con un agente local no se gasta nada; tiene que ser al menos 1 o el autopiloto se para.</span></label>
+            <label class="field"><span class="label">Presupuesto de Claude ($ nominales)</span><input v-model.number="form.presupuesto" type="number" min="0" max="100" step="any" class="input" /><span class="hint">Con un agente local no se gasta nada; tiene que ser al menos 1 o el autopiloto se para.</span></label>
             <label class="field wide"><span class="label">Descripción</span><input v-model="form.descripcion" class="input" placeholder="Qué pruebas con esta configuración" /></label>
           </div>
         </details>
@@ -361,11 +395,13 @@ const grupos = computed(() => {
             <button v-if="form.nombreTocado" type="button" class="linklike" @click="form.nombreTocado = false; form.nombre = nombreAuto">usar el automático</button></span>
         </label>
         <div class="row wide">
-          <button class="btn btn--primary" :disabled="busy || !form.prueba || !form.modalidad || !form.nombre">
-            Añadir a la cola ({{ form.repeticiones }}×)
+          <button class="btn btn--primary" :disabled="busy">
+            {{ busy ? "Añadiendo…" : `Añadir a la cola (${form.repeticiones}×)` }}
           </button>
-          <button type="button" class="btn" :disabled="busy || !form.nombre" title="banco/contendientes/<nombre>.json" @click="guardar">Guardar como contendiente</button>
+          <button type="button" class="btn" :disabled="busy" title="banco/contendientes/<nombre>.json" @click="guardar">Guardar como contendiente</button>
         </div>
+        <p v-if="formError" class="error wide" role="alert">{{ formError }}</p>
+        <p v-if="formAviso" class="aviso wide" role="status">{{ formAviso }}</p>
       </form>
     </Card>
 
