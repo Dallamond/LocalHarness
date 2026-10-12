@@ -103,8 +103,9 @@ def contendiente(c: dict) -> dict:
 
 
 def anadir(prueba: str, modalidad: str, repeticiones: int, cont: dict, path: Path | None = None,
-           base: Path | None = None, repertorio: str | None = None) -> dict:
-    """Una tanda: una prueba larga `repeticiones` veces o, con `repertorio`, `repeticiones` vueltas a sus casos."""
+           base: Path | None = None, repertorio: str | None = None, casos: list[str] | None = None) -> dict:
+    """Una tanda: una prueba larga `repeticiones` veces o, con `repertorio`, `repeticiones` vueltas a sus casos (o
+    solo a `casos`, unos cuantos de ellos, para tener resultados antes)."""
     base = base or banco.BANCO
     if not 1 <= int(repeticiones) <= 50:
         raise ValueError("repeticiones: de 1 a 50")
@@ -112,7 +113,15 @@ def anadir(prueba: str, modalidad: str, repeticiones: int, cont: dict, path: Pat
     if repertorio:
         r = banco.cargar_repertorio(repertorio, base)
         prueba, modalidad = repertorio, "repertorio"
-        extra = {"repertorio": repertorio, "casos": r["casos"], "minutos_caso": r["minutos_tarea"]}
+        if casos:
+            fuera = [c for c in casos if c not in r["casos"]]
+            if fuera:
+                raise ValueError(f"«{repertorio}» no tiene los casos: {', '.join(fuera)}")
+            elegidos = [c for c in r["casos"] if c in casos]  # en el orden del repertorio
+        else:
+            elegidos = r["casos"]
+        extra = {"repertorio": repertorio, "casos": elegidos, "minutos_caso": r["minutos_tarea"],
+                 "de_casos": len(r["casos"])}
     else:
         p = banco.cargar_prueba(prueba, base)
         if modalidad not in p.modalidades:

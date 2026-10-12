@@ -113,6 +113,14 @@ class ColaTest(unittest.TestCase):
         self.assertEqual((t["prueba"], t["casos"], t["minutos_caso"]), ("r", ["ca", "cb"], 15))
         self.assertEqual(banco_cola.plan(t), [("ca", "caso"), ("cb", "caso")] * 2)
         self.assertEqual(banco_cola.contendiente_de(t)["minutos_tarea"], 15)
+        # solo unos cuantos casos: en el orden del repertorio, y uno que no es suyo no entra
+        corta = banco_cola.anadir("", "", 1, {"nombre": "pareja", "agente": "Jefe local"}, path=self.cola,
+                                  base=self.banco, repertorio="r", casos=["cb"])
+        self.assertEqual((corta["casos"], corta["de_casos"], banco_cola.plan(corta)), (["cb"], 2, [("cb", "caso")]))
+        with self.assertRaises(ValueError):
+            banco_cola.anadir("", "", 1, {"nombre": "pareja", "agente": "Jefe local"}, path=self.cola,
+                              base=self.banco, repertorio="r", casos=["cb", "zz"])
+        banco_cola.quitar(corta["id"], self.cola)
         bien_a, mal_b = ("src/a.js", "export const x = 1;\n"), ("src/b.js", "export const y = 3;\n")
         api = FakeApi([bien_a, mal_b, bien_a, ("src/b.js", "export const y = 2;\n")])
         datos = self.tmp / "datos"

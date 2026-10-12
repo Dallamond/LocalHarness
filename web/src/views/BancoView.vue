@@ -27,7 +27,7 @@ interface Tanda {
   id: string; prueba: string; modalidad: string; repeticiones: number; contendiente: Cont;
   estado: "pendiente" | "en marcha" | "hecha" | "parada" | "error"; hechas: string[]; actual: string | null;
   error: string | null; resultados: Corta[]; media: number | null; en_curso: Corta | null;
-  total: number; repertorio?: string; casos?: string[];
+  total: number; repertorio?: string; casos?: string[]; de_casos?: number;
 }
 interface Grupo { prueba: string; modalidad: string; contendiente: string; agente: string; descripcion: string;
   tiradas: number; media: number; mejor: number; peor: number; integrados: number; parches: number;
@@ -101,6 +101,24 @@ onUnmounted(() => clearInterval(timer));
 const REP = "rep:";
 const repertorio = computed(() => (form.prueba.startsWith(REP)
   ? repertorios.value.find((r) => r.nombre === form.prueba.slice(REP.length)) : undefined));
+// en un repertorio se puede correr solo una parte de los casos (5 en vez de 22: resultados en minutos, no en una hora)
+const elegidos = ref<string[]>([]);
+watch(repertorio, (r) => { elegidos.value = r ? [...r.casos] : []; }, { immediate: true });
+const nCasos = computed(() => elegidos.value.length);
+function alAzar(k: number) {
+  const todos = [...(repertorio.value?.casos ?? [])];
+  for (let i = todos.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [todos[i], todos[j]] = [todos[j], todos[i]];
+  }
+  const sel = new Set(todos.slice(0, k));
+  elegidos.value = (repertorio.value?.casos ?? []).filter((c) => sel.has(c));
+}
+function alternar(c: string) {
+  const sel = new Set(elegidos.value);
+  if (sel.has(c)) sel.delete(c); else sel.add(c);
+  elegidos.value = (repertorio.value?.casos ?? []).filter((x) => sel.has(x));
+}
 const prueba = computed(() => pruebas.value.find((p) => p.nombre === form.prueba));
 const modalidades = computed(() => Object.entries(prueba.value?.modalidades ?? {}));
 watch(() => form.prueba, () => {
@@ -181,6 +199,7 @@ function revisar(): string {
   const n = (v: unknown) => typeof v === "number" && Number.isFinite(v);
   if (!form.prueba) return "Elige una prueba.";
   if (!repertorio.value && !form.modalidad) return "Elige una modalidad.";
+  if (repertorio.value && !nCasos.value) return "Marca al menos un caso.";
   if (!n(form.repeticiones) || !Number.isInteger(form.repeticiones) || form.repeticiones < 1 || form.repeticiones > 50)
     return "Repeticiones: un número entero de 1 a 50.";
   if (!/^[a-z0-9][a-z0-9._-]{0,60}$/.test(form.nombre.trim()))
@@ -207,7 +226,8 @@ async function enviar(fn: () => Promise<unknown>, ok: string) {
   }
 }
 const anadir = () => enviar(() => post("/api/banco/cola", repertorio.value
-  ? { repertorio: repertorio.value.nombre, repeticiones: form.repeticiones, contendiente: contendiente() }
+  ? { repertorio: repertorio.value.nombre, repeticiones: form.repeticiones, contendiente: contendiente(),
+      casos: nCasos.value < repertorio.value.casos.length ? elegidos.value : null }
   : { prueba: form.prueba, modalidad: form.modalidad, repeticiones: form.repeticiones, contendiente: contendiente() }),
 `Añadida a la cola: ${form.repeticiones}× ${form.nombre.trim()}. ${cola.value?.corriendo ? "Se hará cuando acabe lo que hay delante." : "Pulsa Empezar en la tarjeta Cola."}`);
 const guardar = () => enviar(async () => {
@@ -386,7 +406,7 @@ const grupos = computed(() => {
           </div>
           <div class="tanda__cuerpo">
             <div class="tanda__cab">
-              <b>{{ t.repertorio ? `Repertorio ${titulo(t.prueba)}` : `${titulo(t.prueba)} · ${t.modalidad}` }}</b>
+              <b>{{ t.repertorio ? `Repertorio ${titulo(t.prueba)}${t.de_casos && t.casos && t.casos.length < t.de_casos ? ` · ${t.casos.length} de ${t.de_casos} casos` : ""}` : `${titulo(t.prueba)} · ${t.modalidad}` }}</b>
               <span class="nombre">{{ t.contendiente.nombre }}</span>
               <StatusChip :state="CHIP[t.estado]" :text="t.estado" />
             </div>
@@ -442,10 +462,22 @@ const grupos = computed(() => {
             <option v-for="[m, d] in modalidades" :key="m" :value="m">{{ m }} · {{ d.parches }} parches</option>
           </select>
         </label>
-        <div v-else class="field">
-          <span class="label">Casos</span>
-          <span class="hint">Un parche cada uno, con {{ repertorio.minutos_tarea }} min como máximo por caso.
-            {{ repertorio.casos.map((c) => fichaCaso(c)?.titulo ?? c).join(" · ") }}</span>
+        <div v-else class="field wide">
+          <span class="label">Casos · {{ nCasos }} de {{ repertorio.casos.length }}</span>
+          <div class="elegir">
+            <button type="button" class="btn btn--small" @click="alAzar(5)">5 al azar</button>
+            <button type="button" class="btn btn--small" @click="alAzar(10)">10 al azar</button>
+            <button type="button" class="btn btn--small btn--ghost" @click="elegidos = [...repertorio.casos]">Todos</button>
+            <button type="button" class="btn btn--small btn--ghost" @click="elegidos = []">Ninguno</button>
+          </div>
+          <div class="casos-sel">
+            <button v-for="c in repertorio.casos" :key="c" type="button" class="caso-sel" :class="{ 'is-on': elegidos.includes(c) }"
+                    :title="c" :aria-pressed="elegidos.includes(c)" @click="alternar(c)">
+              <small>{{ fichaCaso(c)?.grupo ?? "" }}</small>{{ fichaCaso(c)?.titulo ?? c }}
+            </button>
+          </div>
+          <span class="hint">Un parche cada uno, con {{ repertorio.minutos_tarea }} min como máximo por caso. Para comparar modelos,
+            deja la misma selección entre tandas: «al azar» sortea una vez y se queda.</span>
         </div>
         <label class="field">
           <span class="label">Partir de un contendiente guardado</span>
@@ -481,9 +513,9 @@ const grupos = computed(() => {
         </fieldset>
 
         <label class="field">
-          <span class="label">{{ repertorio ? "Vueltas (a todos los casos)" : "Repeticiones" }}</span>
+          <span class="label">{{ repertorio ? "Vueltas (a los casos marcados)" : "Repeticiones" }}</span>
           <input v-model.number="form.repeticiones" type="number" min="1" max="50" class="input" />
-          <span class="hint">{{ repertorio ? `${form.repeticiones || 0} × ${repertorio.casos.length} = ${(form.repeticiones || 0) * repertorio.casos.length} ejecuciones cortas.` : "Con 3 o más se ve si un cambio mejora de verdad o fue suerte." }}</span>
+          <span class="hint">{{ repertorio ? `${form.repeticiones || 0} × ${nCasos} = ${(form.repeticiones || 0) * nCasos} ejecuciones cortas.` : "Con 3 o más se ve si un cambio mejora de verdad o fue suerte." }}</span>
         </label>
         <label class="field">
           <span class="label">Parar la línea</span>
@@ -590,6 +622,42 @@ const grupos = computed(() => {
 </template>
 
 <style scoped>
+.elegir {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.casos-sel {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 6px;
+}
+.caso-sel {
+  display: grid;
+  gap: 1px;
+  text-align: left;
+  padding: 6px 8px;
+  border: 1px dashed var(--line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1.25;
+  cursor: pointer;
+}
+.caso-sel small {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+}
+.caso-sel.is-on {
+  border: 1px solid var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+  background: var(--panel-raised);
+  color: var(--ink);
+}
 .vivo__cifras {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));

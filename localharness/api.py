@@ -69,6 +69,7 @@ class BancoTandaIn(BaseModel):
     prueba: str = ""
     modalidad: str = ""
     repertorio: str | None = None  # en vez de prueba y modalidad: una vuelta a todos sus casos por repetición
+    casos: list[str] | None = None  # con repertorio: solo estos casos (vacío o nada: todos)
     repeticiones: int = Field(default=1, ge=1, le=50)
     contendiente: dict[str, Any]  # como banco/contendientes/*.json, con su `nombre`
 
@@ -1591,7 +1592,7 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
     def banco_cola_anadir(body: BancoTandaIn) -> dict:
         try:
             return banco_cola.anadir(body.prueba, body.modalidad, body.repeticiones, body.contendiente,
-                                     repertorio=body.repertorio or None)
+                                     repertorio=body.repertorio or None, casos=body.casos or None)
         except (ValueError, FileNotFoundError) as e:
             raise HTTPException(422, str(e)) from None
 
