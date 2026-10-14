@@ -1,0 +1,14 @@
+{
+  "descripcion": "Tres modelos rápidos a la vez con lo que ya hay en disco: Qwen2.5-Coder-14B en la 3060 (~29 tok/s medidos, programador), y dos en la M40: gpt-oss-20b (MoE, ~35 tok/s, lee pocos pesos por token y apenas estorba) y Qwen2.5-Coder-7B Q8 como obrero ligero. VRAM de la M40 justa: gpt-oss ~12,5 GB + Coder-7B Q8 ~8 GB + caché con ctx 8k; si el segundo no arranca, bajar su ctx o cambiarlo por Qwen_Qwen3.5-4B-Q4_K_M.",
+  "agente": "Jefe local 2",
+  "servidores": [
+    {"id": "principal", "name": "3060", "port": 8080, "device": "CUDA0", "role": "fuerte", "thinking": "apagado"},
+    {"id": "m40", "name": "M40 gpt-oss", "port": 8081, "device": "CUDA1", "role": "general", "thinking": "normal"},
+    {"id": "m40b", "name": "M40 coder", "port": 8082, "device": "CUDA1", "role": "rapido", "thinking": "apagado"}
+  ],
+  "modelos": {"principal": {"modelo": "Qwen-2.5-Coder-14B-Instruct-Q4_K_M", "opciones": {"ctx": 8192}},
+              "m40": {"modelo": "gpt-oss-20b-UD-Q4_K_XL", "opciones": {"n_cpu_moe": 0, "ctx": 8192}},
+              "m40b": {"modelo": "qwen2.5-coder-7b-instruct-q8_0", "opciones": {"ctx": 8192}}},
+  "pensamiento": {"principal": "apagado", "m40": "normal", "m40b": "apagado"},
+  "horas": 12, "minutos_tarea": 45, "presupuesto": 1
+}
