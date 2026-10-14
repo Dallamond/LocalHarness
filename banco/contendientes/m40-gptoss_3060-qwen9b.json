@@ -1,0 +1,12 @@
+{
+  "descripcion": "Dos intermedios, uno por GPU, con el Jefe local 2: gpt-oss-20b en la M40 (a ~35 tok/s, sin expertos en CPU) y Qwen3.5-9B en la 3060. La M40 es la lenta, así que el reparto por cola cuenta su velocidad medida.",
+  "agente": "Jefe local 2",
+  "servidores": [
+    {"id": "principal", "name": "3060", "port": 8080, "device": "CUDA0", "role": "fuerte", "thinking": "apagado"},
+    {"id": "m40", "name": "M40", "port": 8081, "device": "CUDA1", "role": "general", "thinking": "normal"}
+  ],
+  "modelos": {"principal": "Qwen3.5-9B-Q4_K_M",
+              "m40": {"modelo": "gpt-oss-20b-UD-Q4_K_XL", "opciones": {"n_cpu_moe": 0, "ctx": 32768}}},
+  "pensamiento": {"principal": "apagado", "m40": "normal"},
+  "horas": 12, "minutos_tarea": 45, "presupuesto": 1
+}

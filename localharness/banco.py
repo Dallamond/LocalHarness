@@ -227,21 +227,25 @@ def ajustar_llama(api: Callable, cont: dict, say: Callable[[str], None] = print)
     (None si no cambia nada). `pensamiento` {servidor: normal|apagado|profundo}: el 09/10 el Qwen3.5-9B en «normal»
     razonaba sin tope (el `effort: low` del jefe solo lo entiende gpt-oss) y 3 encargos murieron «pensando». Y si
     deja un servidor apagado (null), se quita `autostart_on_task`: si no, cada tarea lo volvía a encender
-    (gptoss-solo usó el 4B 46 veces)."""
+    (gptoss-solo usó el 4B 46 veces). `servidores` [{id, name, port, device, role, thinking}]: la lista COMPLETA de
+    servidores locales durante la prueba (p. ej. la 3060 y dos en la M40: dos servidores con el mismo `device`);
+    al acabar vuelve la de antes."""
     pensamiento = cont.get("pensamiento") or {}
+    servidores = cont.get("servidores") or []
     apaga = any(v is None for v in (cont.get("modelos") or {}).values())
-    if not pensamiento and not apaga:
+    if not pensamiento and not apaga and not servidores:
         return None
     llama = api("GET", "/api/settings")["values"]["llama"]
     cambio: dict = {}
-    if pensamiento:
+    if pensamiento or servidores:
         cambio["servers"] = [{**s, "thinking": pensamiento.get(s["id"], s.get("thinking", "normal"))}
-                             for s in llama.get("servers") or []]
+                             for s in servidores or llama.get("servers") or []]
     if apaga and llama.get("autostart_on_task"):
         cambio["autostart_on_task"] = False
     if not cambio:
         return None
     say("  ajustes de llama: " + ", ".join(f"{k}={v}" for k, v in pensamiento.items())
+        + (" · servidores: " + ", ".join(f"{s['id']}@{s.get('device') or '-'}" for s in servidores) if servidores else "")
         + (" · sin autoarranque" if "autostart_on_task" in cambio else ""))
     api("PUT", "/api/settings", {"llama": cambio})
     return {k: llama.get(k) for k in cambio}

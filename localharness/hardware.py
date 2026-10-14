@@ -20,6 +20,7 @@ GPU_BANDWIDTH = {
     "RTX 3090 Ti": 1008, "RTX 3090": 936, "RTX 3080 Ti": 912, "RTX 3080": 760, "RTX 3070 Ti": 608,
     "RTX 3070": 448, "RTX 3060 Ti": 448, "RTX 3060": 360, "RTX 3050": 224,
     "RTX 2080 Ti": 616, "RTX 2080": 448, "RTX 2070": 448, "RTX 2060": 336, "GTX 1080 Ti": 484, "GTX 1660": 192,
+    "GTX 1060": 192, "Tesla P40": 347, "Tesla M40": 288,  # M40/P40: viejas pero con 24 GB (la M40 es Maxwell: sin Tensor Cores)
     "A100": 1555, "H100": 2039, "L40": 864, "A6000": 768, "A4000": 448, "T4": 320, "V100": 900,
     "RX 7900 XTX": 960, "RX 7900 XT": 800, "RX 7800 XT": 624, "RX 7600": 288, "RX 6800": 512,
 }
@@ -153,15 +154,22 @@ def budget(hw: dict, override: dict | None = None) -> dict:
 
 
 
-def device_budget(budget: dict, devices: list[dict], device: str | None) -> dict:
+def device_budget(budget: dict, devices: list[dict], device: str | None, shared: bool = False) -> dict:
     """El presupuesto de `budget` limitado a las GPU de un servidor local (`device` = -dev de llama.cpp: CUDA1 o
     CUDA0,CUDA1). Varias GPU suman su VRAM (llama.cpp reparte las capas); el ancho de banda es el de la más lenta,
-    que es la que marca el paso. Sin `device` o sin saber qué es, el presupuesto general (la GPU más grande)."""
+    que es la que marca el paso. Sin `device` o sin saber qué es, el presupuesto general (la GPU más grande).
+    `shared`: otro servidor ya tiene un modelo cargado en esa GPU (dos modelos en la M40): se cuenta solo la VRAM
+    LIBRE, y el ancho de banda se reparte entre los dos."""
     if not device or budget.get("manual"):
         return budget
     chosen = [d for d in devices if d["id"] in device.split(",")]
     if not chosen:
         return budget
+    if shared:
+        vram = sum(d.get("free_mb", d["total_mb"]) for d in chosen) / 1024
+        return {**budget, "gpu": " + ".join(d["name"] for d in chosen), "vram_gb": round(vram, 1),
+                "usable_vram_gb": max(0.0, vram - 0.3 * len(chosen)),  # el escritorio ya está contado en lo libre
+                "bandwidth_gbs": min(bandwidth(d["name"]) for d in chosen) // 2, "device": device, "shared": True}
     vram = sum(d["total_mb"] for d in chosen) / 1024
     names = [d["name"] for d in chosen]
     return {**budget, "gpu": " + ".join(names), "vram_gb": round(vram, 1),

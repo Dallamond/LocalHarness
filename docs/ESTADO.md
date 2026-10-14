@@ -310,7 +310,13 @@ PENDIENTES (la barrera los saltaba) y con el código viejo; el examen oculto da 
 5. Repartir el «pensar» y encadenar parches: el Qwen revisa los parches pequeños o prepara el siguiente mientras el
    fuerte planifica (hoy planificar y revisar van siempre al fuerte, y una GPU espera a la otra entre parches).
 6. `--continuo` solo con guardias y examen (hoy no propone nada útil).
-7. Tercera GPU (M40 de 24 GB, en camino): el reparto por cola y `suggest_servers` admiten hoy dos servidores.
+7. ~~Tercera GPU (M40)~~ **Hecho 14/10/2026**: la M40 ya está en el PC (la 1060 se quitó: ahora CUDA0 = 3060, CUDA1 =
+   M40 en la numeración de llama.cpp). El reparto por cola cuenta la velocidad medida de cada modelo
+   (`Server.note_speed`/`_speed_of`: la M40 va más lenta y no recibe la mitad del trabajo); `device_budget(shared=True)`
+   y `local_servers.device_shared` calculan la VRAM del segundo modelo en la misma GPU; los contendientes del banco
+   pueden declarar `servidores` (lista completa, se restaura al acabar). Contendientes nuevos:
+   `m40-gptoss_3060-qwen9b`, `m40-coder14b_3060-gptoss`, `dos-en-m40`. Sin medir en el PC: VRAM real de dos modelos
+   a la vez en la M40 y cuánto cuesta compartir su ancho de banda.
 
 ## ▶ EMPEZAR AQUÍ — TODO ESTÁ EN `main` (07/10/2026)
 Decisión de Lucas: **se trabaja siempre en `main`**. Se integraron en `main` las ramas `claude/gifted-carson-20grn9`

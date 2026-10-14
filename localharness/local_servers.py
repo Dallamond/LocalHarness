@@ -74,6 +74,18 @@ def servers_status(store: Store, pool: "llama.LlamaPool") -> list[dict]:
     return out
 
 
+def device_shared(store: Store, pool: "llama.LlamaPool", srv: dict) -> bool:
+    """¿Otro servidor local con un modelo cargado (o cargando) usa alguna GPU de `srv`? Es el caso de dos modelos en
+    la M40: el segundo solo puede contar con la VRAM que dejó el primero y comparte su ancho de banda."""
+    mine = {d for d in (srv.get("device") or "").split(",") if d}
+    for other in settings.local_servers(store):
+        theirs = {d for d in (other.get("device") or "").split(",") if d}
+        if other["id"] != srv["id"] and mine & theirs and \
+                pool.get(other["id"], other["port"]).status(other["port"])["state"] in ("loading", "ready"):
+            return True
+    return False
+
+
 def suggest_servers(devices: list[dict], current: list[dict]) -> list[dict] | None:
     """Con 2+ GPU y solo el servidor principal: uno por GPU. El principal («fuerte») en la de más memoria y otro
     («rápido») en la siguiente. None si no hay nada que proponer."""

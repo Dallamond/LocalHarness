@@ -449,6 +449,7 @@ class Server:
                          "role": srv.get("role") or "general"} for srv in servers]
         self._default = self.servers[0]
         self._inflight = {srv["id"]: 0 for srv in self.servers}  # encargos en curso de cada modelo (reparto por cola)
+        self._speed: dict[str, float] = {}  # tok/s medidos al generar (media móvil) de cada modelo: el reparto los usa
         self._models: dict[str, str | None] = {}
         self._ctx: dict[str, int | None] = {}  # contexto por ranura de cada servidor (/props)
         self.root = Path(env.get("LH_ROOT") or os.getcwd()).resolve()
@@ -512,16 +513,36 @@ class Server:
         return order
 
     def claim(self, kind: str, wanted=None) -> list[dict]:
-        """Como `route`, pero mirando la cola: va primero el modelo con menos encargos en curso (a igualdad, el
-        elegido o el de su papel) y se le apunta este. El 08/10 Claude mandó 12 de 13 bloques al rápido y el fuerte
-        se quedó 5 min parado: los dos van a ~25-30 tok/s, así que esperar en cola nunca compensa. Suéltalo con
-        `release`."""
+        """Como `route`, pero mirando la cola: va primero el modelo que antes acabaría el encargo —los que tiene en
+        curso más este, entre su velocidad— y a igualdad, el elegido o el de su papel; se le apunta este. El 08/10
+        Claude mandó 12 de 13 bloques al rápido y el fuerte se quedó 5 min parado: con dos modelos igual de rápidos
+        (~25-30 tok/s) esperar en cola nunca compensa. Con la M40 sí hay diferencia (un modelo grande ahí va mucho
+        más lento que en la 3060), así que se cuenta la velocidad medida (`note_speed`). Suéltalo con `release`."""
         order = self.route(kind, wanted)
         with self._lock:
             rank = {srv["id"]: i for i, srv in enumerate(order)}
-            order = sorted(order, key=lambda srv: (self._inflight.get(srv["id"], 0), rank[srv["id"]]))
+            order = sorted(order, key=lambda srv: ((self._inflight.get(srv["id"], 0) + 1) / self._speed_of(srv["id"]),
+                                                   rank[srv["id"]]))
             self._inflight[order[0]["id"]] = self._inflight.get(order[0]["id"], 0) + 1
         return order
+
+    def _speed_of(self, server_id: str) -> float:
+        """tok/s relativos para repartir (con `_lock` tomado). Sin medir, se supone tan rápido como el más rápido que
+        sí se ha medido (así se prueba y se mide); nunca menos de 1/4 del más rápido, para no dejar sin trabajo a uno
+        solo por una medida mala."""
+        fastest = max(self._speed.values(), default=1.0)
+        return max(self._speed.get(server_id, fastest), fastest / 4)
+
+    def note_speed(self, server_id: str, data: dict | None) -> None:
+        """Apunta los tok/s de una respuesta ya terminada (los `timings` de llama-server), con media móvil. Las
+        respuestas cortas (<20 tokens) miden más el arranque que la generación: no cuentan."""
+        timings = (data or {}).get("timings") or {}
+        tps, n = timings.get("predicted_per_second"), timings.get("predicted_n")
+        if not tps or tps <= 0 or (n is not None and n < 20):
+            return
+        with self._lock:
+            before = self._speed.get(server_id)
+            self._speed[server_id] = float(tps) if before is None else 0.6 * before + 0.4 * float(tps)
 
     def release(self, server_id: str) -> None:
         with self._lock:
@@ -1491,7 +1512,9 @@ class Server:
             self.current["server"] = srv["id"]
             self._live("", "")  # ese modelo ya está con el encargo (la oficina lo pone a trabajar)
             try:
-                return self._post({**body, **thinking_body(forced or srv.get("thinking"), effort)})
+                data = self._post({**body, **thinking_body(forced or srv.get("thinking"), effort)})
+                self.note_speed(srv["id"], data)
+                return data
             except Exception as e:
                 self._live("", "", done=True)
                 if not isinstance(e, NoModel) or i == len(order) - 1 or "401" in str(e):

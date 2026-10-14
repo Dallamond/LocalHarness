@@ -1,0 +1,11 @@
+{
+  "descripcion": "La pareja de referencia girada: gpt-oss-20b en la 3060 (con sus 4 expertos en CPU, ~50 tok/s) y Qwen2.5-Coder-14B en la M40. Mide si un programador denso en la tarjeta lenta aporta más que un segundo modelo rápido.",
+  "agente": "Jefe local 2",
+  "servidores": [
+    {"id": "principal", "name": "3060", "port": 8080, "device": "CUDA0", "role": "general", "thinking": "normal"},
+    {"id": "m40", "name": "M40", "port": 8081, "device": "CUDA1", "role": "fuerte", "thinking": "apagado"}
+  ],
+  "modelos": {"principal": "gpt-oss-20b-UD-Q4_K_XL", "m40": "Qwen-2.5-Coder-14B-Instruct-Q4_K_M"},
+  "pensamiento": {"principal": "normal", "m40": "apagado"},
+  "horas": 12, "minutos_tarea": 45, "presupuesto": 1
+}

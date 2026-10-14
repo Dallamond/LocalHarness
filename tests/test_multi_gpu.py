@@ -84,6 +84,45 @@ class DevicesTests(unittest.TestCase):
         self.assertIs(hardware.device_budget(base, DEVICES, None), base)
         self.assertIs(hardware.device_budget({**base, "manual": True}, DEVICES, "CUDA1")["manual"], True)
 
+    def test_m40_and_a_second_model_on_the_same_gpu(self):
+        devs = llama.parse_devices("Available devices:\n  CUDA0: NVIDIA GeForce RTX 3060 (12287 MiB, 11245 MiB free)\n"
+                                   "  CUDA1: Tesla M40 24GB (23039 MiB, 10000 MiB free)\n")
+        base = {"gpu": "Tesla M40 24GB", "vram_gb": 24.0, "usable_vram_gb": 23.3, "bandwidth_gbs": 300, "manual": False}
+        alone = hardware.device_budget(base, devs, "CUDA1")
+        self.assertEqual(alone["bandwidth_gbs"], 288)  # la M40 ya no cuenta con el valor por defecto
+        self.assertAlmostEqual(alone["vram_gb"], 22.5, places=1)
+        shared = hardware.device_budget(base, devs, "CUDA1", shared=True)
+        self.assertAlmostEqual(shared["vram_gb"], 9.8, places=1)  # lo que dejó el primer modelo, no la tarjeta entera
+        self.assertEqual(shared["bandwidth_gbs"], 144)  # los dos se reparten el ancho de banda
+        self.assertTrue(shared["shared"])
+        self.assertLess(shared["usable_vram_gb"], shared["vram_gb"])
+
+    def test_device_shared_looks_at_other_servers_on_the_same_gpu(self):
+        from localharness import local_servers
+        store = Store(":memory:")
+        settings.save(store, {"llama": {"servers": [
+            {"id": "principal", "name": "3060", "port": 18080, "device": "CUDA0", "role": "fuerte"},
+            {"id": "m40", "name": "M40", "port": 18081, "device": "CUDA1", "role": "rapido"},
+            {"id": "m40b", "name": "M40 (2)", "port": 18082, "device": "CUDA1", "role": "rapido"}]}})
+        srvs = {s["id"]: s for s in settings.local_servers(store)}
+        states = {18080: "ready", 18081: "off", 18082: "off"}
+
+        class FakeMgr:
+            def __init__(self, port):
+                self.port = port
+
+            def status(self, port):
+                return {"state": states[port]}
+
+        class FakePool:
+            def get(self, sid, port):
+                return FakeMgr(port)
+        pool = FakePool()
+        self.assertFalse(local_servers.device_shared(store, pool, srvs["m40b"]))  # la 3060 es otra GPU
+        states[18081] = "loading"
+        self.assertTrue(local_servers.device_shared(store, pool, srvs["m40b"]))
+        self.assertFalse(local_servers.device_shared(store, pool, srvs["principal"]))
+
     def test_device_and_split_options(self):
         self.assertEqual(llama.option_args({"device": "CUDA0,CUDA1", "tensor_split": "2,1", "split_mode": "layer"}),
                          ["-dev", "CUDA0,CUDA1", "-sm", "layer", "-ts", "2,1"])
@@ -302,6 +341,37 @@ class RoutingTests(unittest.TestCase):
         s.release("rapido")
         s.release("principal")
         self.assertEqual(s.claim("local_ask")[0]["id"], "rapido")  # libres los dos: manda el papel
+
+    def test_claim_counts_the_measured_speed_of_each_model(self):
+        """El rápido (M40 con un modelo grande) va 2,5× más lento que el fuerte: el fuerte aguanta cola de más antes
+        de que compense mandarle algo al lento. Con igual velocidad queda el reparto de siempre."""
+        s = self.server(self.endpoints())
+        s.note_speed("principal", {"timings": {"predicted_per_second": 50.0, "predicted_n": 200}})
+        s.note_speed("rapido", {"timings": {"predicted_per_second": 20.0, "predicted_n": 200}})
+        order = [s.claim("local_execute_plan/write", "principal")[0]["id"] for _ in range(5)]
+        # costes (en cola+1)/velocidad: principal 1/50, 2/50, 3/50…; rapido 1/20, 2/20…
+        self.assertEqual(order, ["principal", "principal", "rapido", "principal", "principal"])
+
+    def test_unmeasured_model_is_assumed_as_fast_as_the_fastest_and_speed_is_floored(self):
+        s = self.server(self.endpoints())
+        with s._lock:
+            self.assertEqual(s._speed_of("rapido"), 1.0)  # nada medido: igual de rápidos
+        s.note_speed("principal", {"timings": {"predicted_per_second": 40.0, "predicted_n": 100}})
+        with s._lock:
+            self.assertEqual(s._speed_of("rapido"), 40.0)  # sin medir = como el más rápido (así se prueba y se mide)
+        s.note_speed("rapido", {"timings": {"predicted_per_second": 2.0, "predicted_n": 100}})
+        with s._lock:
+            self.assertEqual(s._speed_of("rapido"), 10.0)  # una medida pésima no lo deja sin trabajo: mínimo 1/4
+
+    def test_short_answers_do_not_count_as_speed(self):
+        s = self.server(self.endpoints())
+        s.note_speed("rapido", {"timings": {"predicted_per_second": 3.0, "predicted_n": 5}})
+        s.note_speed("rapido", {"timings": {}})
+        s.note_speed("rapido", None)
+        self.assertEqual(s._speed, {})
+        s.note_speed("rapido", {"timings": {"predicted_per_second": 30.0, "predicted_n": 50}})
+        s.note_speed("rapido", {"timings": {"predicted_per_second": 20.0, "predicted_n": 50}})
+        self.assertAlmostEqual(s._speed["rapido"], 26.0)  # media móvil 0,6/0,4
 
     def test_plan_dependencies_of_a_failed_block_are_skipped(self):
         s = self.server(self.endpoints())

@@ -19,7 +19,8 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from localharness.local_servers import autostart_llama, servers_status, start_on, suggest_servers  # noqa: F401
+from localharness.local_servers import (autostart_llama, device_shared, servers_status, start_on,  # noqa: F401
+                                        suggest_servers)
 from localharness import bench, local_servers, profiles
 from localharness import autopilot, banco, banco_cola, compare
 from localharness import (actions, analytics, catalog, context, designer, hardware, hf, library, llama, maintenance, mcp_local,
@@ -980,7 +981,8 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
 
         def calc() -> dict:
             _, budget = hw_budget(store)
-            budget = hardware.device_budget(budget, llama.list_devices(), opts.get("device"))
+            budget = hardware.device_budget(budget, llama.list_devices(), opts.get("device"),
+                                            shared=device_shared(store, request.app.state.llama, srv))
             meta = request.app.state.modelinfo.summary(model) or {}
             size = llama.describe(model)["size_gb"]
             launch = settings.llama_launch(store, str(model), opts)

@@ -76,7 +76,8 @@ velocidad de generación importa menos. llama.cpp tiene que ir con CUDA 12.x (CU
 | 10 | DeepSeek-R1-Distill-Qwen-14B — Q5_K_M o Q6_K | 75/100 — tu Q4: 74 | 9–18 tok/s |
 
 ## Cómo probarlos cuando llegue la M40
-1. Un servidor local nuevo para la M40 (Modelos locales → Servidores, `device` CUDA2) y medir tok/s reales con
+1. Un servidor local nuevo para la M40 (Modelos locales → Servidores, `device` CUDA1: sin la 1060, llama.cpp
+   numera 3060 = CUDA0, M40 = CUDA1; con la 1060 puesta sería CUDA2) y medir tok/s reales con
    `/api/llama/bench`; apuntarlos arriba en «Medido ya».
 2. Elegir el modelo del papel «diagnosticar» con el banco de diagnóstico (fallos reales que arregló Claude: minutos
    por modelo) antes de gastar horas en el banco completo.

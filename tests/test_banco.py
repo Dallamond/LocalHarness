@@ -145,6 +145,27 @@ class BancoTest(unittest.TestCase):
         self.assertIs(cambio["autostart_on_task"], False)
         self.assertEqual(previo, {"servers": llama["servers"], "autostart_on_task": True})
 
+    def test_ajustar_llama_con_servidores_propios(self):
+        """Dos modelos en la M40 = dos servidores con el mismo `device`; la lista de antes vuelve al acabar."""
+        antes = [{"id": "principal", "device": "CUDA0", "thinking": "normal"},
+                 {"id": "rapido", "device": "CUDA1", "thinking": "apagado"}]
+        llama = {"autostart_on_task": True, "servers": antes}
+        calls = []
+
+        def api(method, path, body=None):
+            calls.append((method, path, body))
+            return {"values": {"llama": llama}}
+        nuevos = [{"id": "principal", "port": 8080, "device": "CUDA0", "role": "fuerte"},
+                  {"id": "m40", "port": 8081, "device": "CUDA1", "role": "general"},
+                  {"id": "m40b", "port": 8082, "device": "CUDA1", "role": "general", "thinking": "apagado"}]
+        previo = banco.ajustar_llama(api, {"modelos": {"principal": "X"}, "servidores": nuevos,
+                                           "pensamiento": {"m40": "profundo"}}, say=lambda _: None)
+        cambio = calls[-1][2]["llama"]["servers"]
+        self.assertEqual([(s["id"], s["device"]) for s in cambio],
+                         [("principal", "CUDA0"), ("m40", "CUDA1"), ("m40b", "CUDA1")])
+        self.assertEqual([s["thinking"] for s in cambio], ["normal", "profundo", "apagado"])
+        self.assertEqual(previo, {"servers": antes})  # lo que hay que devolver al acabar
+
     @unittest.skipUnless(NODE, "hace falta node para el examen")
     def test_relevo_cada_parche_sale_del_estado_del_otro(self):
         api = FakeApi([("src/a.js", "export const x = 1;\n"), ("src/b.js", "export const y = 3;\n")])
