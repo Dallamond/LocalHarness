@@ -64,13 +64,29 @@ def start_on(store: Store, pool: "llama.LlamaPool", srv: dict, model: Path, opti
     return own
 
 
+def gpu_short(name: str) -> str:
+    return name.removeprefix("NVIDIA GeForce ").removeprefix("NVIDIA ").strip()
+
+
+def server_label(srv: dict, model: str | None, devices: list[dict]) -> str:
+    """Cómo se llama un servidor en pantalla: el modelo que tiene y la GPU («Qwen3-32B-Q4_K_M · Tesla M40 24GB»).
+    Los papeles «fuerte/rápido» solo dicen para qué se usa; no dicen quién está trabajando. Sin modelo cargado, el
+    nombre que le diste al servidor."""
+    gpus = [gpu_short(d["name"]) for d in devices if d["id"] in (srv.get("device") or "").split(",")]
+    if not gpus and srv.get("device"):
+        gpus = [srv["device"]]
+    return " · ".join([model or srv["name"], " + ".join(gpus)] if gpus else [model or srv["name"]])
+
+
 def servers_status(store: Store, pool: "llama.LlamaPool") -> list[dict]:
     """Cada servidor local de Ajustes con su estado (off | loading | ready | failed | external)."""
     out = []
+    devices = llama.list_devices()
     for srv in settings.local_servers(store):
         status = pool.get(srv["id"], srv["port"]).status(srv["port"])
-        out.append({**srv, "url": settings.server_url(srv), "status": status,
-                    "model_name": model_name(status.get("model")) if status["state"] != "off" else None})
+        name = model_name(status.get("model")) if status["state"] != "off" else None
+        out.append({**srv, "url": settings.server_url(srv), "status": status, "model_name": name,
+                    "label": server_label(srv, name, devices)})
     return out
 
 

@@ -548,8 +548,9 @@ def create_app(db_path: str | Path = ":memory:", *, binaries: dict[str, str] | N
                 # qué modelo responde de verdad a los agentes locales (el arrancado, no el nombre del agente)
                 "local": {"state": servers[0]["status"]["state"], "model": servers[0]["model_name"]},
                 # todos los servidores locales (con dos GPU, normalmente dos modelos a la vez)
-                "locals": [{"id": s["id"], "name": s["name"], "role": s["role"], "device": s["device"],
-                            "port": s["port"], "state": s["status"]["state"], "model": s["model_name"]}
+                "locals": [{"id": s["id"], "name": s["name"], "label": s["label"], "role": s["role"],
+                            "device": s["device"], "port": s["port"], "state": s["status"]["state"],
+                            "model": s["model_name"]}
                            for s in servers],
                 "speed": request.app.state.runner.last_speed}
 

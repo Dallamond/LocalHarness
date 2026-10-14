@@ -11,7 +11,7 @@ import { MAX_STATIONS, Office, type BoardStep, type GitRow, type Placement, type
 import {
   PLAN_TEXT, PROVIDER_TEXT, ROLE_TEXT, STATUS_TEXT, agentColor, agentName, api, describeActivity, duration, live,
   modelText, onTaskEvent, openCatalog, putTask, openWizard, parseTs, pct, planChip, planList, post, projectName, refreshAll, speedText,
-  statusChip, tps, ui, usd, refreshLocals, SERVER_ROLE_LABEL, agentIcon,
+  statusChip, tps, ui, usd, refreshLocals, agentIcon,
   type Agent, type Gpu, type InboxItem, type Review, type Task, type TaskEvent, type Worktree,
 } from "../api";
 
@@ -94,7 +94,7 @@ function parseW(sid: string): { tid: number; srv: string } | null {
   return m ? { tid: Number(m[1]), srv: m[2] ?? defaultServer.value } : null;
 }
 const serverOf = (id: string) => live.locals.find((l) => l.id === id);
-const serverLabel = (id: string) => (live.locals.length < 2 ? "Trabajador local" : `Local · ${serverOf(id)?.name ?? id}`);
+const serverLabel = (id: string) => (live.locals.length < 2 ? "Trabajador local" : (serverOf(id)?.label ?? serverOf(id)?.name ?? id));
 const serverColor = (id: string) => LOCAL_COLORS[Math.max(0, live.locals.findIndex((l) => l.id === id)) % LOCAL_COLORS.length];
 // a quién va un encargo sin `server`: lo mismo que decide el servidor MCP por su papel
 const LIGHT_TOOLS = ["local_ask", "local_research", "run_checks"];
@@ -535,7 +535,7 @@ const localsOn = computed(() => live.locals.filter((l) => l.state !== "off"));
 // una torre por modelo local encendido; sus LEDs siguen la GPU en la que corre (CUDA1 → GPU 1)
 const gpuIdx = (device: string) => Number(/(\d+)/.exec(device ?? "")?.[1] ?? 0);
 const racks = computed<RackSpec[]>(() => localsOn.value.filter((l) => l.state !== "failed" || l.model).map((l) => ({
-  id: l.id, name: l.name, model: l.model ?? (l.state === "loading" ? "cargando…" : "sin modelo"), state: l.state,
+  id: l.id, name: l.label ?? l.name, model: l.model ?? (l.state === "loading" ? "cargando…" : "sin modelo"), state: l.state,
   gpu: gpuIdx(l.device), gpuName: gpus.value.find((g) => g.index === gpuIdx(l.device))?.name ?? "", color: serverColor(l.id),
 })));
 let resTimer: ReturnType<typeof setInterval>;
@@ -1113,7 +1113,7 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
           <div class="l">{{ live.locals.length > 1 ? "Modelos locales" : "Modelo local" }} <span :class="`ls-${localState}`">{{ LOCAL_TEXT[localState] ?? localState }}</span></div>
           <div v-if="live.locals.length > 1" class="sub sub--list">
             <span v-for="l in live.locals" :key="l.id" class="mono" :class="`ls-${l.state}`" :title="`${l.name} · ${l.device || 'GPU automática'} · puerto ${l.port}`">
-              {{ l.name }}: {{ l.model ?? LOCAL_TEXT[l.state] ?? l.state }}</span>
+              {{ l.label ?? l.name }}<template v-if="!l.model">: {{ LOCAL_TEXT[l.state] ?? l.state }}</template></span>
             <RouterLink to="/modelos" class="small">Modelos →</RouterLink>
           </div>
           <div v-else class="sub">
@@ -1175,7 +1175,7 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
           </div>
           <template v-if="live.locals.length > 1">
             <div v-for="l in live.locals" :key="l.id" class="res-row">
-              <div class="l">{{ l.name }} · {{ SERVER_ROLE_LABEL[l.role] }} <span :class="`ls-${l.state}`">{{ l.model ?? LOCAL_TEXT[l.state] ?? l.state }}</span></div>
+              <div class="l">{{ l.label ?? l.name }} <span :class="`ls-${l.state}`">{{ LOCAL_TEXT[l.state] ?? l.state }}</span></div>
               <div class="sub"><span class="mono small">{{ l.device || "GPU automática" }} · puerto {{ l.port }}</span></div>
             </div>
           </template>
@@ -1191,7 +1191,7 @@ watch(sys, (v) => office?.setSystem((v?.cpu_pct ?? 0) / 100, (v?.ram_pct ?? 0) /
         <!-- el trabajador del modelo local de una tarea -->
         <LocalWorkerPanel
           v-else-if="selWorker && selW" :task="selWorker" :events="serverEvents(selWorker.id, selW.srv)" :stream="liveNow(selWorker.id, selW.srv)"
-          :server="live.locals.length > 1 ? { id: selW.srv, name: serverOf(selW.srv)?.name ?? selW.srv, model: serverOf(selW.srv)?.model ?? null, color: serverColor(selW.srv) } : undefined"
+          :server="live.locals.length > 1 ? { id: selW.srv, name: serverOf(selW.srv)?.label ?? serverOf(selW.srv)?.name ?? selW.srv, model: serverOf(selW.srv)?.model ?? null, color: serverColor(selW.srv) } : undefined"
           :agent="live.agents.find((a) => a.id === selWorker!.agent_id)"
         />
 

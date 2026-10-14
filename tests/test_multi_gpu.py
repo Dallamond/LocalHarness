@@ -363,6 +363,21 @@ class RoutingTests(unittest.TestCase):
         with s._lock:
             self.assertEqual(s._speed_of("rapido"), 10.0)  # una medida pésima no lo deja sin trabajo: mínimo 1/4
 
+    def test_claim_counts_prompt_reading_speed_the_m40_is_20x_slower_at(self):
+        """Qwen3-32B en la M40: 6,5 tok/s al generar y ~46 al leer el prompt; un 14B en la 3060: 29 y ~950. Un
+        encargo típico (1500 de entrada, 300 de salida) tarda ~79 s en la M40 y ~12 s en la 3060: la M40 solo recibe
+        trabajo cuando la cola de la 3060 ya pasa de ~6 encargos."""
+        s = self.server(self.endpoints())
+        s.note_speed("principal", {"timings": {"predicted_per_second": 29.0, "predicted_n": 300,
+                                               "prompt_per_second": 950.0, "prompt_n": 1500}})
+        s.note_speed("rapido", {"timings": {"predicted_per_second": 6.5, "predicted_n": 300,
+                                            "prompt_per_second": 46.0, "prompt_n": 1500}})
+        order = [s.claim("local_execute_plan/write", "principal")[0]["id"] for _ in range(8)]
+        self.assertEqual(order, ["principal"] * 6 + ["rapido", "principal"])
+        with s._lock:
+            # generar cuenta con el suelo de 1/4 del más rápido (29 / 4 = 7,25 tok/s), no con los 6,5 medidos
+            self.assertAlmostEqual(s._job_seconds("rapido"), 1500 / 46 + 300 / 7.25, places=3)
+
     def test_short_answers_do_not_count_as_speed(self):
         s = self.server(self.endpoints())
         s.note_speed("rapido", {"timings": {"predicted_per_second": 3.0, "predicted_n": 5}})

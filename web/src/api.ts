@@ -300,6 +300,7 @@ export interface LocalServerCfg {
   thinking?: "normal" | "apagado" | "profundo"; // en cada encargo (apagado = contesta al momento)
 }
 export interface LocalServer extends LocalServerCfg {
+  label: string; // «modelo · GPU»
   url: string;
   status: LlamaStatus;
   model_name: string | null;
@@ -495,6 +496,7 @@ export const live = reactive({
 export interface LocalLive {
   id: string;
   name: string;
+  label?: string; // «modelo · GPU» (lo calcula el servidor); sin modelo, el nombre del servidor
   role: ServerRole;
   device: string;
   port: number;
@@ -506,7 +508,7 @@ export interface LocalLive {
 export function localModelsText(empty = "ningún modelo arrancado"): string {
   const on = live.locals.filter((l) => l.state !== "off" && l.model);
   if (!on.length) return live.local.model ?? empty;
-  return on.length === 1 ? on[0].model! : on.map((l) => `${l.model} (${l.name})`).join(" + ");
+  return on.length === 1 ? on[0].model! : on.map((l) => l.label ?? `${l.model} (${l.name})`).join(" + ");
 }
 
 /** Solo /api/health: estado de los modelos locales (lo usan las vistas que lo enseñan, cada pocos segundos). */

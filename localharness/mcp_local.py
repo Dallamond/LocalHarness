@@ -450,6 +450,8 @@ class Server:
         self._default = self.servers[0]
         self._inflight = {srv["id"]: 0 for srv in self.servers}  # encargos en curso de cada modelo (reparto por cola)
         self._speed: dict[str, float] = {}  # tok/s medidos al generar (media móvil) de cada modelo: el reparto los usa
+        self._prompt_speed: dict[str, float] = {}  # tok/s al LEER el prompt: en la M40 es ~20× menos que en la 3060
+        self._shape = {"in": 1500.0, "out": 300.0}  # tokens de entrada y de salida de un encargo típico (se aprende)
         self._models: dict[str, str | None] = {}
         self._ctx: dict[str, int | None] = {}  # contexto por ranura de cada servidor (/props)
         self.root = Path(env.get("LH_ROOT") or os.getcwd()).resolve()
@@ -514,14 +516,15 @@ class Server:
 
     def claim(self, kind: str, wanted=None) -> list[dict]:
         """Como `route`, pero mirando la cola: va primero el modelo que antes acabaría el encargo —los que tiene en
-        curso más este, entre su velocidad— y a igualdad, el elegido o el de su papel; se le apunta este. El 08/10
+        curso más este, por lo que tarda un encargo típico: leer el prompt + generar— y a igualdad, el elegido o el de su papel; se le apunta este. El 08/10
         Claude mandó 12 de 13 bloques al rápido y el fuerte se quedó 5 min parado: con dos modelos igual de rápidos
-        (~25-30 tok/s) esperar en cola nunca compensa. Con la M40 sí hay diferencia (un modelo grande ahí va mucho
-        más lento que en la 3060), así que se cuenta la velocidad medida (`note_speed`). Suéltalo con `release`."""
+        (~25-30 tok/s) esperar en cola nunca compensa. Con la M40 sí hay diferencia (Qwen3-32B ahí: 6,5 tok/s al
+        generar y ~46 al leer el prompt, contra 29 y ~950 de un 14B en la 3060), así que se cuentan las velocidades
+        medidas (`note_speed`). Suéltalo con `release`."""
         order = self.route(kind, wanted)
         with self._lock:
             rank = {srv["id"]: i for i, srv in enumerate(order)}
-            order = sorted(order, key=lambda srv: ((self._inflight.get(srv["id"], 0) + 1) / self._speed_of(srv["id"]),
+            order = sorted(order, key=lambda srv: ((self._inflight.get(srv["id"], 0) + 1) * self._job_seconds(srv["id"]),
                                                    rank[srv["id"]]))
             self._inflight[order[0]["id"]] = self._inflight.get(order[0]["id"], 0) + 1
         return order
@@ -533,16 +536,34 @@ class Server:
         fastest = max(self._speed.values(), default=1.0)
         return max(self._speed.get(server_id, fastest), fastest / 4)
 
+    def _job_seconds(self, server_id: str) -> float:
+        """Lo que tardaría ese modelo en un encargo típico (con `_lock` tomado): leer el prompt + generar. Si aún no
+        se ha medido la lectura, solo cuenta la generación (el orden es el mismo que por tok/s). Un modelo sin medir
+        se supone tan rápido como el más rápido medido; la lectura nunca se da por más de 30× más lenta."""
+        t = self._shape["out"] / self._speed_of(server_id)
+        if self._prompt_speed:
+            fastest = max(self._prompt_speed.values())
+            t += self._shape["in"] / max(self._prompt_speed.get(server_id, fastest), fastest / 30)
+        return t
+
     def note_speed(self, server_id: str, data: dict | None) -> None:
-        """Apunta los tok/s de una respuesta ya terminada (los `timings` de llama-server), con media móvil. Las
-        respuestas cortas (<20 tokens) miden más el arranque que la generación: no cuentan."""
+        """Apunta lo que tardó una respuesta ya terminada (los `timings` de llama-server), con media móvil: tok/s al
+        generar y al leer el prompt, y el tamaño típico de un encargo. Las medidas cortas (<20 tokens al generar,
+        <50 al leer) miden más el arranque que el modelo: no cuentan."""
         timings = (data or {}).get("timings") or {}
         tps, n = timings.get("predicted_per_second"), timings.get("predicted_n")
-        if not tps or tps <= 0 or (n is not None and n < 20):
-            return
+        pps, pn = timings.get("prompt_per_second"), timings.get("prompt_n")
         with self._lock:
-            before = self._speed.get(server_id)
-            self._speed[server_id] = float(tps) if before is None else 0.6 * before + 0.4 * float(tps)
+            def mix(table: dict, value: float) -> None:
+                before = table.get(server_id)
+                table[server_id] = float(value) if before is None else 0.6 * before + 0.4 * float(value)
+            if tps and tps > 0 and (n is None or n >= 20):
+                mix(self._speed, tps)
+            if pps and pps > 0 and pn and pn >= 50:
+                mix(self._prompt_speed, pps)
+            for key, tokens, least in (("in", pn, 50), ("out", n, 20)):  # tamaño de un encargo típico, para repartir
+                if tokens and tokens >= least:
+                    self._shape[key] = 0.8 * self._shape[key] + 0.2 * float(tokens)
 
     def release(self, server_id: str) -> None:
         with self._lock:

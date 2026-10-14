@@ -318,6 +318,22 @@ PENDIENTES (la barrera los saltaba) y con el código viejo; el examen oculto da 
    `m40-gptoss_3060-qwen9b`, `m40-coder14b_3060-gptoss`, `dos-en-m40`. Sin medir en el PC: VRAM real de dos modelos
    a la vez en la M40 y cuánto cuesta compartir su ancho de banda.
 
+## ▶ ÚLTIMO ESTADO (14/10/2026): M40 instalada y repartida por velocidad
+- **Hardware**: 3060 (CUDA0) + Tesla M40 24 GB (CUDA1); la 1060 ya no está. En los ajustes guardados, `principal` = CUDA0 y
+  `rapido` = CUDA1 (la M40). Probando Qwen3-32B Q4_K_M en la M40: 6,5 tok/s al generar y ~46 al leer el prompt (la 3060
+  con un 14B: 29 y ~950). Detalle y mejoras pendientes: [MEJORAS-M40.md](MEJORAS-M40.md).
+- **Reparto** (`mcp_local`): `claim` ordena por (encargos en curso + 1) × segundos de un encargo típico
+  (`_job_seconds`: leer prompt + generar, medidos con los `timings` de llama-server, media móvil). Se aprende dentro de
+  cada proceso MCP; no se guarda entre sesiones (pendiente).
+- **Dos modelos en una GPU**: `device_budget(shared=True)` y `local_servers.device_shared`. Banco: los contendientes
+  pueden traer `servidores`; nuevos: `m40-gptoss_3060-qwen9b`, `m40-coder14b_3060-gptoss`, `dos-en-m40`.
+- **Interfaz**: cada servidor se nombra «modelo · GPU» (`label`, calculado en `local_servers.server_label`; sale en
+  `/api/llama` y `/api/health`) en vez de Fuerte/Rápido. Modelos locales: «Tus modelos» arriba, pantalla más ancha,
+  buscador, fila «Arrancar en» fija, Armario de modelos al final.
+- **Sin comprobar en el PC**: VRAM real de dos modelos a la vez en la M40; el aspecto de la pantalla de Modelos (lo
+  mira Lucas); un `llama-server` suelto en :8080 (lanzado a mano) puede ocupar el puerto del principal.
+- 360 pruebas en verde.
+
 ## ▶ EMPEZAR AQUÍ — TODO ESTÁ EN `main` (07/10/2026)
 Decisión de Lucas: **se trabaja siempre en `main`**. Se integraron en `main` las ramas `claude/gifted-carson-20grn9`
 (oficina 3D + Catálogo), `claude/hopeful-euler-p8m838` (agente local con herramientas, roles, pensamiento, plan

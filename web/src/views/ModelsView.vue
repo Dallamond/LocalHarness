@@ -37,7 +37,7 @@ async function load(withCfg = false) {
     }
     if (!info.value.servers.some((s) => s.id === target.value)) target.value = info.value.servers[0]?.id ?? "principal";
     live.locals = info.value.servers.map((s) => ({ id: s.id, name: s.name, role: s.role, device: s.device,
-      port: s.port, state: s.status.state, model: s.model_name }));
+      port: s.port, state: s.status.state, model: s.model_name, label: s.label }));
     error.value = "";
   } catch (e) {
     error.value = (e as Error).message;
@@ -171,6 +171,7 @@ async function probe(server = "principal") {
 }
 // orden: los mejor valorados primero dentro de cada carpeta
 const sortBy = ref<"score" | "name" | "size">("score");
+const modelFilter = ref(""); // filtra «Tus modelos» por nombre, cuantización o carpeta
 
 // --- recomendaciones de Hugging Face
 const recs = ref<Recommendation[]>([]);
@@ -288,7 +289,9 @@ const loadTime = (m: LocalModel) => info.value?.load_times?.[m.path];
 const isCurrent = (m: LocalModel) => serversWith(m).length > 0;
 const groups = computed(() => {
   const g: Record<string, LocalModel[]> = {};
-  for (const m of info.value?.models ?? []) (g[m.dir] ??= []).push(m);
+  const q = modelFilter.value.trim().toLowerCase();
+  for (const m of info.value?.models ?? [])
+    if (!q || `${m.name} ${m.quant ?? ""} ${m.dir}`.toLowerCase().includes(q)) (g[m.dir] ??= []).push(m);
   const score = (m: LocalModel) => ratings.value[m.path]?.rating?.score ?? -1;
   for (const list of Object.values(g))
     list.sort((a, b) => sortBy.value === "score" ? score(b) - score(a)
@@ -339,7 +342,7 @@ async function start(m: LocalModel, options?: ModelLaunch, save = false) {
     if (save) await load(true);
     await load();
     msg.value = servers.value.length > 1 && srv
-      ? `Arrancando ${m.name} en ${srv.name} (${gpuText(srv.device) || `puerto ${srv.port}`}).`
+      ? `Arrancando ${m.name} en ${gpuText(srv.device) || srv.name}.`
       : `Arrancando ${m.name}. Los agentes locales se conectarán a http://127.0.0.1:${cfg.port} cuando esté listo.`;
   } catch (e) {
     error.value = (e as Error).message;
@@ -468,7 +471,7 @@ async function setAgentServer(id: number, server: string) {
 </script>
 
 <template>
-  <div class="page">
+  <div class="page page--wide">
     <div class="page-head">
       <h2 class="title">Modelos locales</h2>
       <p>Tus GGUF con llama.cpp: arranca uno y los agentes locales lo usan gratis.</p>
@@ -496,7 +499,7 @@ async function setAgentServer(id: number, server: string) {
           <span class="dot" aria-hidden="true" />
           <div class="server__txt">
             <strong>
-              <template v-if="servers.length > 1">{{ srv.name }} <span class="role" :class="`role--${srv.role}`">{{ SERVER_ROLE_LABEL[srv.role] }}</span> · </template>
+              <template v-if="servers.length > 1">{{ srv.label }} · </template>
               llama-server {{ STATE[srv.status.state]?.text }}
             </strong>
             <span class="muted small">
@@ -537,6 +540,107 @@ async function setAgentServer(id: number, server: string) {
       Velocidad {{ speed.final ? "de la última respuesta" : "ahora" }}: <strong>{{ tps(speed.tps) }}</strong>
       <template v-if="speed.model"> · {{ speed.model }}</template> · {{ ago(speed.at, now) }}
     </p>
+
+    <!-- modelos -->
+    <Card title="Tus modelos" :subtitle="info ? `${info.models.length} encontrados en ${info.dirs.length} carpeta(s)` : 'Buscando…'">
+      <template #actions>
+        <input v-model="modelFilter" class="input mini" type="search" placeholder="Buscar modelo…" aria-label="Buscar modelo" />
+        <select v-model="sortBy" class="input mini" aria-label="Ordenar">
+          <option value="score">mejor nota</option><option value="size">tamaño</option><option value="name">nombre</option>
+        </select>
+        <button class="btn btn--small" @click="load(); loadRatings()">Volver a buscar</button>
+      </template>
+      <div v-if="info && !info.server" class="warnline block-warn">
+        <span><strong>No puedo arrancar modelos:</strong> no sé dónde está <code>llama-server.exe</code>.
+          Elige el archivo (o la carpeta de llama.cpp que descomprimiste).</span>
+        <button class="btn btn--primary btn--small" @click="pickServer">Elegir llama-server…</button>
+      </div>
+      <div v-for="srv in servers.filter((x) => x.status.state === 'external')" :key="srv.id" class="warnline block-warn">
+        <span>Hay un llama-server <strong>lanzado fuera de la app</strong> en el puerto {{ srv.status.port }}<template
+          v-if="servers.length > 1"> ({{ srv.name }})</template>: los agentes ya lo usan, pero para arrancar otro modelo ahí desde
+          aquí ciérralo antes (su ventana o Ctrl+C) o cambia el puerto en «Servidores locales».</span>
+      </div>
+      <div v-if="servers.length > 1" class="target">
+        <span class="label">Arrancar en</span>
+        <button v-for="srv in servers" :key="srv.id" type="button" class="preset" :class="{ on: target === srv.id }"
+                :title="SERVER_ROLE_TEXT[srv.role]" @click="target = srv.id">
+          {{ gpuText(srv.device) || srv.name }}<small v-if="srv.model_name"> · ahora {{ srv.model_name }}</small><small v-else> · libre</small>
+        </button>
+      </div>
+      <p v-if="info && !info.dirs.length" class="empty">
+        No hay ninguna carpeta de modelos. <button class="btn btn--primary btn--small" @click="pickDir">Elegir carpeta…</button>
+      </p>
+      <p v-else-if="info && !info.models.length" class="empty">No hay archivos .gguf en esas carpetas.</p>
+      <div v-for="(models, dir) in groups" :key="dir" class="group">
+        <p class="group__dir"><code>{{ dir }}</code></p>
+        <div class="models">
+          <article v-for="m in models" :key="m.path" class="model" :class="{ 'model--on': isCurrent(m) }">
+            <div class="model__head">
+              <span class="chip-icon" aria-hidden="true">🧠</span>
+              <div class="model__name">
+                <strong :title="m.file">{{ m.name }}</strong>
+                <span class="muted small">{{ m.size_gb.toFixed(1) }} GB<template v-if="m.quant"> · {{ m.quant }}</template>
+                  <template v-if="loadTime(m)"> · carga en {{ duration(loadTime(m)! * 1000) }}</template></span>
+                <span v-if="launchText(m)" class="small launch">{{ launchText(m) }}</span>
+              </div>
+            </div>
+            <!-- nota para LocalHarness -->
+            <div v-if="ratings[m.path]?.rating" class="score" :class="`score--${scoreCls(ratings[m.path].rating!.score)}`">
+              <span class="score__num">{{ ratings[m.path].rating!.score }}</span>
+              <span class="score__txt">
+                <strong>{{ ratings[m.path].rating!.verdict }}</strong>
+                <span class="small">para LocalHarness<template v-if="ratings[m.path].probe"> · probado</template></span>
+              </span>
+              <button class="btn btn--ghost btn--small" @click="openInfo = openInfo === m.path ? null : m.path">
+                {{ openInfo === m.path ? "Ocultar" : "Por qué" }}
+              </button>
+            </div>
+            <p v-else-if="ratings[m.path]?.meta?.error" class="small warnline">No pude leer la cabecera: {{ ratings[m.path].meta.error }}</p>
+            <p v-else-if="ratingsLoading" class="small muted">Leyendo la ficha…</p>
+            <div v-if="openInfo === m.path && ratings[m.path]?.rating" class="why small">
+              <ul>
+                <li v-for="(r, k) in ratings[m.path].rating!.reasons" :key="k">{{ r }}</li>
+              </ul>
+              <p v-if="ratings[m.path].rating!.roles.length"><strong>Para:</strong> {{ ratings[m.path].rating!.roles.join(", ") }}</p>
+              <p class="muted">
+                Herramientas {{ ratings[m.path].rating!.parts.tools }}/35 · cabe {{ ratings[m.path].rating!.parts.fit }}/25 ·
+                capacidad {{ ratings[m.path].rating!.parts.quality }}/25 · velocidad {{ ratings[m.path].rating!.parts.speed }}/15
+              </p>
+              <p v-if="ratings[m.path].meta.arch" class="muted">
+                {{ ratings[m.path].meta.arch }}<template v-if="ratings[m.path].meta.params_b"> · {{ ratings[m.path].meta.params_b }}B</template>
+                <template v-if="ratings[m.path].meta.moe"> · MoE {{ ratings[m.path].meta.experts_used }}/{{ ratings[m.path].meta.experts }} expertos</template>
+                · {{ ratings[m.path].meta.n_layer }} capas · contexto máx. {{ Math.round((ratings[m.path].meta.ctx_train ?? 0) / 1024) }}k
+                <template v-if="m.vision"> · visión (mmproj)</template>
+              </p>
+              <p v-if="ratings[m.path].probe" class="muted">
+                Prueba real {{ ago(ratings[m.path].probe!.at, now) }}: herramientas {{ ratings[m.path].probe!.tool_calls ? "✔" : "✘" }}
+                ({{ ratings[m.path].probe!.tool_detail }}) · JSON {{ ratings[m.path].probe!.json ? "✔" : "✘" }}
+                <template v-if="ratings[m.path].probe!.tps"> · {{ ratings[m.path].probe!.tps }} tok/s</template>
+              </p>
+              <p v-if="ratings[m.path].catalog" class="muted">{{ ratings[m.path].catalog!.notes }}</p>
+            </div>
+            <div class="row">
+              <template v-for="srv in serversWith(m)" :key="srv.id">
+                <StatusChip :state="STATE[srv.status.state].chip"
+                            :text="servers.length > 1 ? `${STATE[srv.status.state].text} en ${gpuText(srv.device) || srv.name}` : STATE[srv.status.state].text" />
+                <button v-if="pid(srv)" class="btn btn--small btn--danger" @click="stop(srv.id)">Parar</button>
+                <button v-if="srv.status.state === 'ready'" class="btn btn--small" :disabled="probing" title="Herramientas, JSON y velocidad: gratis, es tu GPU" @click="probe(srv.id)">
+                  {{ probing ? "Probando…" : "🧪 Probar capacidades" }}
+                </button>
+              </template>
+              <template v-if="!serversWith(m).some((x) => x.id === targetSrv?.id)">
+                <button
+                  class="btn btn--primary btn--small" :disabled="!!starting || !info?.server"
+                  :title="info?.server ? 'Elegir contexto, caché, muestreo… antes de arrancar' : 'Falta la ruta de llama-server'" @click="dialogFor = m"
+                >{{ starting === m.path ? "Arrancando…" : targetSrv?.status.pid ? "Cambiar a este…" : "Arrancar…" }}<template
+                  v-if="servers.length > 1 && targetSrv"> en {{ gpuText(targetSrv.device) || targetSrv.name }}</template></button>
+                <button class="btn btn--small btn--ghost" :disabled="!!starting || !info?.server" title="Con lo guardado, sin preguntar" @click="start(m)">Rápido</button>
+              </template>
+            </div>
+          </article>
+        </div>
+      </div>
+    </Card>
 
     <!-- servidores locales: uno por GPU -->
     <Card title="Servidores locales" :subtitle="servers.length > 1
@@ -630,109 +734,6 @@ async function setAgentServer(id: number, server: string) {
         <label class="field"><span class="label">Ancho de banda (GB/s)</span><input v-model.number="cfg.hardware.bandwidth_gbs" type="number" min="10" placeholder="según la GPU" /></label>
         <div class="row"><button class="btn btn--primary btn--small">Guardar</button><span class="hint">Vacío = lo detectado.</span></div>
       </form>
-    </Card>
-
-    <ModelCloset v-if="info" :servers="servers" @changed="load()" />
-
-    <!-- modelos -->
-    <Card title="Tus modelos" :subtitle="info ? `${info.models.length} encontrados en ${info.dirs.length} carpeta(s)` : 'Buscando…'">
-      <template #actions>
-        <select v-model="sortBy" class="input mini" aria-label="Ordenar">
-          <option value="score">mejor nota</option><option value="size">tamaño</option><option value="name">nombre</option>
-        </select>
-        <button class="btn btn--small" @click="load(); loadRatings()">Volver a buscar</button>
-      </template>
-      <div v-if="info && !info.server" class="warnline block-warn">
-        <span><strong>No puedo arrancar modelos:</strong> no sé dónde está <code>llama-server.exe</code>.
-          Elige el archivo (o la carpeta de llama.cpp que descomprimiste).</span>
-        <button class="btn btn--primary btn--small" @click="pickServer">Elegir llama-server…</button>
-      </div>
-      <div v-for="srv in servers.filter((x) => x.status.state === 'external')" :key="srv.id" class="warnline block-warn">
-        <span>Hay un llama-server <strong>lanzado fuera de la app</strong> en el puerto {{ srv.status.port }}<template
-          v-if="servers.length > 1"> ({{ srv.name }})</template>: los agentes ya lo usan, pero para arrancar otro modelo ahí desde
-          aquí ciérralo antes (su ventana o Ctrl+C) o cambia el puerto en «Servidores locales».</span>
-      </div>
-      <div v-if="servers.length > 1" class="target">
-        <span class="label">Arrancar en</span>
-        <button v-for="srv in servers" :key="srv.id" type="button" class="preset" :class="{ on: target === srv.id }"
-                :title="SERVER_ROLE_TEXT[srv.role]" @click="target = srv.id">
-          {{ srv.name }}<small v-if="srv.device"> · {{ gpuText(srv.device) }}</small>
-          <small v-if="srv.model_name"> · ahora {{ srv.model_name }}</small>
-        </button>
-      </div>
-      <p v-if="info && !info.dirs.length" class="empty">
-        No hay ninguna carpeta de modelos. <button class="btn btn--primary btn--small" @click="pickDir">Elegir carpeta…</button>
-      </p>
-      <p v-else-if="info && !info.models.length" class="empty">No hay archivos .gguf en esas carpetas.</p>
-      <div v-for="(models, dir) in groups" :key="dir" class="group">
-        <p class="group__dir"><code>{{ dir }}</code></p>
-        <div class="models">
-          <article v-for="m in models" :key="m.path" class="model" :class="{ 'model--on': isCurrent(m) }">
-            <div class="model__head">
-              <span class="chip-icon" aria-hidden="true">🧠</span>
-              <div class="model__name">
-                <strong :title="m.file">{{ m.name }}</strong>
-                <span class="muted small">{{ m.size_gb.toFixed(1) }} GB<template v-if="m.quant"> · {{ m.quant }}</template>
-                  <template v-if="loadTime(m)"> · carga en {{ duration(loadTime(m)! * 1000) }}</template></span>
-                <span v-if="launchText(m)" class="small launch">{{ launchText(m) }}</span>
-              </div>
-            </div>
-            <!-- nota para LocalHarness -->
-            <div v-if="ratings[m.path]?.rating" class="score" :class="`score--${scoreCls(ratings[m.path].rating!.score)}`">
-              <span class="score__num">{{ ratings[m.path].rating!.score }}</span>
-              <span class="score__txt">
-                <strong>{{ ratings[m.path].rating!.verdict }}</strong>
-                <span class="small">para LocalHarness<template v-if="ratings[m.path].probe"> · probado</template></span>
-              </span>
-              <button class="btn btn--ghost btn--small" @click="openInfo = openInfo === m.path ? null : m.path">
-                {{ openInfo === m.path ? "Ocultar" : "Por qué" }}
-              </button>
-            </div>
-            <p v-else-if="ratings[m.path]?.meta?.error" class="small warnline">No pude leer la cabecera: {{ ratings[m.path].meta.error }}</p>
-            <p v-else-if="ratingsLoading" class="small muted">Leyendo la ficha…</p>
-            <div v-if="openInfo === m.path && ratings[m.path]?.rating" class="why small">
-              <ul>
-                <li v-for="(r, k) in ratings[m.path].rating!.reasons" :key="k">{{ r }}</li>
-              </ul>
-              <p v-if="ratings[m.path].rating!.roles.length"><strong>Para:</strong> {{ ratings[m.path].rating!.roles.join(", ") }}</p>
-              <p class="muted">
-                Herramientas {{ ratings[m.path].rating!.parts.tools }}/35 · cabe {{ ratings[m.path].rating!.parts.fit }}/25 ·
-                capacidad {{ ratings[m.path].rating!.parts.quality }}/25 · velocidad {{ ratings[m.path].rating!.parts.speed }}/15
-              </p>
-              <p v-if="ratings[m.path].meta.arch" class="muted">
-                {{ ratings[m.path].meta.arch }}<template v-if="ratings[m.path].meta.params_b"> · {{ ratings[m.path].meta.params_b }}B</template>
-                <template v-if="ratings[m.path].meta.moe"> · MoE {{ ratings[m.path].meta.experts_used }}/{{ ratings[m.path].meta.experts }} expertos</template>
-                · {{ ratings[m.path].meta.n_layer }} capas · contexto máx. {{ Math.round((ratings[m.path].meta.ctx_train ?? 0) / 1024) }}k
-                <template v-if="m.vision"> · visión (mmproj)</template>
-              </p>
-              <p v-if="ratings[m.path].probe" class="muted">
-                Prueba real {{ ago(ratings[m.path].probe!.at, now) }}: herramientas {{ ratings[m.path].probe!.tool_calls ? "✔" : "✘" }}
-                ({{ ratings[m.path].probe!.tool_detail }}) · JSON {{ ratings[m.path].probe!.json ? "✔" : "✘" }}
-                <template v-if="ratings[m.path].probe!.tps"> · {{ ratings[m.path].probe!.tps }} tok/s</template>
-              </p>
-              <p v-if="ratings[m.path].catalog" class="muted">{{ ratings[m.path].catalog!.notes }}</p>
-            </div>
-            <div class="row">
-              <template v-for="srv in serversWith(m)" :key="srv.id">
-                <StatusChip :state="STATE[srv.status.state].chip"
-                            :text="servers.length > 1 ? `${STATE[srv.status.state].text} en ${srv.name}` : STATE[srv.status.state].text" />
-                <button v-if="pid(srv)" class="btn btn--small btn--danger" @click="stop(srv.id)">Parar</button>
-                <button v-if="srv.status.state === 'ready'" class="btn btn--small" :disabled="probing" title="Herramientas, JSON y velocidad: gratis, es tu GPU" @click="probe(srv.id)">
-                  {{ probing ? "Probando…" : "🧪 Probar capacidades" }}
-                </button>
-              </template>
-              <template v-if="!serversWith(m).some((x) => x.id === targetSrv?.id)">
-                <button
-                  class="btn btn--primary btn--small" :disabled="!!starting || !info?.server"
-                  :title="info?.server ? 'Elegir contexto, caché, muestreo… antes de arrancar' : 'Falta la ruta de llama-server'" @click="dialogFor = m"
-                >{{ starting === m.path ? "Arrancando…" : targetSrv?.status.pid ? "Cambiar a este…" : "Arrancar…" }}<template
-                  v-if="servers.length > 1 && targetSrv"> en {{ targetSrv.name }}</template></button>
-                <button class="btn btn--small btn--ghost" :disabled="!!starting || !info?.server" title="Con lo guardado, sin preguntar" @click="start(m)">Rápido</button>
-              </template>
-            </div>
-          </article>
-        </div>
-      </div>
     </Card>
 
     <!-- recomendaciones y descargas -->
@@ -918,6 +919,10 @@ async function setAgentServer(id: number, server: string) {
       </div>
     </Card>
 
+    <!-- armario: se usa poco, abajo del todo -->
+    <ModelCloset v-if="info" :servers="servers" @changed="load()" />
+
+
     <div v-if="askDl" class="overlay" @click.self="askDl = null">
       <form class="dl-dialog" @submit.prevent="confirmDownload">
         <h3>¿Dónde lo guardo?</h3>
@@ -950,6 +955,7 @@ async function setAgentServer(id: number, server: string) {
 </template>
 
 <style scoped>
+.page--wide { max-width: min(1760px, 100%); }
 .stopall { display: flex; justify-content: flex-end; margin-bottom: 8px; }
 .servers {
   display: grid;
@@ -1004,6 +1010,11 @@ async function setAgentServer(id: number, server: string) {
   width: 90px;
 }
 .target {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 8px 0;
+  background: var(--panel);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -1395,8 +1406,8 @@ async function setAgentServer(id: number, server: string) {
 }
 .models {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
 }
 .model {
   display: grid;

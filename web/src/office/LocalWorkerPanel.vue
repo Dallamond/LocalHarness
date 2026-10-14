@@ -166,7 +166,7 @@ const BY: Record<string, string> = { Claude: "Las eligió Claude", "tú": "Las c
     <div class="insp-h">
       <div class="avatar" :style="{ '--c': server?.color ?? '#0ea5e9' }"><i class="fa-solid fa-robot" /></div>
       <div>
-        <b>{{ server ? `Local · ${server.name}` : "Trabajador local" }}</b>
+        <b>{{ server ? server.name : "Trabajador local" }}</b>
         <small>de {{ agent?.name ?? "agente" }} · tarea #{{ task.id }}</small>
       </div>
       <span class="prov prov--local">{{ server?.model ?? live.local.model ?? "modelo local" }}</span>

@@ -47,7 +47,7 @@ function workerOf(id: unknown, model?: unknown): Worker {
   const sid = String(id ?? "principal");
   const srv = live.locals.find((l) => l.id === sid);
   const tone = srv?.role === "rapido" || sid === "rapido" ? "rapido" : srv?.role === "fuerte" || sid === "principal" ? "fuerte" : "otro";
-  return { id: sid, name: srv?.name ?? (sid === "principal" ? "Principal" : sid), tone,
+  return { id: sid, name: srv?.label ?? srv?.name ?? (sid === "principal" ? "Principal" : sid), tone,
            model: String(model ?? srv?.model ?? "").replace(/\.gguf$/i, "") };
 }
 const BOSS_STEP: Record<string, string> = {

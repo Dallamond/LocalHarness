@@ -3,7 +3,7 @@
 // Diff (cambios de la tarea seleccionada) y Modelos (cada modelo local: qué tiene cargado, qué encargo hace, a qué
 // velocidad y qué piensa/escribe en directo). Datos reales: eventos de las tareas de la misión, /review y worker_live.
 import { computed, nextTick, onUnmounted, ref, watch } from "vue";
-import { SERVER_ROLE_LABEL, agentColor, agentName, duration, live, parseTs, tps, type Review, type TaskEvent } from "../api";
+import { agentColor, agentName, duration, live, parseTs, tps, type Review, type TaskEvent } from "../api";
 
 const props = defineProps<{ events: TaskEvent[]; review: Review | null; reviewTitle: string }>();
 type Tab = "time" | "term" | "diff" | "models";
@@ -96,7 +96,7 @@ const models = computed<ModelCard[]>(() => {
     const busy = !!w && !w.done && clock.value - w.at < 600_000 && live.tasks[w.task_id]?.status === "running";
     const t = w ? live.tasks[w.task_id] : undefined;
     return {
-      id, name: l?.name ?? id, role: l?.role ? SERVER_ROLE_LABEL[l.role] ?? l.role : "", device: l?.device ?? "",
+      id, name: l?.label ?? l?.name ?? id, role: "", device: l?.device ?? "",
       state: l?.state ?? "off", model: l?.model ?? w?.model ?? null, color: LOCAL_COLORS[i % LOCAL_COLORS.length],
       busy, what: w ? WORK_TEXT[w.tool ?? ""] ?? (w.tool ?? "").replace(/^local_/, "") : "",
       taskLabel: w ? `${w.task ?? ""}${t ? ` · tarea #${t.id} de ${agentName(t.agent_id)}` : ""}` : "",
