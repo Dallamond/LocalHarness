@@ -1752,9 +1752,8 @@ export class Office {
     };
     for (const tw of this.towers.values()) grow(tw.group);
     // paseos: como mucho la mitad de los libres fuera de su mesa a la vez
-    const crew = [...this.stations.values()].filter((s) => s.spec.kind !== "you");
-    let away = crew.filter((s) => s.trip).length;
-    const maxAway = Math.max(1, Math.ceil(crew.length / 2));
+    let away = [...this.stations.values()].filter((s) => s.trip).length;
+    const maxAway = Math.max(1, Math.ceil(this.stations.size / 2));
     for (const st of this.stations.values()) {
       grow(st.group);
       const ch = st.char, busy = st.state === "working", waiting = st.state === "waiting";
@@ -1766,7 +1765,7 @@ export class Office {
       if (st.trip) {
         this.stepTrip(st, dt, t, i);
       } else {
-        if (st.spec.kind !== "you" && st.state === "idle" && !held && !this.dragging && t > st.nextTrip && away < maxAway) {
+        if (st.state === "idle" && !held && !this.dragging && t > st.nextTrip && away < maxAway) {
           if (this.startTrip(st)) away++;
           else st.nextTrip = t + 15;
         }
