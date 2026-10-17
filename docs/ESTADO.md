@@ -3,6 +3,39 @@
 Última actualización: 09/10/2026, noche (banco de pruebas: resultados y qué sigue; oficina y GUI nuevas). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
 
 
+## ▶ 17/10/2026 mediodía — Plan de la tarde (hasta las 22–23 h, cuando Lucas apague el PC)
+**Objetivo:** aprovechar la tarde para probar varios modelos, optimizar el uso de la M40 + 3060 y ver qué fallos sigue
+teniendo el jefe. Lucas reinicia el PC antes de empezar (la M40 salió «perdida» en `nvidia-smi`).
+**Aviso de hardware:** a las ~12:00 `nvidia-smi` dijo `Unable to determine the device handle for GPU0: GPU is lost.
+Reboot the system` (solo veía la 3060); Windows listaba la M40 como OK. Arranque del PC 11:48. Sospecha: calor (la M40 no
+lleva ventilador propio) o alimentación. Tras reiniciar: `nvidia-smi` debe ver las dos; lanzar un modelo en la M40 y vigilar
+temperatura y reloj unos minutos. Si se vuelve a perder, las pruebas con la M40 no valen: solo 3060 y arreglar lo físico.
+**Estado del repo:** LocalHarness NO estaba corriendo. `banco/contendientes/moe-coder14b-3060.json` sin commit (gpt-oss con
+`n_cpu_moe 24` + Coder-14B ctx 6144, los dos en la 3060, M40 libre). Último commit 289fd4c (14/10). Tanda parada `231fad4d`
+(cuentas-claras guiada ×3, jefe-local-2) sin reanudar.
+**Orden previsto:**
+0. Reiniciar, comprobar que `nvidia-smi` ve las dos GPU, prueba de temperatura de la M40.
+1. Arreglar `mcp_local.claim` (contención por GPU y por tamaño de prompt; `MEJORAS-M40.md` 6–7). En `tres-rapidos` el
+   Coder-14B hizo 14–19 de ~24 encargos y los dos de la M40 casi nada.
+2. Cola del banco (por la API, no por la CLI) con ~8–10 casos al azar de `basico` y el Jefe local 2, por topología:
+   `moe-coder14b-3060`, `m40-gptoss_3060-qwen9b`, `m40-coder14b_3060-gptoss`, `tres-rapidos` (referencia, tras el arreglo
+   de `claim`) y `dos-en-m40` (la ganadora contra esta).
+3. Modelo MoE en la M40 (Qwen3-30B-A3B), medido con `lh llama bench` (`MEJORAS-M40.md` 1).
+4. Fallos del jefe: informe de `w-propinas` (0 %, descartado en revisión, motivo sin leer), atasco del diagnóstico en
+   `m-carrito`, pendientes mecánicos del 11/10 (declaración repetida, import de módulo inexistente, archivo cortado), y
+   Jefe local 2 completo con `linea` + `reparar` en Supersalto libre (vara: 14,3 % local, 97,1 % Claude).
+5. Al final: actualizar este archivo con resultados y commit (con permiso de Lucas).
+Reglas: gasto de Claude cero en las pruebas (todo local); no usar la CLI con tareas vivas.
+
+**17/10 noche — Hecho y medido.** `nvidia-smi` ve las dos GPU tras reiniciar (la M40 es ahora el índice 0 y la 3060 el 1;
+M40 a 24 °C en reposo, sin vigilar bajo carga larga). `claim` arreglado (sin medir aún): `tokens_in` por encargo
+(`job_tokens`) y `_device_load` para vecinos en la misma GPU; `tests/test_multi_gpu.py` 29 OK.
+Repertorio `basico` (6 casos, Jefe local 2), media por topología: `moe-coder14b-3060` **94,5 %** (n=6), `m40-gptoss_3060-qwen9b`
+81,2 % (n=12, irregular), `dos-en-m40` 65,3 % (n=6), `m40-coder14b_3060-gptoss` 63,0 % (n=9; t-valores 0 % las dos veces).
+Muestras pequeñas; ninguna con el `claim` nuevo. Varias tandas viejas en `error` por el puerto 8081 ocupado.
+**Pendiente:** repetir `tres-rapidos` con el `claim` nuevo, MoE en la M40 (`lh llama bench`), fallos del jefe
+(`m-carrito`, `w-propinas`, arreglos mecánicos del 11/10), limpiar el puerto 8081 antes de cada tanda.
+
 ## ▶ 11/10/2026 — Cerebro 2 reajustado: 14,3 %; experimento «recetas de Claude»
 **Medido `supersalto-libre/gptoss-qwen4b-cerebro2-20261011-1512`: 14,3 % (5/35), 2/8 integrados (con deuda), 64 min.**
 Cae el hito 1 y el motor queda a 0/8 todo el run. Fallos nuevos que nada cubría: tests estilo Jest (`describe`/`expect`;

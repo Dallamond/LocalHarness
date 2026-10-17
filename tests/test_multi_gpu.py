@@ -378,6 +378,43 @@ class RoutingTests(unittest.TestCase):
             # generar cuenta con el suelo de 1/4 del más rápido (29 / 4 = 7,25 tok/s), no con los 6,5 medidos
             self.assertAlmostEqual(s._job_seconds("rapido"), 1500 / 46 + 300 / 7.25, places=3)
 
+    def test_claim_uses_the_prompt_size_of_each_job(self):
+        """Con la lectura de la M40 20× más lenta, un encargo corto le sale barato y uno largo no: el corto va a la
+        M40 en cuanto la 3060 tiene cola; el largo espera en la 3060 mucho más."""
+        def calibrated():
+            s = self.server(self.endpoints())
+            s.note_speed("principal", {"timings": {"predicted_per_second": 29.0, "predicted_n": 300,
+                                                   "prompt_per_second": 950.0, "prompt_n": 1500}})
+            s.note_speed("rapido", {"timings": {"predicted_per_second": 35.0, "predicted_n": 300,
+                                                "prompt_per_second": 50.0, "prompt_n": 1500}})
+            return s
+        short, long_ = calibrated(), calibrated()
+        order_short = [short.claim("local_execute_plan/write", "principal", 150)[0]["id"] for _ in range(4)]
+        order_long = [long_.claim("local_execute_plan/write", "principal", 6000)[0]["id"] for _ in range(4)]
+        self.assertIn("rapido", order_short[:3])  # corto: la M40 entra pronto
+        self.assertEqual(order_long, ["principal"] * 4)  # largo: leerlo en la M40 no compensa
+        with short._lock:
+            self.assertAlmostEqual(short._job_seconds("rapido", 150), 150 / 50 + 300 / 35, places=3)
+
+    def test_job_tokens_counts_instructions_and_files(self):
+        s = self.server(self.endpoints())
+        (Path(self.tmp.name) / "a.js").write_text("x" * 3500, encoding="utf-8")
+        self.assertAlmostEqual(s.job_tokens("y" * 350, ["a.js", "no-existe.js", None]), 200 + 3850 / 3.5)
+
+    def test_claim_counts_neighbours_on_the_same_gpu(self):
+        """Dos modelos en la M40 se reparten el ancho de banda: con uno ocupado, el otro cuesta el doble."""
+        eps = self.endpoints()
+        eps[0]["device"] = eps[1]["device"] = "CUDA1"
+        s = self.server(eps)
+        self.assertEqual(s.claim("local_execute_plan/write", "principal")[0]["id"], "principal")
+        self.assertEqual(s.claim("local_execute_plan/write", "principal")[0]["id"], "principal")  # el vecino sale a 2×1
+        s.release("principal")
+        s.release("principal")
+        eps[1]["device"] = "CUDA0"  # en otra GPU no se frenan
+        s = self.server(eps)
+        self.assertEqual(s.claim("local_execute_plan/write", "principal")[0]["id"], "principal")
+        self.assertEqual(s.claim("local_execute_plan/write", "principal")[0]["id"], "rapido")
+
     def test_short_answers_do_not_count_as_speed(self):
         s = self.server(self.endpoints())
         s.note_speed("rapido", {"timings": {"predicted_per_second": 3.0, "predicted_n": 5}})

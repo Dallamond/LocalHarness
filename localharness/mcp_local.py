@@ -514,20 +514,43 @@ class Server:
             order = chosen + [srv for srv in order if srv is not chosen[0]]
         return order
 
-    def claim(self, kind: str, wanted=None) -> list[dict]:
+    def claim(self, kind: str, wanted=None, tokens_in: float | None = None) -> list[dict]:
         """Como `route`, pero mirando la cola: va primero el modelo que antes acabaría el encargo —los que tiene en
-        curso más este, por lo que tarda un encargo típico: leer el prompt + generar— y a igualdad, el elegido o el de su papel; se le apunta este. El 08/10
+        curso más este, por lo que tarda: leer el prompt + generar— y a igualdad, el elegido o el de su papel; se le apunta este. El 08/10
         Claude mandó 12 de 13 bloques al rápido y el fuerte se quedó 5 min parado: con dos modelos igual de rápidos
         (~25-30 tok/s) esperar en cola nunca compensa. Con la M40 sí hay diferencia (Qwen3-32B ahí: 6,5 tok/s al
         generar y ~46 al leer el prompt, contra 29 y ~950 de un 14B en la 3060), así que se cuentan las velocidades
-        medidas (`note_speed`). Suéltalo con `release`."""
+        medidas (`note_speed`). `tokens_in`: el prompt estimado de ESTE encargo (si no, el típico): uno corto sale
+        barato en la M40 aunque lea despacio, uno largo no. Dos servidores en la misma GPU se reparten su ancho de
+        banda, así que los encargos en curso del vecino también encarecen (`_device_load`). Suéltalo con `release`."""
         order = self.route(kind, wanted)
         with self._lock:
             rank = {srv["id"]: i for i, srv in enumerate(order)}
-            order = sorted(order, key=lambda srv: ((self._inflight.get(srv["id"], 0) + 1) * self._job_seconds(srv["id"]),
+            order = sorted(order, key=lambda srv: ((self._inflight.get(srv["id"], 0) + 1)
+                                                   * self._job_seconds(srv["id"], tokens_in) * self._device_load(srv),
                                                    rank[srv["id"]]))
             self._inflight[order[0]["id"]] = self._inflight.get(order[0]["id"], 0) + 1
         return order
+
+    def _device_load(self, srv: dict) -> float:
+        """Cuánto se frena un encargo de `srv` por los que corren a la vez en otros servidores de SU misma GPU (con
+        `_lock` tomado): cada uno le quita su parte del ancho de banda. Sin `device`, o solo en su GPU: 1."""
+        device = srv.get("device")
+        if not device:
+            return 1.0
+        return 1.0 + sum(n for sid, n in self._inflight.items() if sid != srv["id"] and n
+                         and next((o.get("device") for o in self.servers if o["id"] == sid), None) == device)
+
+    def job_tokens(self, text: str = "", paths=()) -> float:
+        """Prompt estimado de un encargo: sus instrucciones + los archivos que se le dan (hasta el tope de entrada),
+        a ~3,5 caracteres por token, más ~200 de plantilla. Lo que no se pueda medir no cuenta."""
+        chars = len(text or "")
+        for p in paths or ():
+            try:
+                chars += min((self.root / str(p)).stat().st_size, self.max_input)
+            except (OSError, ValueError):
+                pass
+        return 200.0 + chars / 3.5
 
     def _speed_of(self, server_id: str) -> float:
         """tok/s relativos para repartir (con `_lock` tomado). Sin medir, se supone tan rápido como el más rápido que
@@ -536,14 +559,16 @@ class Server:
         fastest = max(self._speed.values(), default=1.0)
         return max(self._speed.get(server_id, fastest), fastest / 4)
 
-    def _job_seconds(self, server_id: str) -> float:
-        """Lo que tardaría ese modelo en un encargo típico (con `_lock` tomado): leer el prompt + generar. Si aún no
-        se ha medido la lectura, solo cuenta la generación (el orden es el mismo que por tok/s). Un modelo sin medir
-        se supone tan rápido como el más rápido medido; la lectura nunca se da por más de 30× más lenta."""
+    def _job_seconds(self, server_id: str, tokens_in: float | None = None) -> float:
+        """Lo que tardaría ese modelo en un encargo (con `_lock` tomado): leer el prompt + generar. Sin `tokens_in`,
+        uno típico. Si aún no se ha medido la lectura, solo cuenta la generación (el orden es el mismo que por tok/s).
+        Un modelo sin medir se supone tan rápido como el más rápido medido; la lectura nunca se da por más de 30×
+        más lenta."""
         t = self._shape["out"] / self._speed_of(server_id)
         if self._prompt_speed:
             fastest = max(self._prompt_speed.values())
-            t += self._shape["in"] / max(self._prompt_speed.get(server_id, fastest), fastest / 30)
+            t += (self._shape["in"] if tokens_in is None else tokens_in) \
+                / max(self._prompt_speed.get(server_id, fastest), fastest / 30)
         return t
 
     def note_speed(self, server_id: str, data: dict | None) -> None:
@@ -649,7 +674,10 @@ class Server:
                                                   or args.get("command") or "")[:300]}
         try:
             if name in SERVER_TOOLS and name != "local_execute_plan":  # el plan reparte bloque a bloque
-                self.order = self.claim(name, args.get("server"))
+                self.order = self.claim(name, args.get("server"), self.job_tokens(
+                    str(args.get("instructions") or args.get("task") or args.get("question") or ""),
+                    [args.get("path")] * (name == "local_edit_file") + list(args.get("context_files")
+                                                                          or args.get("files") or [])))
                 claimed = self.order[0]["id"]
                 self.use(self.order[0])
                 self.current["server"] = self.server_id
@@ -1102,7 +1130,9 @@ class Server:
             t0 = time.monotonic()
             claimed = None
             try:
-                self.order = self.claim(entry["tool"], it["b"].get("server"))
+                self.order = self.claim(entry["tool"], it["b"].get("server"), self.job_tokens(
+                    str(it["b"].get("instructions") or ""),
+                    ([it["path"]] if it["kind"] == "edit" and it["path"] else []) + list(it["files"] or [])))
                 claimed = self.order[0]["id"]
                 self.use(self.order[0])
                 self.current = {"tool": entry["tool"], "task": it["title"][:300], "server": self.server_id}

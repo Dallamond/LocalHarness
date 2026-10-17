@@ -1,0 +1,12 @@
+{
+  "descripcion": "gpt-oss-20b (MoE) y Qwen2.5-Coder-14B juntos en la 3060 (12 GB), la M40 libre. Para que quepan, gpt-oss lleva TODOS sus expertos en CPU (n_cpu_moe 24: en GPU solo atencion, ~1,5 GB) y el Coder-14B ctx 6144 (~9 GB pesos + cache). Presupuesto de VRAM muy justo: si el segundo no arranca, bajar ctx del Coder a 4096 o poner cache q8_0. Compara velocidad con tres-rapidos y con la pareja gpt-oss(3060)+Coder(M40).",
+  "agente": "Jefe local 2",
+  "servidores": [
+    {"id": "principal", "name": "3060 gpt-oss", "port": 8080, "device": "CUDA0", "role": "general", "thinking": "normal"},
+    {"id": "coder", "name": "3060 coder", "port": 8081, "device": "CUDA0", "role": "fuerte", "thinking": "apagado"}
+  ],
+  "modelos": {"principal": {"modelo": "gpt-oss-20b-UD-Q4_K_XL", "opciones": {"n_cpu_moe": 24, "ctx": 8192}},
+              "coder": {"modelo": "Qwen-2.5-Coder-14B-Instruct-Q4_K_M", "opciones": {"ctx": 6144}}},
+  "pensamiento": {"principal": "normal", "coder": "apagado"},
+  "horas": 12, "minutos_tarea": 45, "presupuesto": 1
+}
