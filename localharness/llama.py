@@ -257,6 +257,7 @@ OPTION_FLAGS = {
     # se reutiliza lo ya procesado del prompt entre peticiones parecidas (bloques de un plan con los mismos archivos)
     "cache_reuse": "--cache-reuse",
 }
+CACHE_RAM_MB = 1024  # tope de la caché de prompts en RAM de cada llama-server (el de llama.cpp es 8192)
 BOOL_FLAGS = {"mlock": "--mlock", "no_mmap": "--no-mmap", "cont_batching_off": "--no-cont-batching"}
 
 
@@ -285,9 +286,13 @@ def serve_command(model: Path, port: int = 8080, ctx: int = 16384, ngl: int = 99
     extra = list(extra or [])
     verbosity = [] if any(a in extra for a in ("-lv", "--verbosity", "--log-verbosity", "-v", "--verbose",
                                                "--log-verbose")) else ["-lv", "4"]
+    # --cache-ram: la caché de prompts vive en la RAM del PC y por defecto llega a 8 GiB POR SERVIDOR (18/10: dos
+    # servidores en la M40 llegaron a 12,8 y 9,6 GB y dejaron el PC sin RAM para otros proyectos). 1 GiB basta para
+    # reutilizar los prompts parecidos de un plan. Si pasas tú otro valor, manda el tuyo.
+    cache = [] if any(a in extra for a in ("-cram", "--cache-ram")) else ["--cache-ram", str(CACHE_RAM_MB)]
     # 127.0.0.1: el servidor no queda expuesto en la red
     return [exe, "-m", str(model), "--host", "127.0.0.1", "--port", str(port), "-c", str(ctx),
-            "-ngl", str(ngl), "--jinja", *verbosity, *extra]
+            "-ngl", str(ngl), "--jinja", *verbosity, *cache, *extra]
 
 
 class LlamaManager:

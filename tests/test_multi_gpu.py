@@ -149,6 +149,15 @@ class DevicesTests(unittest.TestCase):
             mine = llama.serve_command(Path("m.gguf"), 8081, 4096, 99, ["-lv", "2"])
             self.assertEqual(mine.count("-lv"), 1)
 
+    def test_serve_command_caps_the_prompt_cache_in_ram(self):
+        # 18/10: el --cache-ram por defecto (8 GiB por servidor) llenó la RAM del PC con dos servidores en la M40
+        with unittest.mock.patch.object(llama, "server_binary", return_value="llama-server"):
+            cmd = llama.serve_command(Path("m.gguf"), 8081, 4096, 99, ["-dev", "CUDA1"])
+            self.assertEqual(cmd[cmd.index("--cache-ram") + 1], str(llama.CACHE_RAM_MB))
+            mine = llama.serve_command(Path("m.gguf"), 8081, 4096, 99, ["-cram", "0"])
+            self.assertNotIn("--cache-ram", mine)
+            self.assertEqual(mine[mine.index("-cram") + 1], "0")
+
     def test_keys_by_port(self):
         self.assertEqual(llama.port_of("http://127.0.0.1:8081/v1"), 8081)
         with unittest.mock.patch.dict(llama.KEYS, {8081: "k2"}, clear=True):

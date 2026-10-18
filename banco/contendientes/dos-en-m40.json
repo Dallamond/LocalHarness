@@ -2,7 +2,7 @@
   "descripcion": "Dos modelos en la misma M40 (dos servidores con -dev CUDA1) y la 3060 apagada: gpt-oss-20b y Qwen3.5-9B se reparten los 24 GB y el ancho de banda. Mide qué se pierde por compartir tarjeta. Contexto acotado para que quepan los dos; si el segundo no arranca por memoria, bajar `ctx`.",
   "agente": "Jefe local 2",
   "servidores": [
-    {"id": "principal", "name": "3060 (apagada)", "port": 8080, "device": "CUDA0", "role": "general", "thinking": "normal"},
+    {"id": "principal", "name": "3060 (apagada)", "port": 8083, "device": "CUDA0", "role": "general", "thinking": "normal"},
     {"id": "m40", "name": "M40 grande", "port": 8081, "device": "CUDA1", "role": "fuerte", "thinking": "normal"},
     {"id": "m40b", "name": "M40 rápido", "port": 8082, "device": "CUDA1", "role": "rapido", "thinking": "apagado"}
   ],
