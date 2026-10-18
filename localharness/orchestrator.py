@@ -477,11 +477,6 @@ def _mcp_setup(store: Store, root: Path, cfg: dict, write: bool, coordinator: bo
             "env": {"MCP_TOOL_TIMEOUT": "900000", "MCP_TIMEOUT": "30000", "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1"}}
 
 
-def _delegation(store: Store, root: Path, write: bool) -> dict:
-    """Solo el servidor del modelo local (lo que usaban las pruebas antes del Catálogo)."""
-    return _mcp_setup(store, root, {"delegate_local": True}, write)
-
-
 async def _watch_delegations(deleg: dict, sink: Callable[[Event], None], every: float = 1.0) -> None:
     """Mientras trabaja Claude: cada encargo terminado del modelo local aparece como evento `delegate`."""
     while True:

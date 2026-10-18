@@ -2,6 +2,7 @@
 GPU. Lo usan la API (pestaña Modelos locales) y el orquestador (arrancar solos los modelos cuando una tarea los
 necesita: `ensure_for_task`)."""
 
+import threading
 import time
 from pathlib import Path
 

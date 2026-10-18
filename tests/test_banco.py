@@ -1,6 +1,5 @@
 import json
 import shutil
-import subprocess
 import tempfile
 import unittest
 from datetime import datetime

@@ -196,6 +196,19 @@ class AutopilotTests(unittest.TestCase):
         start = next(c for c in api.calls if c[1] == "/api/llama/start")
         self.assertEqual(start[2]["path"], "D:/m/A.gguf")
 
+    def test_does_not_restart_a_server_the_bench_turned_off(self):
+        # 18/10: un contendiente con la 3060 apagada (autostart_on_task a False) la veía reaparecer en cada parche
+        class Api(FakeApi):
+            def __call__(self, method, path, body=None):
+                if path == "/api/settings":
+                    return {"values": {"llama": {"autostart_on_task": False}}}
+                return super().__call__(method, path, body)
+        api = Api([("done", 0.0)])
+        api.llama["servers"][0]["status"]["state"] = "off"
+        pilot, _ = self.make(api, ["a"])
+        pilot.run()
+        self.assertFalse([c for c in api.calls if c[1] == "/api/llama/start"])
+
     def test_patch_lost_to_infrastructure_is_repeated_once(self):
         # 08/10: el modelo estaba cargando, todos los encargos dieron 503 y el parche acabó «sin cambios»
         api = FakeApi([("done", 0.3), ("review", 0.2)])

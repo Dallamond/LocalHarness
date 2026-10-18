@@ -1722,10 +1722,6 @@ def _files(store: Store, t: dict) -> list[dict]:
     return files
 
 
-def _model_name(path: str | None) -> str | None:
-    return Path(path.replace("\\", "/")).name.removesuffix(".gguf") if path else None
-
-
 def _last_limit(store: Store) -> dict | None:
     row = store.db.execute("SELECT data FROM events WHERE kind='limit' ORDER BY id DESC LIMIT 1").fetchone()
     return json.loads(row[0]) if row else None

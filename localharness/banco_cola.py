@@ -313,11 +313,13 @@ def correr(api: Callable, say: Callable[[str], None] = print, path: Path | None 
                     espera(30)
                     continue
                 say(f"=== la tanda {tid} falló: {e}")
-                editar(lambda c: _tanda(c, tid).update(estado="error", error=str(e)[:500], actual=None), path)
+                msg = str(e)[:500]
+                editar(lambda c: _tanda(c, tid).update(estado="error", error=msg, actual=None), path)
             except Exception as e:  # noqa: BLE001 — una tanda que falla no para la cola
                 say(f"=== la tanda {tid} falló: {e}")
                 # sin `actual`: al reabrirla empieza una ejecución nueva en vez de retomar la que falló
-                editar(lambda c: _tanda(c, tid).update(estado="error", error=str(e)[:500], actual=None), path)
+                msg = str(e)[:500]
+                editar(lambda c: _tanda(c, tid).update(estado="error", error=msg, actual=None), path)
     finally:
         editar(lambda c: c.update(proceso=None, parar=None), path)
 

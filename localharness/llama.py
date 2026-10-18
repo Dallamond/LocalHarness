@@ -383,9 +383,6 @@ class LlamaManager:
         except OSError:
             return ""
 
-    def log_tail(self, lines: int = 12) -> str:
-        return _tail(self.log_text(), lines)
-
     # --- progreso de carga
     def load_times(self) -> dict[str, float]:
         try:

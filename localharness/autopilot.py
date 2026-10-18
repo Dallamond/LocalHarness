@@ -209,6 +209,15 @@ class Autopilot:
             self.say(f"  (no pude mirar los modelos locales: {e})")
             return
         cfg = info.get("config") or {}
+        # sin autoarranque (el banco lo quita cuando un contendiente deja un servidor apagado a propósito, p. ej. la
+        # 3060 libre para otro uso): rearrancarlo aquí lo volvía a cargar en cada parche
+        try:
+            autostart = self.api("GET", "/api/settings")["values"]["llama"].get("autostart_on_task", True)
+        except (ApiError, KeyError, TypeError, AttributeError):
+            autostart = True
+        if not autostart:
+            self.wait_loaded()
+            return
         for srv in info.get("servers") or []:
             if srv["status"]["state"] not in ("off", "failed"):
                 continue

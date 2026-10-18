@@ -11,7 +11,7 @@ from pathlib import Path
 from localharness.boss import SYSTEM_REVIEW, SYSTEM_SELECT
 from localharness.cerebro import (DEBT, PREV_MARK, SYSTEM_DIAG, Cerebro, api_map, exports_of, first_failure, fix_duplicate_exports,
                                   fix_duplicate_functions, fix_imports, fix_missing_imports, in_order)
-from localharness.mcp_local import SYSTEM_PLAN, SYSTEM_WRITE, Server, ToolError
+from localharness.mcp_local import SYSTEM_PLAN, SYSTEM_WRITE, Server
 
 NODE = shutil.which("node")
 TASK = ("Dinero. src/dinero.js exporta aCentimos(valor) = Math.round(valor * 100) y formatear(c). "
