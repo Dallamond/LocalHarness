@@ -33,7 +33,12 @@
 Cada una ~1 h. Resultados en la pestaña Banco (http://127.0.0.1:8095/banco) y `data/banco/<caso>-caso/<contendiente>-*/`.
 Segunda fase (según resultados): los dos mejores en `cuentas-claras` guiada (18 parches; referencia Claude 96,6 %, locales 20–35 %).
 Baselines: `dos-en-m40` 73 % (tanda 2 de hoy); `m40-gptoss_3060-qwen9b` 75–81 %; `moe-coder14b-3060` 94,5 % (n=6, 17/10).
-Resultados de este barrido: se anotan abajo cuando acabe cada tanda.
+**Resultados de este barrido** (`basico`, 22 casos, nota media del examen oculto; se anota una línea por tanda):
+- `m40-solo-gptoss` (gpt-oss-20b solo, razonamiento normal): **90,6 %**, 17/22 al 100 %, 68 min de parche. Flojos: `v-divisas`
+  0 (descartado por tests, 8,7 min: `factura.test.mjs` importaba `resumen` que el modelo no exportó), `t-sin-inventar` 66,7,
+  `a-modulo-falta` 66,7, `j-serpiente` 80, `w-tareas` 80. Las tres mejoras del jefe (rondas idénticas, archivos intocables,
+  nombres del encargo) no llegaron a activarse en esta tanda. Muy por encima de `dos-en-m40` (73 %): el segundo modelo en la
+  misma tarjeta no ayuda, estorba.
 
 ## ▶ 17/10/2026 mediodía — Plan de la tarde (hasta las 22–23 h, cuando Lucas apague el PC)
 **Objetivo:** aprovechar la tarde para probar varios modelos, optimizar el uso de la M40 + 3060 y ver qué fallos sigue
