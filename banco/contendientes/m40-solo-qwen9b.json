@@ -1,0 +1,38 @@
+{
+  "descripcion": "Qwen3.5-9B solo en la M40, sin razonamiento: cuánto da un modelo pequeño con toda la tarjeta para él.",
+  "agente": "Jefe local 2",
+  "servidores": [
+    {
+      "id": "principal",
+      "name": "3060 (libre)",
+      "port": 8083,
+      "device": "CUDA0",
+      "role": "general",
+      "thinking": "normal"
+    },
+    {
+      "id": "m40",
+      "name": "M40",
+      "port": 8081,
+      "device": "CUDA1",
+      "role": "general",
+      "thinking": "apagado"
+    }
+  ],
+  "modelos": {
+    "principal": null,
+    "m40": {
+      "modelo": "Qwen3.5-9B-Q4_K_M",
+      "opciones": {
+        "ctx": 32768,
+        "flash_attn": "on"
+      }
+    }
+  },
+  "pensamiento": {
+    "m40": "apagado"
+  },
+  "horas": 12,
+  "minutos_tarea": 45,
+  "presupuesto": 1
+}

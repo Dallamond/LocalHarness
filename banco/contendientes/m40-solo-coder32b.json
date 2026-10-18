@@ -1,0 +1,38 @@
+{
+  "descripcion": "Qwen2.5-Coder-32B (denso, 18,5 GB) solo en la M40. Lento; el mejor programador que cabe.",
+  "agente": "Jefe local 2",
+  "servidores": [
+    {
+      "id": "principal",
+      "name": "3060 (libre)",
+      "port": 8083,
+      "device": "CUDA0",
+      "role": "general",
+      "thinking": "normal"
+    },
+    {
+      "id": "m40",
+      "name": "M40",
+      "port": 8081,
+      "device": "CUDA1",
+      "role": "general",
+      "thinking": "apagado"
+    }
+  ],
+  "modelos": {
+    "principal": null,
+    "m40": {
+      "modelo": "qwen2.5-coder-32b-q4_k_m",
+      "opciones": {
+        "ctx": 8192,
+        "flash_attn": "on"
+      }
+    }
+  },
+  "pensamiento": {
+    "m40": "apagado"
+  },
+  "horas": 12,
+  "minutos_tarea": 45,
+  "presupuesto": 1
+}

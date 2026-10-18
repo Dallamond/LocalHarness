@@ -1,0 +1,38 @@
+{
+  "descripcion": "gpt-oss-20b solo con razonamiento alto (reasoning_effort high): ¿piensa mejor o solo tarda más?",
+  "agente": "Jefe local 2",
+  "servidores": [
+    {
+      "id": "principal",
+      "name": "3060 (libre)",
+      "port": 8083,
+      "device": "CUDA0",
+      "role": "general",
+      "thinking": "normal"
+    },
+    {
+      "id": "m40",
+      "name": "M40",
+      "port": 8081,
+      "device": "CUDA1",
+      "role": "general",
+      "thinking": "profundo"
+    }
+  ],
+  "modelos": {
+    "principal": null,
+    "m40": {
+      "modelo": "gpt-oss-20b-UD-Q4_K_XL",
+      "opciones": {
+        "ctx": 32768,
+        "n_cpu_moe": 0
+      }
+    }
+  },
+  "pensamiento": {
+    "m40": "profundo"
+  },
+  "horas": 12,
+  "minutos_tarea": 45,
+  "presupuesto": 1
+}

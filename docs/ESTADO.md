@@ -1,7 +1,39 @@
 # Estado y traspaso — leer primero al retomar (también desde Claude Code en la web)
 
-Última actualización: 09/10/2026, noche (banco de pruebas: resultados y qué sigue; oficina y GUI nuevas). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
+Última actualización: 18/10/2026, tarde (limpieza, mejoras del jefe local, RAM de los servidores y barrido de modelos en la M40). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
 
+
+## ▶ 18/10/2026 — Limpieza, tres mejoras al jefe local, RAM de los servidores y plan de la tarde en la M40
+**Hecho esta mañana (todo en commits, 370 tests OK):**
+- Código muerto fuera (`_model_name`, `log_tail`, `_delegation`), imports sueltos; `banco_cola` guarda el mensaje del error
+  antes del lambda.
+- `Autopilot.ensure_locals` ya no rearranca un servidor que el banco apagó a propósito (`autostart_on_task=False`): la 3060
+  reaparecía con Qwen9B en cada parche. Test en `tests/test_autopilot.py`.
+- Jefe local (`boss.py`/`cerebro.py`), tres mejoras tras la tanda `dos-en-m40` (media 73 %, 15 de 22 casos al 100 %):
+  1. dos rondas de arreglo seguidas que no cambian nada paran la escalera (`MAX_IDLE`);
+  2. `protected_paths`/`restore_protected`: lo que el encargo dice «no lo cambies» vuelve a su versión del commit antes de cada
+     comprobación (caso `t-sin-inventar`);
+  3. `missing_names`/`with_missing_names`: la revisión suma como problema un nombre del encargo (`aplicarCupon(...)`) que no
+     existe en el código (caso `m-carrito`, el modelo escribió `applyCupon`). Probado contra las soluciones de referencia: sin
+     falsos positivos. **Sin medir aún su efecto en el banco.**
+- **RAM llena (causa y arreglo):** `llama-server` carga con mmap y deja el archivo del modelo entero en el working set (12 GB el
+  gpt-oss, 7 GB el Qwen9B con los dos en la M40) y su caché de prompts en RAM era de 8 GiB por servidor. Ahora `--cache-ram 1024`
+  y `llama.trim_working_set` suelta el working set cuando el servidor queda listo. **`--load-mode none` y `dio` se CUELGAN al
+  cargar en b11379** (50 min a 100 % de un núcleo, 33 MB leídos): no usarlos. `--mlock`/`--no-mmap` ya no existen en este
+  build: se traducen a `--load-mode` (las casillas «Sin mmap» y «Bloquear en RAM» de la GUI fallaban al lanzar).
+- El contendiente `dos-en-m40` usa el puerto 8083 para el «principal» apagado (el 8080 lo usa el otro proyecto de Lucas en la 3060).
+- **Regla de cortesía:** la 3060 es de Lucas para otro proyecto; no tocar sus `llama-server` (sin `--api-key`, puertos 8080/8097)
+  y nunca `/api/llama/stop-all`. Las pruebas de la M40 usan solo `CUDA1`.
+
+**Plan de la tarde (desde las 16:17): barrido de modelos y configuraciones en la M40 sola.** Cola del banco, repertorio `basico`
+(22 casos, 1 vuelta, Jefe local 2), contendientes `banco/contendientes/m40-*.json`, en este orden:
+`m40-solo-gptoss` (referencia) → `m40-solo-qwen3-30b` (MoE 3B activos, el más prometedor) → `m40-solo-coder14b` →
+`m40-solo-qwen9b` → `m40-gptoss-coder7b` (planificador + programador, los dos en la M40) → `m40-solo-gptoss-profundo`
+(razonamiento alto) → `m40-solo-gemma4-12b` → `m40-solo-qwen3-32b` y `m40-solo-coder32b` (densos y lentos, el techo de calidad).
+Cada una ~1 h. Resultados en la pestaña Banco (http://127.0.0.1:8095/banco) y `data/banco/<caso>-caso/<contendiente>-*/`.
+Segunda fase (según resultados): los dos mejores en `cuentas-claras` guiada (18 parches; referencia Claude 96,6 %, locales 20–35 %).
+Baselines: `dos-en-m40` 73 % (tanda 2 de hoy); `m40-gptoss_3060-qwen9b` 75–81 %; `moe-coder14b-3060` 94,5 % (n=6, 17/10).
+Resultados de este barrido: se anotan abajo cuando acabe cada tanda.
 
 ## ▶ 17/10/2026 mediodía — Plan de la tarde (hasta las 22–23 h, cuando Lucas apague el PC)
 **Objetivo:** aprovechar la tarde para probar varios modelos, optimizar el uso de la M40 + 3060 y ver qué fallos sigue

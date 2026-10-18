@@ -1,0 +1,38 @@
+{
+  "descripcion": "gemma-4-12b (Q6_K, denso) solo en la M40: otra familia, para ver si el fallo es del modelo o del flujo.",
+  "agente": "Jefe local 2",
+  "servidores": [
+    {
+      "id": "principal",
+      "name": "3060 (libre)",
+      "port": 8083,
+      "device": "CUDA0",
+      "role": "general",
+      "thinking": "normal"
+    },
+    {
+      "id": "m40",
+      "name": "M40",
+      "port": 8081,
+      "device": "CUDA1",
+      "role": "general",
+      "thinking": "normal"
+    }
+  ],
+  "modelos": {
+    "principal": null,
+    "m40": {
+      "modelo": "gemma-4-12b-it-Q6_K",
+      "opciones": {
+        "ctx": 16384,
+        "flash_attn": "on"
+      }
+    }
+  },
+  "pensamiento": {
+    "m40": "normal"
+  },
+  "horas": 12,
+  "minutos_tarea": 45,
+  "presupuesto": 1
+}
