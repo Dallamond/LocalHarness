@@ -44,6 +44,10 @@ Baselines: `dos-en-m40` 73 % (tanda 2 de hoy); `m40-gptoss_3060-qwen9b` 75–81 
   ~7 min por caso. `e-precio` 0 y `e-texto` 0: escribe sus propios tests mal (espera `108.9` con `strictEqual` sobre céntimos
   enteros) y deja un módulo importado que no existe. Sin razonamiento no compensa su tamaño; una vuelta con razonamiento queda
   como idea, no como prioridad.
+- `m40-solo-coder14b` (Qwen2.5-Coder-14B denso, sin razonamiento): **PARADA a propósito tras 7 de 22** (52,4 %, 59 min; 3 al
+  100). 13 tok/s en la M40 (la mitad que en la 3060) y ~9 min por caso. `e-precio` 0 (descartado en revisión), `e-texto` 0
+  (su test espera `'H…'` donde la función da `'Hola…'`), `d-test-mal-contado` 0 (agotó los 15 min), `t-sin-inventar` 66,7. Un
+  denso de 14B no compensa en una tarjeta lenta: los MoE leen pocos pesos por token.
 
 ## ▶ 17/10/2026 mediodía — Plan de la tarde (hasta las 22–23 h, cuando Lucas apague el PC)
 **Objetivo:** aprovechar la tarde para probar varios modelos, optimizar el uso de la M40 + 3060 y ver qué fallos sigue
