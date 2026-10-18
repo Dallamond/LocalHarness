@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 from localharness.boss import (REJECTED, SYSTEM_PROPOSE, SYSTEM_REVIEW, SYSTEM_SELECT, Boss, detect_check,
-                               propose_patches)
+                               missing_names, propose_patches, protected_paths)
 from localharness.edits import SYSTEM_EDIT, apply_edits, parse_edits
 from localharness.mcp_local import SYSTEM_PLAN, SYSTEM_WRITE, Server, ToolError, check_failed
 
@@ -280,6 +280,52 @@ class BossTests(unittest.TestCase):
         (self.root / "package.json").write_text('{"scripts": {"pretest": "node x.mjs", "test": "node --test"}}',
                                                 encoding="utf-8")
         self.assertEqual(detect_check(self.root), "npm test")
+
+
+    def test_un_archivo_protegido_vuelve_a_su_version_y_se_anota(self):
+        boss, _ = self.boss(FakeModels([]))
+        boss.protected = protected_paths("calc.py es correcto: no lo cambies.")
+        (self.root / "calc.py").write_text("def suma(a, b):\n    return 0\n", encoding="utf-8")
+        (self.root / "otro.py").write_text("x = 1\n", encoding="utf-8")
+        self.assertEqual(boss.restore_protected(), ["calc.py"])
+        self.assertEqual((self.root / "calc.py").read_text(encoding="utf-8"), CALC)
+        self.assertTrue((self.root / "otro.py").is_file())
+        self.assertTrue(any("calc.py" in n for n in boss.notes))
+
+    def test_la_revision_suma_el_nombre_que_falta(self):
+        boss, _ = self.boss(FakeModels([]))
+        v = boss.with_missing_names({"ok": True, "problems": [], "summary": "bien"},
+                                    "Añade restar(a, b) a calc.py")
+        self.assertFalse(v["ok"])
+        self.assertIn("restar", v["problems"][0])
+        self.assertTrue(boss.with_missing_names({"ok": True, "problems": []}, "Arregla suma(a, b)")["ok"])
+
+
+class EncargoTests(unittest.TestCase):
+    def test_archivos_que_el_encargo_dice_que_no_se_toquen(self):
+        self.assertEqual(protected_paths("src/agenda.js ya está hecho y es correcto: no lo cambies. Escribe tests."),
+                         {"src/agenda.js"})
+        self.assertEqual(protected_paths("Pásalo a node:test. src/reloj.js es correcto: no lo cambies."),
+                         {"src/reloj.js"})
+        self.assertEqual(protected_paths("Arregla el bug, no toques src/calc.js ni los tests"), {"src/calc.js"})
+        self.assertEqual(protected_paths("Hazlo sin tocar src/nivel.js"), {"src/nivel.js"})
+        # editar el archivo SÍ está permitido en estos
+        self.assertEqual(protected_paths("Arréglalo sin cambiar lo que hace src/calc.js."), set())
+        self.assertEqual(protected_paths("Arregla src/tablas.js sin tocar nada más del archivo"), set())
+
+    def test_nombres_del_encargo_que_no_existen_en_el_codigo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src").mkdir()
+            carrito = root / "src" / "carrito.js"
+            task = ("Añade aplicarCupon(carrito, codigo); lanza Error('cupón no válido'); "
+                    "total(carrito) resta Math.round(x)")
+            carrito.write_text("export function applyCupon(c, k) {}\nexport function total(c) {}\n", encoding="utf-8")
+            self.assertEqual(missing_names(root, task), ["aplicarCupon"])
+            carrito.write_text("export function aplicarCupon(c, k) {}\nexport function total(c) {}\n", encoding="utf-8")
+            self.assertEqual(missing_names(root, task), [])
+            # renombrar: el nombre viejo ya no tiene por qué existir
+            self.assertEqual(missing_names(root, "Renombra formatear() a formatearEuros"), [])
 
 
 if __name__ == "__main__":

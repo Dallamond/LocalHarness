@@ -63,6 +63,51 @@ RULE_FILES = ("ENCARGO.md", "AGENTS.md", "CLAUDE.md", "README.md")
 MAX_RULES = 6000
 MAX_DIFF = 24_000
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "dist", "build"}
+
+PATH_CORE = r"(?:[\w-]+/)*[\w.-]+\.(?:mjs|cjs|js|ts|py|html|css|json|md)"
+VERBS_NO = r"(?:cambies|toques|modifiques|edites|cambia|toca|modifica|edita)"
+# «src/agenda.js ya está hecho y es correcto: no lo cambies» / «no toques src/x.js» / «sin tocar src/x.js».
+# «sin cambiar lo que hace src/calc.js» NO cuenta: ahí el archivo sí se puede editar
+PROTECT_AFTER = re.compile(rf"({PATH_CORE})[^.\n]{{0,60}}?\bno (?:lo |la )?{VERBS_NO}\b", re.I)
+PROTECT_BEFORE = re.compile(rf"\b(?:no {VERBS_NO}|sin (?:cambiar|tocar|modificar|editar))\s+(?:nada de\s+)?({PATH_CORE})",
+                            re.I)
+CALL_NAME = re.compile(r"(?<![\w.$])([A-Za-z_]\w{2,})\(")
+NAME_IGNORE = {"Error", "Math", "Object", "Array", "Number", "String", "Date", "JSON", "Promise", "Set", "Map", "Boolean",
+               "RegExp", "Symbol", "test", "describe", "require", "import", "function", "console", "parseInt",
+               "parseFloat", "fetch", "setTimeout"}
+NAME_SKIP_TASK = re.compile(r"renombr|elimin[ae]\b|borra\b", re.I)
+CODE_SUFFIXES = {".js", ".mjs", ".cjs", ".ts", ".py", ".html"}
+
+
+def protected_paths(task: str) -> set[str]:
+    """Archivos que el encargo dice que no se toquen: el 18/10 (t-sin-inventar) «src/agenda.js ya está hecho: no lo
+    cambies» y el modelo lo reescribió igualmente."""
+    found = {m.group(1) for m in PROTECT_AFTER.finditer(task)} | {m.group(1) for m in PROTECT_BEFORE.finditer(task)}
+    return {p.removeprefix("./") for p in found}
+
+
+def missing_names(root: Path, task: str) -> list[str]:
+    """Funciones que el encargo nombra con paréntesis (`aplicarCupon(carrito, codigo)`) y no aparecen en NINGÚN
+    archivo de código: el 18/10 (m-carrito) el modelo escribió `applyCupon` y la revisión dijo «sin fallos». Si el
+    encargo renombra o elimina, no se mira (el nombre viejo ya no tiene que existir)."""
+    if NAME_SKIP_TASK.search(task):
+        return []
+    names = [n for n in dict.fromkeys(CALL_NAME.findall(task)) if n not in NAME_IGNORE]
+    if not names:
+        return []
+    texts = []
+    for p in root.rglob("*"):
+        if p.suffix not in CODE_SUFFIXES or any(part in SKIP_DIRS for part in p.relative_to(root).parts):
+            continue
+        try:
+            if p.stat().st_size < 400_000:
+                texts.append(p.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+    blob = "\n".join(texts)
+    return [n for n in names if not re.search(rf"\b{re.escape(n)}\b", blob)]
+
+
 # gpt-oss con razonamiento «medium» se quedó en bucle eligiendo archivos (el 08/10, 4.800 tokens repitiendo «We
 # can't open file…»): el jefe piensa en «low», con tope de tokens, y repite una vez si se corta
 EFFORT = "low"
@@ -214,6 +259,24 @@ class Boss:
                 out.append(path)
         return out
 
+    def head_bytes(self, rel: str) -> bytes | None:
+        p = subprocess.run(["git", "show", f"HEAD:{rel}"], cwd=self.root, capture_output=True, timeout=30)
+        return p.stdout if p.returncode == 0 else None
+
+    def restore_protected(self) -> list[str]:
+        """Los archivos que el encargo dice que no se toquen vuelven a su versión del último commit (sin modelo)."""
+        back = []
+        for rel in sorted(getattr(self, "protected", ())):
+            if rel not in self.changed():
+                continue
+            old = self.head_bytes(rel)
+            if old is not None:
+                (self.root / rel).write_bytes(old)
+                back.append(rel)
+        if back:
+            self.notes.append("- Vuelto a su versión anterior (el encargo dice que no se toque): " + ", ".join(back))
+        return back
+
     def importers(self, targets: set[str]) -> list[str]:
         """Módulos JS del repo (no tests) que importan alguno de `targets`: si jugador.js deja de exportar
         crearJugador, el que se rompe es partida.js, que no se tocó."""
@@ -297,6 +360,8 @@ class Boss:
     def verify(self, res: dict | None = None) -> str:
         """La salida de la comprobación (la que ya trae `res` o una nueva) con las guardias delante: si alguna
         falla, cuenta como tests que fallan, aunque `npm test` pase."""
+        if self.restore_protected():
+            res = None  # el resultado de los tests que traía era de antes de devolverlos
         out = (res or {}).get("check") or self.run_check()
         problems = self.gates()
         if not problems:
@@ -510,10 +575,20 @@ class Boss:
             except ValueError:
                 data = {"ok": True, "problems": [], "summary": "(la revisión no devolvió JSON)"}
             return data, stats
-        return self.think("revisar", task, ask)
+        return self.with_missing_names(self.think("revisar", task, ask), task)
+
+    def with_missing_names(self, verdict: dict, task: str) -> dict:
+        """El revisor (un modelo) no repara en nombres mal puestos; esta comprobación sí, sin modelo."""
+        missing = missing_names(self.root, task)
+        if not missing:
+            return verdict
+        problem = (f"El encargo nombra {', '.join(f'`{n}`' for n in missing)} y no existe en ningún archivo: "
+                   "usa exactamente ese nombre (¿está escrito de otra forma?)")
+        return {**verdict, "ok": False, "problems": [*(verdict.get("problems") or []), problem]}
 
     # --- todo
     def run(self, task: str) -> str:
+        self.protected = protected_paths(task)
         rules = self.rules()
         files = self.select_files(task, rules)
         res = self.plan_and_run(task, files, rules, "Plan")

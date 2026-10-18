@@ -405,6 +405,15 @@ class VueltaCompletaTests(unittest.TestCase):
         self.assertIn("Arreglo 2 (reescritura entera, desde cero): src/dinero.js", report)
         self.assertIn("`npm test` pasa", report)
 
+    def test_dos_rondas_seguidas_sin_cambios_paran_la_escalera(self):
+        # 18/10: hasta 4 rondas idénticas («Arreglo N: no cambió nada») y el mismo fallo al final
+        bad = GOOD.replace("* 100)", "* 7)")
+        fake = Fake({"src/dinero.js": [bad] * 8, "tests/dinero.test.mjs": [TEST]},
+                    diag=[{"archivo": "src/dinero.js", "culpable": "codigo", "causa": "c1", "cambio": "x"}])
+        c, report, _ = self.run_cerebro(fake)
+        self.assertIn("Arreglo 2: no cambió nada; paro la escalera", report)
+        self.assertNotIn("Arreglo 3", report)
+
     def test_los_bloques_de_codigo_llevan_la_tarea(self):
         fake = Fake({"src/dinero.js": [GOOD], "tests/dinero.test.mjs": [TEST]}, diag=[])
         self.run_cerebro(fake)

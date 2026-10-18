@@ -31,7 +31,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from localharness.boss import SKIP_DIRS, Boss
+from localharness.boss import SKIP_DIRS, Boss, protected_paths
 from localharness.mcp_local import MAX_BLOCKS, ToolError, check_failed, is_test_path, strip_fence
 
 # papel → {tipo: a qué clase de servidor va (route de mcp_local), servidor: id concreto (opcional), effort:
@@ -43,6 +43,7 @@ ROLES: dict[str, dict] = {
     "revisar": {"tipo": "local_agent", "effort": "low", "max_tokens": 4000},
 }
 LADDER = ("quirurgico", "quirurgico", "reescribir", "quirurgico")  # una entrada por ronda de arreglo
+MAX_IDLE = 2  # rondas seguidas que dejan los archivos idénticos: a la segunda se para la escalera
 MAX_MECHANICAL = 3      # pasadas de arreglos mecánicos por parche (cada una arregla algo de verdad o no cuenta)
 MAX_DIAG_FILES = 4
 MAX_DIAG_FILE_CHARS = 7000
@@ -953,10 +954,6 @@ class Cerebro(Boss):
             (self.root / p).write_bytes(data)
 
     # --- rescate parcial (contra el efecto dominó)
-    def head_bytes(self, rel: str) -> bytes | None:
-        p = subprocess.run(["git", "show", f"HEAD:{rel}"], cwd=self.root, capture_output=True, timeout=30)
-        return p.stdout if p.returncode == 0 else None
-
     def head_text(self, rel: str) -> str | None:
         old = self.head_bytes(rel)
         return old.decode("utf-8", "replace") if old is not None else None
@@ -1152,6 +1149,7 @@ class Cerebro(Boss):
         # depurador como YA PROBADO
         task, mark, prev = task.partition(PREV_MARK)
         task = task.rstrip()
+        self.protected = protected_paths(task)
         task = self.with_sections(task)
         self.rewritten = set()
         rules = self.rules()
@@ -1163,7 +1161,7 @@ class Cerebro(Boss):
         touched = list(dict.fromkeys([*files, *res["written"]]))
         out = self.verify()
         tried: list[str] = ([f"INTENTO ANTERIOR DE ESTE PARCHE: {' '.join(prev.split())[:900]}"] if mark else [])
-        rounds = mech = code_blames = 0
+        rounds = mech = code_blames = idle = 0
         stuck = suspect = False
         tried_missing: set[str] = set()
         while out and check_failed(out) and rounds < len(LADDER) and not self.late():
@@ -1199,10 +1197,15 @@ class Cerebro(Boss):
             # una ronda que deja los archivos igual no cuenta como probada a medias: lo dice y la siguiente reescribe
             after = self.snapshot()
             stuck = after == before
+            idle = idle + 1 if stuck else 0
             if stuck:
                 tried[-1] += " (NO CAMBIÓ NADA: el archivo quedó idéntico)"
-                self.notes.append(f"- Arreglo {rounds}: no cambió nada; el siguiente reescribe")
+                self.notes.append(f"- Arreglo {rounds}: no cambió nada"
+                                  + ("; paro la escalera (dos rondas seguidas sin cambiar nada)" if idle >= MAX_IDLE
+                                     else "; el siguiente reescribe"))
             out = self.verify()
+            if idle >= MAX_IDLE:  # 18/10: hasta 4 rondas iguales, ~10 min de GPU, y el mismo fallo al final
+                break
             # 11/10 (Supersalto, receta de Claude): el código daba la meta en x 848 (bien: columna 53 × 16) y el test
             # esperaba 832; el depurador culpó al código 4 rondas y reescribirlo rompió lo que pasaba. Una ronda que
             # cambia código y hace fallar tests que pasaban se deshace: ese código cumplía, y el sospechoso es el test
