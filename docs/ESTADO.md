@@ -55,6 +55,12 @@ Baselines: `dos-en-m40` 73 % (tanda 2 de hoy); `m40-gptoss_3060-qwen9b` 75–81 
   `w-tareas` 0 (40 min), `m-paso` 33,3, `m-carrito` 75, `t-valores` 75, `t-sin-inventar` 83,3. «Vuelto a su versión anterior» y
   «no existe en ningún archivo» no salieron en ningún caso. **Lección: el 9B solo vale para tareas de un archivo; los casos de
   varios archivos y las webs/juegos piden el modelo grande.**
+- `m40-gptoss-coder7b` (gpt-oss-20b planifica/revisa + Qwen2.5-Coder-7B Q8 escribe, los dos en la M40): **79,9 %**, 14/22 al 100 %,
+  70 min de parche (la más rápida por caso, pero por debajo de gpt-oss solo, 90,6 %). Flojos: `a-archivo-largo` 0 (sin cambios),
+  `v-divisas` 0 (tests, 10 min), `w-tareas` 0 (revisión), `d-test-mal-contado`/`d-mixto`/`a-modulo-falta` 66,7, `t-valores` 75,
+  `t-sin-inventar` 83,3. **El reparto casi no reparte:** el Coder-7B recibió 32 encargos y gpt-oss 183 (15 % frente a 85 %); el
+  programador pequeño (~21 tok/s) apenas escribe y el grande (~34 tok/s) lo hace casi todo, así que la pareja no aporta frente a
+  gpt-oss solo. Pendiente de mejora: `mcp_local.claim` y el enrutado por rol para que el obrero escriba de verdad.
 
 ## ▶ 17/10/2026 mediodía — Plan de la tarde (hasta las 22–23 h, cuando Lucas apague el PC)
 **Objetivo:** aprovechar la tarde para probar varios modelos, optimizar el uso de la M40 + 3060 y ver qué fallos sigue
