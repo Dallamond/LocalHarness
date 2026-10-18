@@ -1,7 +1,25 @@
 # Estado y traspaso — leer primero al retomar (también desde Claude Code en la web)
 
-Última actualización: 19/10/2026 (madrugada): plan de la jornada larga con las dos GPU, reparto «dividir» y resultados del barrido de la M40 del 18/10. Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
+Última actualización: 18/10/2026 23:36 (cierre del día: ver «CIERRE 18/10»). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
 
+
+## ▶ CIERRE 18/10/2026 23:36 — dónde queda todo (leer esto primero mañana)
+**Cola del banco (sigue corriendo sola, solo en la M40; se retoma con `POST /api/banco/cola/empezar` si se apaga el PC):**
+`m40-solo-gptoss-profundo` en marcha 5/22 (razonamiento alto, lento) → pendientes `m40-solo-gemma4-12b` (22), `m40-solo-qwen3-32b`
+y `m40-solo-coder32b` (6 casos cada una). Si el PC se apaga, esas tandas quedan detrás de las de la jornada del 19/10
+(`encolar_manana.py` coloca las nuevas delante). Servidor web de LocalHarness en 8095 con el código nuevo; modelos de la M40
+cargados por el banco (se apagan con `/api/llama/stop?server=m40`, nunca `stop-all`).
+**Resultados del 18/10 (basico, M40 sola):** gpt-oss solo 90,6 % (22) · gpt-oss+Coder-7B 79,9 % (22) · Qwen3.5-9B 71,2 % (22) ·
+Qwen3-30B-A3B 56,9 % (6) · Coder-14B 52,4 % (7). Detalle y causas más abajo en «Resultados de este barrido».
+**Repo:** todo en commits en `main`; el último push fue a `e0a1209`. **Sin subir:** `d4615cf` (reparto `dividir`, contendientes de
+las dos GPU, `encolar_manana.py`, `Manana-banco.bat`, plan del 19/10). Árbol limpio.
+**Decisiones abiertas para Lucas:** (1) descargar Qwen3-Coder-30B-A3B y Qwen3.5-35B-A3B (recomendado; 187 GB libres, sin ellos el
+script salta esas dos tandas); (2) hacer push de `d4615cf`; (3) qué hacer con las propuestas 4 y 5 aparcadas (migrar contendientes
+y `.bat` que aún usan la 1060 y el servidor «rapido»); (4) huecos del arnés vistos hoy sin arreglar: `a-modulo-falta` (import +
+declaración local con el mismo nombre no lo cubre el arreglo mecánico), `a-archivo-largo` y `v-divisas` fallan a menudo.
+**Seguimiento:** las comprobaciones programadas de Claude solo viven mientras la sesión esté abierta; si se cierra, la cola sigue
+(proceso aparte) pero nadie anota los resultados: mirar `http://127.0.0.1:8095/banco` y `data/banco/cola.log`, y anotar con
+`scratchpad`-style: media = `examen_final.nota` de cada `resultado.json` de la tanda.
 
 ## ▶ 19/10/2026 — Jornada larga con las dos GPU (7:00 → ~17:00): plan y cómo lanzarlo
 **Lanzar:** doble clic en `Manana-banco.bat` (abre LocalHarness si no está, encola y arranca la cola; es repetible, no duplica) o
