@@ -53,7 +53,10 @@ DEFAULTS: dict[str, Any] = {
               # para buscar trozos relacionados (RAG); vacío = sin RAG.
               # auto_swap: si un encargo necesita visión y el modelo cargado no la tiene, LocalHarness carga solo
               # el del armario que la tenga (gestor de turnos, P16). Apagado: lo pide Claude con `local_use`.
-              "profiles": {}, "topology": "separado", "embed_url": "", "auto_swap": False, "joined_helpers": False},
+              "profiles": {}, "topology": "separado", "embed_url": "", "auto_swap": False, "joined_helpers": False,
+              # routing: cómo se reparten los encargos entre los servidores: cola (el que antes acabe) | rol (manda el
+              # papel, con desborde) | dividir (como rol, y las escrituras van al «rápido»: planifica el fuerte, escribe el obrero)
+              "routing": "cola"},
     # Valores que propone el formulario de nuevo agente
     "agent_defaults": {"provider": "claude", "model": "sonnet", "role": "trabajador", "max_turns": 10,
                        "max_budget_usd": 1.0},

@@ -386,6 +386,8 @@ TOOL_WEIGHT = {"local_ask": LIGHT, "local_research": LIGHT, "local_write_file": 
                "local_edit_file": HEAVY, "local_execute_plan/ask": LIGHT, "local_execute_plan/write": HEAVY,
                "local_execute_plan/edit": HEAVY, "local_plan": HEAVY, "local_read_documents": LIGHT,
                "local_look": LIGHT}
+WRITE_KINDS = {"local_write_file", "local_edit_file", "local_execute_plan/write", "local_execute_plan/edit"}
+SPILL = 3.0  # reparto por papel: cuántas veces más tarda el modelo del papel que el mejor antes de pasar al otro
 ROLE_TEXT = {"fuerte": "escribir código y tareas enteras", "rapido": "preguntas, resúmenes e investigar",
              "general": "de todo"}
 SERVER_TOOLS = ("local_ask", "local_write_file", "local_edit_file", "local_execute_plan", "local_research",
@@ -448,7 +450,14 @@ class Server:
         self.servers = [{**srv, "url": str(srv["url"]).rstrip("/").removesuffix("/v1"), "key": srv.get("key") or "",
                          "role": srv.get("role") or "general"} for srv in servers]
         self._default = self.servers[0]
-        self._inflight = {srv["id"]: 0 for srv in self.servers}  # encargos en curso de cada modelo (reparto por cola)
+        # reparto de encargos: cola (el que antes acabe; lo de siempre) | rol (manda el papel, con desborde) |
+        # dividir (como rol, y las escrituras van al «rápido»: planifica el fuerte, escribe el obrero)
+        self.routing = env.get("LH_ROUTING") if env.get("LH_ROUTING") in ("cola", "rol", "dividir") else "cola"
+        try:
+            self.spill = max(1.0, float(env.get("LH_SPILL") or SPILL))
+        except ValueError:
+            self.spill = SPILL
+        self._inflight ={srv["id"]: 0 for srv in self.servers}  # encargos en curso de cada modelo (reparto por cola)
         self._speed: dict[str, float] = {}  # tok/s medidos al generar (media móvil) de cada modelo: el reparto los usa
         self._prompt_speed: dict[str, float] = {}  # tok/s al LEER el prompt: en la M40 es ~20× menos que en la 3060
         self._shape = {"in": 1500.0, "out": 300.0}  # tokens de entrada y de salida de un encargo típico (se aprende)
@@ -505,6 +514,8 @@ class Server:
         """Orden en que probar los servidores para un encargo: el que pidió Claude (`server`) o el de papel más
         adecuado primero; los demás detrás por si el primero no contesta."""
         prefs = TOOL_WEIGHT.get(kind, LIGHT)
+        if self.routing == "dividir" and kind in WRITE_KINDS:
+            prefs = LIGHT  # el obrero («rápido») escribe; el «fuerte» planifica, diagnostica y revisa
         order = sorted(self.servers, key=lambda srv: prefs.index(srv["role"]) if srv["role"] in prefs else 9)
         if wanted:
             chosen = [srv for srv in self.servers if srv["id"] == str(wanted)]
@@ -526,9 +537,18 @@ class Server:
         order = self.route(kind, wanted)
         with self._lock:
             rank = {srv["id"]: i for i, srv in enumerate(order)}
-            order = sorted(order, key=lambda srv: ((self._inflight.get(srv["id"], 0) + 1)
-                                                   * self._job_seconds(srv["id"], tokens_in) * self._device_load(srv),
-                                                   rank[srv["id"]]))
+            finish = {srv["id"]: (self._inflight.get(srv["id"], 0) + 1) * self._job_seconds(srv["id"], tokens_in)
+                      * self._device_load(srv) for srv in order}
+            by_time = sorted(order, key=lambda srv: (finish[srv["id"]], rank[srv["id"]]))
+            if self.routing in ("rol", "dividir") and not wanted:
+                # 18/10 (gpt-oss + Coder-7B en la M40): con encargos de uno en uno el modelo más veloz siempre acababa
+                # antes y el obrero casi no escribía (32 de 215 encargos). Aquí manda el papel; solo se desborda al
+                # siguiente si el del papel tardaría más de SPILL veces lo que tarda el mejor
+                best = min(finish.values())
+                first = next((srv for srv in order if finish[srv["id"]] <= self.spill * best), by_time[0])
+                order = [first] + [srv for srv in by_time if srv is not first]
+            else:
+                order = by_time
             self._inflight[order[0]["id"]] = self._inflight.get(order[0]["id"], 0) + 1
         return order
 

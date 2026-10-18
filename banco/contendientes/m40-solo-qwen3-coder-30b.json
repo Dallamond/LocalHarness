@@ -1,0 +1,37 @@
+{
+  "descripcion": "Qwen3-Coder-30B-A3B-Instruct (MoE de 3B activos, afinado para código y herramientas) solo en la M40. REQUIERE DESCARGA (~18 GB).",
+  "agente": "Jefe local 2",
+  "servidores": [
+    {
+      "id": "principal",
+      "name": "3060 (libre)",
+      "port": 8083,
+      "device": "CUDA0",
+      "role": "general",
+      "thinking": "normal"
+    },
+    {
+      "id": "m40",
+      "name": "M40",
+      "port": 8081,
+      "device": "CUDA1",
+      "role": "general",
+      "thinking": "apagado"
+    }
+  ],
+  "modelos": {
+    "principal": null,
+    "m40": {
+      "modelo": "Qwen3-Coder-30B-A3B",
+      "opciones": {
+        "ctx": 16384
+      }
+    }
+  },
+  "pensamiento": {
+    "m40": "apagado"
+  },
+  "horas": 12,
+  "minutos_tarea": 45,
+  "presupuesto": 1
+}

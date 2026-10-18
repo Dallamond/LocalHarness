@@ -446,7 +446,8 @@ def _mcp_setup(store: Store, root: Path, cfg: dict, write: bool, coordinator: bo
                "LH_COORDINATOR": "1" if coordinator else "0", "PYTHONIOENCODING": "utf-8",
                # para `local_models`/`local_use` (cambiar de modelo) y el RAG
                "LH_API": API_URL, "LH_EMBED_URL": settings.load(store)["llama"].get("embed_url") or "",
-               "LH_AUTO_SWAP": "1" if settings.load(store)["llama"].get("auto_swap") else "0"}
+               "LH_AUTO_SWAP": "1" if settings.load(store)["llama"].get("auto_swap") else "0",
+               "LH_ROUTING": settings.load(store)["llama"].get("routing") or "cola"}
         servers["local"] = {"type": "stdio", "command": sys.executable,
                             # por ruta: la CLI lo lanza desde el worktree, donde el paquete no está en el path
                             "args": [str(Path(mcp_local.__file__).resolve())], "env": env}

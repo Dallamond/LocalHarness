@@ -355,6 +355,19 @@ class RoutingTests(unittest.TestCase):
         s.release("principal")
         self.assertEqual(s.claim("local_ask")[0]["id"], "rapido")  # libres los dos: manda el papel
 
+    def test_dividir_sends_writes_to_the_worker_and_spills_over_when_it_queues(self):
+        """18/10 (gpt-oss + Coder-7B en la M40): con encargos de uno en uno el más veloz siempre ganaba y el obrero casi no
+        escribía. En «dividir» escribe el «rápido»; planificar sigue en el «fuerte»; si el obrero se encola, desborda."""
+        for mode, first_write in (("cola", "principal"), ("dividir", "rapido")):
+            s = self.server(self.endpoints())
+            s.routing = mode
+            s.note_speed("principal", {"timings": {"predicted_per_second": 50.0, "predicted_n": 200}})
+            s.note_speed("rapido", {"timings": {"predicted_per_second": 20.0, "predicted_n": 200}})
+            self.assertEqual(s.claim("local_execute_plan/write")[0]["id"], first_write, mode)
+        self.assertEqual(s.claim("local_execute_plan/write")[0]["id"], "principal")  # el obrero ya tiene uno: desborda
+        self.assertEqual(s.route("local_agent")[0]["id"], "principal")  # planificar/revisar: el fuerte
+        self.assertEqual(s.claim("local_execute_plan/write", "principal")[0]["id"], "principal")  # lo pedido manda
+
     def test_claim_counts_the_measured_speed_of_each_model(self):
         """El rápido (M40 con un modelo grande) va 2,5× más lento que el fuerte: el fuerte aguanta cola de más antes
         de que compense mandarle algo al lento. Con igual velocidad queda el reparto de siempre."""

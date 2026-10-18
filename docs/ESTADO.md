@@ -1,7 +1,35 @@
 # Estado y traspaso — leer primero al retomar (también desde Claude Code en la web)
 
-Última actualización: 18/10/2026, tarde (limpieza, mejoras del jefe local, RAM de los servidores y barrido de modelos en la M40). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
+Última actualización: 19/10/2026 (madrugada): plan de la jornada larga con las dos GPU, reparto «dividir» y resultados del barrido de la M40 del 18/10. Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
 
+
+## ▶ 19/10/2026 — Jornada larga con las dos GPU (7:00 → ~17:00): plan y cómo lanzarlo
+**Lanzar:** doble clic en `Manana-banco.bat` (abre LocalHarness si no está, encola y arranca la cola; es repetible, no duplica) o
+`.venv\Scripts\python scripts\encolar_manana.py --aplicar --empezar`. Sin `--aplicar` solo simula. Usa la API, no la CLI.
+Las tandas nuevas se colocan DELANTE de lo pendiente de la noche. La 3060 es de Lucas fuera de la jornada; los contendientes
+nuevos ponen el servidor de la 3060 en el puerto 8083 (el 8080 es el de su otro proyecto).
+**Código nuevo a probar — reparto de encargos (`llama.routing`, contendiente `"reparto"`):** `cola` (lo de siempre: va el que
+antes acabe), `rol` (manda el papel, desborda si tarda más de `SPILL`=3× el mejor) y `dividir` (como `rol`, y las ESCRITURAS
+—`local_execute_plan/write|edit`, `local_write_file`, `local_edit_file`— van al «rápido»: el «fuerte» planifica, diagnostica y
+revisa). Motivo: con encargos de uno en uno el modelo más veloz ganaba siempre y el obrero casi no escribía (Coder-7B: 32 de
+215 encargos). `Server.routing` lee `LH_ROUTING`; lo pone el orquestador desde `llama.routing`; el banco lo cambia por
+contendiente (`reparto`) y lo restaura al acabar. Test: `test_dividir_sends_writes_to_the_worker_and_spills_over_when_it_queues`.
+**Cola de mañana (en este orden, `basico` = 22 casos salvo que se diga):**
+1. `par-gptoss-coder14b-cola` — gpt-oss en la M40 (fuerte) + Coder-14B en la 3060 (obrero), reparto por cola. CONTROL.
+2. `par-gptoss-coder14b-dividir` — igual con `dividir`. **El A/B del reparto: lo que decide si el cambio sirve.**
+3. `par-gptoss-qwen9b-dividir` — obrero Qwen3.5-9B (~40 tok/s en la 3060) con `dividir`.
+4. `m40-solo-gptoss` otra vez — 2.ª tirada de la referencia (90,6 % el 18/10) para medir cuánto es ruido (los mismos casos dan 0 y
+   100 según la tirada).
+5–6. `m40-solo-qwen3-coder-30b` y `m40-solo-qwen35-35b-a3b` — cribado de 8 casos cada uno, SOLO si están descargados (el script
+   salta lo que falte). Candidatos MoE de 3B activos; ver recomendación abajo.
+7. `m40-solo-gptoss` en `cuentas-claras` guiada (18 parches; Claude 96,6 %, locales 20–35 %) — la prueba difícil, referencia.
+8. `par-gptoss-coder14b-dividir` en `cuentas-claras` guiada — la misma con el reparto nuevo.
+Reglas durante la jornada: gasto de Claude cero; si una tanda va <70 % a los 6 casos o al doble de lento, pararla; mirar RAM
+(>15 GB libres, WS de cada llama-server <3 GB); cancelar solo la tarea si un caso pasa de 40 min.
+**Qué se espera aprender:** (a) si `dividir` sube a la pareja por encima de gpt-oss solo (90,6 %); (b) cuánto ruido hay entre
+tiradas; (c) si un MoE coder/3.5 de 3B activos supera a gpt-oss; (d) cuánto se pierde en la prueba larga.
+**Pendiente de la noche del 18/10:** `m40-solo-gptoss-profundo` (razonamiento alto, lento: ~8 min el primer caso), `gemma4-12b` y
+cribado de 6 casos de Qwen3-32B y Coder-32B (densos, ~8 tok/s). Si el PC se apaga, esas tandas quedan detrás de las de mañana.
 
 ## ▶ 18/10/2026 — Limpieza, tres mejoras al jefe local, RAM de los servidores y plan de la tarde en la M40
 **Hecho esta mañana (todo en commits, 370 tests OK):**

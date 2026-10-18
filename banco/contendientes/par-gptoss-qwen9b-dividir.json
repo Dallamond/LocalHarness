@@ -1,0 +1,46 @@
+{
+  "descripcion": "Reparto «dividir» con otro obrero: Qwen3.5-9B en la 3060 (más rápido que el Coder-14B, ~40 tok/s) escribe y gpt-oss en la M40 planifica y revisa.",
+  "agente": "Jefe local 2",
+  "reparto": "dividir",
+  "servidores": [
+    {
+      "id": "principal",
+      "name": "3060 obrero",
+      "port": 8083,
+      "device": "CUDA0",
+      "role": "rapido",
+      "thinking": "apagado"
+    },
+    {
+      "id": "m40",
+      "name": "M40 fuerte",
+      "port": 8081,
+      "device": "CUDA1",
+      "role": "fuerte",
+      "thinking": "normal"
+    }
+  ],
+  "modelos": {
+    "principal": {
+      "modelo": "Qwen3.5-9B-Q4_K_M",
+      "opciones": {
+        "ctx": 32768,
+        "flash_attn": "on"
+      }
+    },
+    "m40": {
+      "modelo": "gpt-oss-20b-UD-Q4_K_XL",
+      "opciones": {
+        "n_cpu_moe": 0,
+        "ctx": 32768
+      }
+    }
+  },
+  "pensamiento": {
+    "principal": "apagado",
+    "m40": "normal"
+  },
+  "horas": 12,
+  "minutos_tarea": 45,
+  "presupuesto": 1
+}

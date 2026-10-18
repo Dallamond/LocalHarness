@@ -233,7 +233,8 @@ def ajustar_llama(api: Callable, cont: dict, say: Callable[[str], None] = print)
     pensamiento = cont.get("pensamiento") or {}
     servidores = cont.get("servidores") or []
     apaga = any(v is None for v in (cont.get("modelos") or {}).values())
-    if not pensamiento and not apaga and not servidores:
+    reparto = cont.get("reparto")  # cola | rol | dividir (ver llama.routing)
+    if not pensamiento and not apaga and not servidores and not reparto:
         return None
     llama = api("GET", "/api/settings")["values"]["llama"]
     cambio: dict = {}
@@ -242,11 +243,14 @@ def ajustar_llama(api: Callable, cont: dict, say: Callable[[str], None] = print)
                              for s in servidores or llama.get("servers") or []]
     if apaga and llama.get("autostart_on_task"):
         cambio["autostart_on_task"] = False
+    if reparto and reparto != (llama.get("routing") or "cola"):
+        cambio["routing"] = reparto
     if not cambio:
         return None
     say("  ajustes de llama: " + ", ".join(f"{k}={v}" for k, v in pensamiento.items())
         + (" · servidores: " + ", ".join(f"{s['id']}@{s.get('device') or '-'}" for s in servidores) if servidores else "")
-        + (" · sin autoarranque" if "autostart_on_task" in cambio else ""))
+        + (" · sin autoarranque" if "autostart_on_task" in cambio else "")
+        + (f" · reparto {reparto}" if "routing" in cambio else ""))
     api("PUT", "/api/settings", {"llama": cambio})
     return {k: llama.get(k) for k in cambio}
 
