@@ -158,6 +158,10 @@ class DevicesTests(unittest.TestCase):
             self.assertNotIn("--cache-ram", mine)
             self.assertEqual(mine[mine.index("-cram") + 1], "0")
 
+    def test_trim_working_set_does_not_fail_on_a_dead_pid(self):
+        # 18/10: tras cargar, el modelo se quedaba entero en la RAM del proceso; se suelta, y si no se puede, no pasa nada
+        self.assertFalse(llama.trim_working_set(999_999))
+
     def test_keys_by_port(self):
         self.assertEqual(llama.port_of("http://127.0.0.1:8081/v1"), 8081)
         with unittest.mock.patch.dict(llama.KEYS, {8081: "k2"}, clear=True):

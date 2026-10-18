@@ -258,11 +258,16 @@ OPTION_FLAGS = {
     "cache_reuse": "--cache-reuse",
 }
 CACHE_RAM_MB = 1024  # tope de la caché de prompts en RAM de cada llama-server (el de llama.cpp es 8192)
-BOOL_FLAGS = {"mlock": "--mlock", "no_mmap": "--no-mmap", "cont_batching_off": "--no-cont-batching"}
+BOOL_FLAGS = {"cont_batching_off": "--no-cont-batching"}
+# llama-server b11379 ya no tiene --mlock ni --no-mmap (salen con «invalid argument» y el servidor no arranca): ahora es --load-mode.
+# Sin mmap el modelo se lee a un búfer y, subido a la GPU, la RAM se libera; con mmap el archivo entero queda
+# en la RAM del PC (18/10: 12 GB el gpt-oss y 7 GB el Qwen9B con todo en la M40)
+# OJO: en b11379 con la M40, `none` y `dio` se quedan colgados cargando (50 min a 100 % de un núcleo, 33 MB leídos)
+LOAD_MODES = {(False, False): None, (False, True): "mmap+mlock", (True, False): "none", (True, True): "mlock"}
 
 
 def option_args(opts: dict) -> list[str]:
-    """{'flash_attn': 'on', 'cache_k': 'q8_0', 'mlock': True} → ['-fa', 'on', '-ctk', 'q8_0', '--mlock']"""
+    """{'flash_attn': 'on', 'cache_k': 'q8_0', 'mlock': True} → ['-fa', 'on', '-ctk', 'q8_0', '--load-mode', 'mmap+mlock']"""
     out: list[str] = []
     for key, flag in OPTION_FLAGS.items():
         v = opts.get(key)
@@ -272,7 +277,32 @@ def option_args(opts: dict) -> list[str]:
     for key, flag in BOOL_FLAGS.items():
         if opts.get(key):
             out.append(flag)
+    mode = LOAD_MODES[(bool(opts.get("no_mmap")), bool(opts.get("mlock")))]
+    if mode:
+        out += ["--load-mode", mode]
     return out
+
+
+def trim_working_set(pid: int) -> bool:
+    """Windows: suelta de la RAM del proceso las páginas del modelo que ya están en la GPU. llama-server carga con
+    mmap y el archivo entero (11 GB el gpt-oss) se queda en su working set aunque los pesos ya estén en la tarjeta;
+    pasa a caché de archivo, que Windows recupera cuando otro lo pide. (`--load-mode none` y `dio` se cuelgan al
+    cargar en b11379, así que no es opción.) Devuelve si lo consiguió; en otros sistemas no hace nada."""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        k32.OpenProcess.restype = ctypes.c_void_p
+        h = k32.OpenProcess(0x0400 | 0x0100, False, pid)  # QUERY_INFORMATION | SET_QUOTA
+        if not h:
+            return False
+        try:
+            return bool(k32.K32EmptyWorkingSet(ctypes.c_void_p(h)))
+        finally:
+            k32.CloseHandle(ctypes.c_void_p(h))
+    except (OSError, AttributeError):
+        return False
 
 
 def serve_command(model: Path, port: int = 8080, ctx: int = 16384, ngl: int = 99,
@@ -370,6 +400,7 @@ class LlamaManager:
             if state == "ready" and self.ready_at is None:
                 self.ready_at = time.time()
                 self._remember_load_time(self.model, self.ready_at - (self.started_at or self.ready_at))
+                trim_working_set(self.proc.pid)
             text = self.log_text()
             return {"state": state, "model": self.model, "port": self.port, "pid": self.proc.pid, "device": self.device,
                     "started_at": self.started_at, "exit_code": code, "log": _tail(text),

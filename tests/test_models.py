@@ -163,7 +163,15 @@ class LaunchTests(unittest.TestCase):
         args = llama.option_args({"flash_attn": "on", "cache_k": "q8_0", "cache_v": "q8_0", "n_cpu_moe": 0,
                                   "mlock": True, "temp": 0.7, "threads": None, "top_k": 20})
         self.assertEqual(args, ["-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "--temp", "0.7", "--top-k", "20",
-                                "--mlock"])
+                                "--load-mode", "mmap+mlock"])
+        self.assertEqual(llama.option_args({"no_mmap": True}), ["--load-mode", "none"])
+        self.assertEqual(llama.option_args({"no_mmap": True, "mlock": True}), ["--load-mode", "mlock"])
+
+    def test_api_keeps_the_memory_options(self):
+        # 18/10: sin estas claves la API descartaba «Sin mmap» y el servidor seguía ocupando RAM
+        from localharness.api import clean_options
+        self.assertEqual(clean_options({"no_mmap": True, "mlock": True, "ctx": 8192, "inventada": 1}),
+                         {"no_mmap": True, "mlock": True, "ctx": 8192})
 
     def test_launch_merges_saved_and_dialog_options(self):
         store = Store(":memory:")

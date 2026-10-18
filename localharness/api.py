@@ -114,7 +114,7 @@ class DownloadIn(BaseModel):
     dest: str | None = None  # carpeta elegida al descargar (None = la de Ajustes o la primera de modelos)
 
 
-LAUNCH_KEYS = {"ctx", "ngl", "extra", *llama.OPTION_FLAGS, *llama.BOOL_FLAGS}
+LAUNCH_KEYS = {"ctx", "ngl", "extra", "no_mmap", "mlock", *llama.OPTION_FLAGS, *llama.BOOL_FLAGS}
 
 
 def clean_options(opts: dict[str, Any] | None) -> dict[str, Any]:
