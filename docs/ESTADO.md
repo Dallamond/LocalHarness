@@ -39,6 +39,11 @@ Baselines: `dos-en-m40` 73 % (tanda 2 de hoy); `m40-gptoss_3060-qwen9b` 75–81 
   `a-modulo-falta` 66,7, `j-serpiente` 80, `w-tareas` 80. Las tres mejoras del jefe (rondas idénticas, archivos intocables,
   nombres del encargo) no llegaron a activarse en esta tanda. Muy por encima de `dos-en-m40` (73 %): el segundo modelo en la
   misma tarjeta no ayuda, estorba.
+- `m40-solo-qwen3-30b` (Qwen3-30B-A3B, sin razonamiento): **PARADA a propósito tras 6 de 22 casos** (56,9 % de esos 6, 31 min;
+  gpt-oss en los mismos casos: ~93 %). ~30 tok/s (como gpt-oss) pero el doble de encargos por caso (22–25 frente a ~6–10) y
+  ~7 min por caso. `e-precio` 0 y `e-texto` 0: escribe sus propios tests mal (espera `108.9` con `strictEqual` sobre céntimos
+  enteros) y deja un módulo importado que no existe. Sin razonamiento no compensa su tamaño; una vuelta con razonamiento queda
+  como idea, no como prioridad.
 
 ## ▶ 17/10/2026 mediodía — Plan de la tarde (hasta las 22–23 h, cuando Lucas apague el PC)
 **Objetivo:** aprovechar la tarde para probar varios modelos, optimizar el uso de la M40 + 3060 y ver qué fallos sigue
