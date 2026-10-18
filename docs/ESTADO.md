@@ -48,6 +48,13 @@ Baselines: `dos-en-m40` 73 % (tanda 2 de hoy); `m40-gptoss_3060-qwen9b` 75–81 
   100). 13 tok/s en la M40 (la mitad que en la 3060) y ~9 min por caso. `e-precio` 0 (descartado en revisión), `e-texto` 0
   (su test espera `'H…'` donde la función da `'Hola…'`), `d-test-mal-contado` 0 (agotó los 15 min), `t-sin-inventar` 66,7. Un
   denso de 14B no compensa en una tarjeta lenta: los MoE leen pocos pesos por token.
+- `m40-solo-qwen9b` (Qwen3.5-9B solo, sin razonamiento, ~21 tok/s): **71,2 %**, 13/22 al 100 %, 137 min de parche (gpt-oss: 90,6 %
+  en 68 min). Los 8 primeros casos (simples) iban a 94,8 %, luego se hunde en los largos: `a-modulo-falta` 0 (el arreglo mecánico
+  no cubre `Identifier 'crearReloj' has already been declared` cuando es un import + declaración local del mismo nombre),
+  `w-propinas` 0 (tests; salió «paro la escalera»), `j-serpiente` 0 y `j-tres-en-raya` 0 (descartados en revisión),
+  `w-tareas` 0 (40 min), `m-paso` 33,3, `m-carrito` 75, `t-valores` 75, `t-sin-inventar` 83,3. «Vuelto a su versión anterior» y
+  «no existe en ningún archivo» no salieron en ningún caso. **Lección: el 9B solo vale para tareas de un archivo; los casos de
+  varios archivos y las webs/juegos piden el modelo grande.**
 
 ## ▶ 17/10/2026 mediodía — Plan de la tarde (hasta las 22–23 h, cuando Lucas apague el PC)
 **Objetivo:** aprovechar la tarde para probar varios modelos, optimizar el uso de la M40 + 3060 y ver qué fallos sigue
