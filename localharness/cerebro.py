@@ -503,6 +503,39 @@ def fix_jest(text: str) -> tuple[str, list[str]]:
     return new, notes
 
 
+FENCE_LINE = re.compile(r"^[ \t]*```[\w-]*[ \t]*\r?\n?", re.M)
+
+
+def fix_fences(text: str) -> tuple[str, bool]:
+    """Líneas ``` (con o sin etiqueta de lenguaje) pegadas dentro de un archivo de código: el 20/10 `src/texto.js`
+    de `e-texto` quedó con ```javascript arriba (`Unexpected identifier 'javascript'`). Se quitan esas líneas."""
+    new = FENCE_LINE.sub("", text)
+    return new, new != text
+
+
+def restore_lost_exports(text: str, old: str, wanted: set[str]) -> tuple[str, list[str]]:
+    """Funciones que el archivo tenía en el último commit, ya no están y alguien las importa (el 20/10 el modelo
+    reescribió `src/resumen.js` dejando solo `resumenEn` y perdió `resumen`, que «ya existía y no cambia»): se
+    vuelven a añadir al final, tal como estaban, exportadas."""
+    have = {m.group(2) for m in FUNC_DECL.finditer(text)} | set(exports_of(text))
+    back, names = [], []
+    for m in FUNC_DECL.finditer(old):
+        name = m.group(2)
+        if name in have or name not in wanted or name in names:
+            continue
+        brace = old.find("{", m.end())
+        end = _block_end(old, brace) if brace >= 0 else None
+        if end is None:
+            continue
+        body = old[m.start():end].rstrip()
+        body = body.lstrip()
+        back.append(body if m.group(1) else "export " + body)
+        names.append(name)
+    if not back:
+        return text, []
+    return text.rstrip("\n") + "\n\n" + "\n\n".join(back) + "\n", names
+
+
 STRAY_NAME = re.compile(r"^(?:ejemplo|example|sample|demo|prueba)\d*[._-]", re.I)
 
 
@@ -990,11 +1023,34 @@ class Cerebro(Boss):
         return problems
 
     # --- arreglos sin modelo
+    def imported_from(self, rel: str) -> set[str]:
+        """Los nombres que el resto de archivos JS (tests incluidos) importan de `rel`."""
+        target = (self.root / rel).resolve()
+        names: set[str] = set()
+        for p in [*self.root.rglob("*.js"), *self.root.rglob("*.mjs")]:
+            if any(part in SKIP_DIRS for part in p.relative_to(self.root).parts):
+                continue
+            try:
+                text = p.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for m in IMPORT_NAMED.finditer(text):
+                if p.parent.joinpath(m.group(4)).resolve() == target:
+                    names |= {s.split(" as ")[0].strip() for s in m.group(2).split(",") if s.strip()}
+        return names
+
     def mechanical(self) -> list[str]:
         notes: list[str] = fix_stray_tests(self.root, self.changed(), getattr(self, "task_text", ""))
         changed = [p for p in self.changed() if Path(p).suffix in JS]
         if not changed:
             return notes
+        for rel in changed:
+            path = self.root / rel
+            text = path.read_text(encoding="utf-8", errors="replace")
+            new, fenced = fix_fences(text)
+            if fenced:
+                path.write_text(new, encoding="utf-8", newline="\n")
+                notes.append(f"{rel}: fuera las líneas ``` pegadas en el código")
         for rel in changed:
             if is_test_path(rel):
                 path = self.root / rel
@@ -1006,8 +1062,17 @@ class Cerebro(Boss):
                 continue
             path = self.root / rel
             text = path.read_text(encoding="utf-8", errors="replace")
-            new, twice = fix_duplicate_functions(text)
+            new = text
+            old = self.head_bytes(rel)
+            lost: list[str] = []
+            if old is not None:
+                new, lost = restore_lost_exports(new, old.decode("utf-8", errors="replace"), self.imported_from(rel))
+            new, twice = fix_duplicate_functions(new)
             new, removed = fix_duplicate_exports(new)
+            if lost:
+                path.write_text(new, encoding="utf-8", newline="\n")
+                notes.append(f"{rel}: recuperadas del último commit {', '.join(lost)} (el modelo las había perdido y "
+                             "se importan)")
             if twice or removed:
                 path.write_text(new, encoding="utf-8", newline="\n")
             if twice:
@@ -1448,6 +1513,14 @@ class Cerebro(Boss):
                 out = self.verify()
             elif d and d.get("culpable") != "test" and not is_test_path(d["archivo"]):
                 code_blames += 1
+        if out and check_failed(out) and not self.late():
+            # 20/10 (w-propinas): la última ronda reescribió el test sin el import de node:test y, al no haber otra
+            # vuelta de la escalera, el arreglo mecánico no llegó a verlo
+            fixed = self.mechanical()
+            if fixed:
+                self.say("Arreglo mecánico tras la última ronda: " + "; ".join(fixed)[:300])
+                self.notes.append("- Arreglo mecánico tras la última ronda (sin modelo): " + "; ".join(fixed))
+                out = self.verify()
         green = not (out and check_failed(out))
         debt: list[str] = []
         if not green and self.changed() and not self.late():

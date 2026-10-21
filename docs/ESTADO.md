@@ -1,23 +1,49 @@
 # Estado y traspaso — leer primero al retomar (también desde Claude Code en la web)
 
-Última actualización: 18/10/2026 23:36 (cierre del día: ver «CIERRE 18/10»). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
+Última actualización: 21/10/2026 22:50 (jornada de pruebas del 21/10: ver «21/10/2026»). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
 
 
-## ▶ 21/10/2026 — Paquete de arreglos mecánicos y cola de la mañana (M40 sola; SIN commit aún)
-**Push hecho** (`d4615cf` y `134d29b` ya en `origin/main`). **Código nuevo en el árbol (378 tests OK, LocalHarness reiniciado 09:35):**
-- `cerebro.fix_jest`: tests estilo Jest sin importar → `import … from 'node:test'` y `expect(…).toBe/toEqual/toThrow/…` traducido
-  a `assert` (si un matcher no se sabe traducir se deja y solo se importa). Ataca `w-propinas`, `w-tareas` (mismo fallo: `describe`/`expect`
-  en `tests/main.test.mjs` y `tests/vista.test.mjs`) y `j-tres-en-raya`.
-- `cerebro.fix_stray_tests`: `x.test.mjs` suelto en la raíz → `tests/` (o fuera si ya existe); `tests/ejemplo*.test.mjs` y `tests/README.md`
-  que la tarea no pide → fuera. Causa real de `v-divisas` (20/10): 4 tests en la raíz importaban `./resumen.js`, que no existe.
-- `cerebro.fix_import_clash` (la rama `arreglo-declaracion-import` del worktree `../LocalHarness-wt` ya está aplicada aquí; se puede borrar).
-- Contendientes con `roles` (pensamiento por papel): `ajustar_llama` los pone en `llama.jefe_roles` y el orquestador los mezcla sobre
-  `config.roles` del agente; al acabar vuelven a `{}`. Nuevos: `m40-solo-gptoss-plan-medio` (planificar effort medium) y
-  `m40-solo-gptoss-diag-alto` (diagnosticar effort high, 6000 tokens).
-**Cola (`scripts/encolar_hoy.py`, en este orden, `basico` 22 casos salvo que se diga):** `m40-solo-gptoss` ×2 tiradas con el código nuevo
-(antes 90,6 y 73,6 %) → `diag-alto` → `plan-medio` → `m40-solo-qwen35-35b-a3b` → `m40-solo-gptoss` en `cuentas-claras` guiada (31,0 %).
-Se compara por los casos que cada arreglo ataca (`w-propinas`, `w-tareas`, `j-tres-en-raya`, `v-divisas`, `a-modulo-falta`), no por la media.
-**Pendiente con las dos GPU:** A/B de `dividir`; `diag-alto`/`plan-medio` solo valen si la base nueva es estable (ruido ~17 puntos con n=1).
+## ▶ 21/10/2026 — Jornada de pruebas: arreglos mecánicos, roles por contendiente y A/B de `dividir`
+**Push hecho** (`d4615cf`, `134d29b` y luego `a7cbc80` en `origin/main`). Tres arreglos más escritos por la noche (sin reiniciar,
+**aún sin commit ni en el servidor vivo**; se aplican al reiniciar al acabar la cola, 36 tests de `test_cerebro` OK).
+**Código de la mañana (`a7cbc80`, en el servidor desde las 09:35):**
+- `cerebro.fix_jest`: tests estilo Jest sin importar → `import … from 'node:test'` y `expect(…)` traducido a `assert`.
+- `cerebro.fix_stray_tests`: `x.test.mjs` suelto en la raíz → `tests/` (o fuera si ya existe); `tests/ejemplo*` y `tests/README.md` que la
+  tarea no pide → fuera. Causa de `v-divisas` el 20/10.
+- `cerebro.fix_import_clash` (la rama `arreglo-declaracion-import` del worktree `../LocalHarness-wt` está aplicada: se puede borrar).
+- Contendientes con `roles` (pensamiento por papel): `ajustar_llama` los pone en `llama.jefe_roles`, el orquestador los mezcla sobre
+  `config.roles` y al acabar vuelven a `{}`. Nuevos: `m40-solo-gptoss-plan-medio` y `m40-solo-gptoss-diag-alto`.
+**Código de la noche (sin commit):**
+- `cerebro.fix_fences`: quita líneas ``` pegadas en archivos JS (`e-texto`: «Unexpected identifier 'javascript'»).
+- `cerebro.restore_lost_exports` + `Cerebro.imported_from`: si el modelo reescribe un módulo y pierde una función que existía en HEAD y
+  alguien importa, se vuelve a añadir tal cual (`v-divisas`: perdió `resumen`; dio 0 en 4 de las 7 tandas con gpt-oss del día).
+- `Cerebro.run`: una pasada mecánica más tras la última ronda de la escalera (`w-propinas` 20/10: el test reescrito en la última ronda
+  volvió a quedar sin `import … from 'node:test'` y ya no hubo quien lo viera).
+
+**Resultados de hoy (`basico`, 22 casos, nota media del examen oculto; ruido ~17 puntos con n=1):**
+| Tanda | Media | Al 100 |
+|---|---|---|
+| `m40-solo-gptoss` tirada 1 | 80,0 % | 14 |
+| `m40-solo-gptoss` tirada 2 | 70,2 % | 12 |
+| `m40-solo-gptoss-diag-alto` | 87,6 % | 14 |
+| `m40-solo-gptoss-plan-medio` | 79,2 % | 13 |
+| `par-gptoss-coder14b-cola` | 81,1 % | 14 |
+| `par-gptoss-coder14b-dividir` | 81,7 % | 14 |
+| `par-gptoss-qwen9b-dividir` | 76,7 % | 14 |
+| **`m40-solo-qwen35-35b-a3b`** | **96,7 % (20 de 22 casos al escribir esto)** | 19 |
+**Lecturas:**
+- **Qwen3.5-35B-A3B es el mejor contendiente con diferencia**: 100 en todo salvo `m-paso` (33) hasta el caso 20. Es lo único del día fuera
+  del ruido. Candidato a jefe/obrero principal; falta confirmar en `cuentas-claras` (prueba larga) y con una segunda tirada.
+- **`dividir` no aporta frente a `cola`** (81,7 vs 81,1 con Coder-14B; 76,7 con Qwen9B): empate dentro del ruido, se deja `cola`.
+- **`diag-alto` y `plan-medio` no se separan de la base** (87,6 y 79,2 frente a 80,0 y 70,2): hacen falta repeticiones; no cambiar los roles por defecto.
+- Casos que siguen fallando con gpt-oss: `v-divisas` (0 en 4 de 7 tandas, ver `restore_lost_exports`), `t-valores` (0–75: el modelo escribe valores
+  esperados mal), `d-import-mal` (reescribe `src/calc.js` con nombres inventados), `j-serpiente`/`m-carrito` (40–80).
+- Los arreglos de la mañana sí mejoran donde atacan (`w-propinas` 100 en 6 de 7 tandas con gpt-oss, `j-tres-en-raya` 100 en 6 de 7, `a-modulo-falta`
+  100 en 3 de 7), pero la 2.ª tirada de gpt-oss mostró los tres huecos que arreglan los cambios de la noche.
+**Cola al cierre:** `m40-solo-qwen35-35b-a3b` terminando (`w-tareas`) → `m40-solo-gptoss` en `cuentas-claras` guiada (31,0 % de referencia, varias horas).
+**Siguiente:** reiniciar LocalHarness al acabar la cola, commit de los tres arreglos y repetir `m40-solo-gptoss` en `basico` (mirar `v-divisas`,
+`w-propinas`, `e-texto`); una 2.ª tirada de Qwen35; con las dos GPU libres, Qwen35 en la M40 + Coder-14B en la 3060 por `cola`. `w-tareas`
+(tirada 2 de gpt-oss, 0 tras 4 reescrituras sin cambios) sin analizar; `gemma4-12b` sigue pendiente de mirar su log.
 
 ## ▶ 20/10/2026 — Retomado SOLO en la M40 (la 3060 es de Lucas para otro proyecto)
 **Cola retomada a las ~14:40** (servidor reabierto; el PC/servidor se había cortado el 19/10 a las 23:09 con `gemma4-12b` en el caso

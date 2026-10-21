@@ -11,7 +11,7 @@ from pathlib import Path
 from localharness.boss import SYSTEM_REVIEW, SYSTEM_SELECT
 from localharness.cerebro import (DEBT, PREV_MARK, SYSTEM_DIAG, Cerebro, api_map, exports_of, first_failure, fix_duplicate_exports,
                                   fix_duplicate_functions, fix_import_clash, fix_imports, fix_jest, fix_missing_imports,
-                                  fix_stray_tests,
+                                  fix_fences, fix_stray_tests, restore_lost_exports,
                                   in_order)
 from localharness.mcp_local import SYSTEM_PLAN, SYSTEM_WRITE, Server
 
@@ -244,6 +244,21 @@ class PiezasTests(unittest.TestCase):
         self.assertTrue((root / "tests" / "c.test.mjs").exists())
         self.assertEqual(len(notes), 4)
 
+    def test_vallas_pegadas_en_el_codigo(self):
+        new, hit = fix_fences("```javascript\nexport function f() {}\n```\n")
+        self.assertTrue(hit)
+        self.assertEqual(new, "export function f() {}\n")
+        self.assertFalse(fix_fences("export const a = 1;\n")[1])
+
+    def test_recupera_exports_perdidos(self):
+        old = "export function resumen(a) {\n  return a.map((x) => x);\n}\n\nexport function otra() {}\n"
+        text = "export function resumenEn(a) {\n  return a;\n}\n"
+        new, back = restore_lost_exports(text, old, {"resumen"})
+        self.assertEqual(back, ["resumen"])
+        self.assertIn("export function resumen(a) {\n  return a.map((x) => x);\n}", new)
+        self.assertNotIn("otra", new)  # nadie la importa
+        self.assertEqual(restore_lost_exports(new, old, {"resumen"})[1], [])  # ya está
+
     def test_orden_de_bloques(self):
         # el plan del parche 2: el CHANGELOG espera a los tests (5, 6), que van detrás del código
         blocks = [{"id": "1", "path": "src/a.js", "after": []}, {"id": "7", "path": "CHANGELOG.md", "after": ["1", "5", "6"]},
@@ -283,6 +298,25 @@ class PensamientoTests(unittest.TestCase):
         self.assertEqual(calls[1]["chat_template_kwargs"]["enable_thinking"], False)  # el reintento, sin pensar
         self.assertEqual(c.s.server_id, "m40")
         self.assertEqual(c.s.overrides, {})  # no se queda puesto para los obreros
+
+    def test_mecanico_recupera_export_y_quita_vallas(self):
+        root = repo()
+        (root / "src").mkdir(exist_ok=True)
+        (root / "tests").mkdir(exist_ok=True)
+        (root / "src" / "resumen.js").write_text("export function resumen(a) {\n  return a.length;\n}\n", encoding="utf-8")
+        (root / "src" / "texto.js").write_text("export const t = 1;\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base"], cwd=root, check=True)
+        (root / "src" / "resumen.js").write_text("export function resumenEn(a) {\n  return a;\n}\n", encoding="utf-8")
+        (root / "src" / "texto.js").write_text("```javascript\nexport const t = 2;\n```\n", encoding="utf-8")
+        (root / "tests" / "resumen.test.mjs").write_text(
+            "import { resumen, resumenEn } from '../src/resumen.js';\n", encoding="utf-8")
+        c = Cerebro(Server({"LH_ROOT": str(root), "LH_LOCAL_SERVERS": json.dumps([{"id": "principal", "url": "http://x",
+                                                                                      "role": "fuerte"}])}))
+        notes = c.mechanical()
+        self.assertIn("export function resumen(a)", (root / "src" / "resumen.js").read_text(encoding="utf-8"))
+        self.assertEqual((root / "src" / "texto.js").read_text(encoding="utf-8"), "export const t = 2;\n")
+        self.assertTrue(any("recuperadas" in n for n in notes) and any("```" in n for n in notes))
 
     def test_el_jefe_uno_no_cambia(self):
         self.assertEqual(Cerebro.role_of("planificar (Arreglo 1)"), "planificar")

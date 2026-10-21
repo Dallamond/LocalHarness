@@ -13,6 +13,11 @@ abajo) manda sobre esta tabla. Ver también [MODELOS-A-PROBAR.md](MODELOS-A-PROB
 | Qwen3.5-9B Q4_K_M | 3060 | **~46 tok/s** (banco del 09/10) | 18–35 tok/s |
 | Qwen3.5-4B Q4_K_M | 1060 | **~25 tok/s**; 40 encargos y 0 fallos con Claude dirigiendo | 15–30 tok/s |
 
+- **M40, banco `basico` con el Jefe local 2 (21/10, nota media del examen oculto, ruido ~17 puntos con n=1):**
+  Qwen3.5-35B-A3B solo en la M40 **96,7 %** (20 de 22 casos al anotarlo, 19 al 100: el mejor con diferencia); gpt-oss-20b
+  solo 80,0 y 70,2 % (dos tiradas), con `diag-alto` 87,6 %, con `plan-medio` 79,2 %; gpt-oss + Coder-14B (3060) 81,1 % por `cola`
+  y 81,7 % por `dividir`; gpt-oss + Qwen3.5-9B por `dividir` 76,7 %. El reparto `dividir` no mejora a `cola`. Detalle en
+  [ESTADO.md](ESTADO.md).
 - Los Qwen3.5 razonan sin tope si su servidor está en «normal»: el `effort` del jefe solo lo entiende gpt-oss. En
   el banco, `pensamiento: apagado` (o un tope por papel en `cerebro.ROLES`).
 - gpt-oss necesita `reasoning_effort` bajo o entra en bucle.
