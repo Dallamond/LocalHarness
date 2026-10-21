@@ -144,6 +144,18 @@ class BancoTest(unittest.TestCase):
         self.assertIs(cambio["autostart_on_task"], False)
         self.assertEqual(previo, {"servers": llama["servers"], "autostart_on_task": True})
 
+    def test_ajustar_llama_con_roles_del_jefe(self):
+        llama = {"autostart_on_task": True, "servers": [{"id": "principal"}], "jefe_roles": {}}
+        calls = []
+
+        def api(method, path, body=None):
+            calls.append((method, path, body))
+            return {"values": {"llama": llama}}
+        roles = {"planificar": {"effort": "medium"}}
+        previo = banco.ajustar_llama(api, {"modelos": {"principal": "X"}, "roles": roles}, say=lambda _: None)
+        self.assertEqual(calls[-1][2]["llama"]["jefe_roles"], roles)
+        self.assertEqual(previo, {"jefe_roles": {}})  # al acabar vuelve a vacío
+
     def test_ajustar_llama_con_servidores_propios(self):
         """Dos modelos en la M40 = dos servidores con el mismo `device`; la lista de antes vuelve al acabar."""
         antes = [{"id": "principal", "device": "CUDA0", "thinking": "normal"},

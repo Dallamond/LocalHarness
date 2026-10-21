@@ -56,7 +56,10 @@ DEFAULTS: dict[str, Any] = {
               "profiles": {}, "topology": "separado", "embed_url": "", "auto_swap": False, "joined_helpers": False,
               # routing: cómo se reparten los encargos entre los servidores: cola (el que antes acabe) | rol (manda el
               # papel, con desborde) | dividir (como rol, y las escrituras van al «rápido»: planifica el fuerte, escribe el obrero)
-              "routing": "cola"},
+              "routing": "cola",
+              # jefe_roles: {papel: {effort, pensar, max_tokens, tipo, servidor}} que manda sobre `config.roles` del agente
+              # jefe local mientras dura (lo pone el banco por contendiente; vacío = lo del agente)
+              "jefe_roles": {}},
     # Valores que propone el formulario de nuevo agente
     "agent_defaults": {"provider": "claude", "model": "sonnet", "role": "trabajador", "max_turns": 10,
                        "max_budget_usd": 1.0},

@@ -234,7 +234,8 @@ def ajustar_llama(api: Callable, cont: dict, say: Callable[[str], None] = print)
     servidores = cont.get("servidores") or []
     apaga = any(v is None for v in (cont.get("modelos") or {}).values())
     reparto = cont.get("reparto")  # cola | rol | dividir (ver llama.routing)
-    if not pensamiento and not apaga and not servidores and not reparto:
+    roles = cont.get("roles")  # {papel: {effort, pensar, max_tokens, tipo, servidor}}: pensamiento del jefe por papel
+    if not pensamiento and not apaga and not servidores and not reparto and not roles:
         return None
     llama = api("GET", "/api/settings")["values"]["llama"]
     cambio: dict = {}
@@ -245,12 +246,15 @@ def ajustar_llama(api: Callable, cont: dict, say: Callable[[str], None] = print)
         cambio["autostart_on_task"] = False
     if reparto and reparto != (llama.get("routing") or "cola"):
         cambio["routing"] = reparto
+    if roles:
+        cambio["jefe_roles"] = roles
     if not cambio:
         return None
     say("  ajustes de llama: " + ", ".join(f"{k}={v}" for k, v in pensamiento.items())
         + (" · servidores: " + ", ".join(f"{s['id']}@{s.get('device') or '-'}" for s in servidores) if servidores else "")
         + (" · sin autoarranque" if "autostart_on_task" in cambio else "")
-        + (f" · reparto {reparto}" if "routing" in cambio else ""))
+        + (f" · reparto {reparto}" if "routing" in cambio else "")
+        + (f" · roles {json.dumps(roles, ensure_ascii=False)}" if roles else ""))
     api("PUT", "/api/settings", {"llama": cambio})
     return {k: llama.get(k) for k in cambio}
 

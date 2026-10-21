@@ -10,7 +10,9 @@ from pathlib import Path
 
 from localharness.boss import SYSTEM_REVIEW, SYSTEM_SELECT
 from localharness.cerebro import (DEBT, PREV_MARK, SYSTEM_DIAG, Cerebro, api_map, exports_of, first_failure, fix_duplicate_exports,
-                                  fix_duplicate_functions, fix_imports, fix_missing_imports, in_order)
+                                  fix_duplicate_functions, fix_import_clash, fix_imports, fix_jest, fix_missing_imports,
+                                  fix_stray_tests,
+                                  in_order)
 from localharness.mcp_local import SYSTEM_PLAN, SYSTEM_WRITE, Server
 
 NODE = shutil.which("node")
@@ -179,6 +181,68 @@ class PiezasTests(unittest.TestCase):
         if NODE:
             ok = subprocess.run([NODE, "--input-type=module", "-e", new], capture_output=True)
             self.assertEqual(ok.returncode, 0, ok.stderr)
+
+    def test_import_y_funcion_local_con_el_mismo_nombre(self):
+        # a-modulo-falta: el modelo crea reloj.js y además deja crearReloj escrita dentro de juego.js
+        root = Path(tempfile.mkdtemp())
+        (root / "src").mkdir()
+        (root / "src" / "reloj.js").write_text("export function crearReloj(s) { return { segundos: s }; }\n"
+                                               "export function tic(r) { return r; }\n")
+        exported = {"src/reloj.js": {"crearReloj": "function", "tic": "function"}, "src/juego.js": {}}
+        text = ('import { crearReloj, tic } from "./reloj.js";\n\nfunction crearReloj(s) {\n  return { s: "}" };\n}\n\n'
+                'export function crearPartida(s) { return crearReloj(s); }\n')
+        new, notes = fix_import_clash(root, "src/juego.js", text, exported)
+        self.assertEqual(new.count("function crearReloj"), 0)
+        self.assertIn('import { crearReloj, tic } from "./reloj.js";', new)
+        self.assertIn("export function crearPartida", new)
+        self.assertIn("queda la del módulo", notes[0])
+        # el módulo no exporta el nombre: se quita del import y queda la local
+        exported["src/reloj.js"] = {"tic": "function"}
+        new, notes = fix_import_clash(root, "src/juego.js", text, exported)
+        self.assertIn('import { tic } from "./reloj.js";', new)
+        self.assertEqual(new.count("function crearReloj"), 1)
+        # sin choque: no se toca
+        ok = 'import { tic } from "./reloj.js";\nfunction otra() {}\n'
+        self.assertEqual(fix_import_clash(root, "src/juego.js", ok, exported), (ok, []))
+    def test_jest_a_node_test(self):
+        text = ("describe('tareas', () => {\n  test('suma', () => {\n    expect(anadir([], ' a ', 1)).toEqual([{ id: 1 }]);\n"
+                "    expect(contar(l).total).toBe(2);\n    expect(() => anadir([], '', 1)).toThrow('texto vacío');\n"
+                "    expect(l).not.toContain(3);\n    expect(f(a, b)).toBeGreaterThan(0);\n  });\n});\n")
+        new, notes = fix_jest(text)
+        self.assertNotIn("expect(", new)
+        self.assertIn("import { describe, test } from 'node:test';", new)
+        self.assertIn("import assert from 'node:assert/strict';", new)
+        self.assertIn("assert.deepStrictEqual(anadir([], ' a ', 1), [{ id: 1 }]);", new)
+        self.assertIn("assert.strictEqual(contar(l).total, 2);", new)
+        self.assertIn("assert.throws(() => anadir([], '', 1), (e) => e.message.includes('texto vacío'));", new)
+        self.assertIn("assert.ok(!l.includes(3));", new)
+        self.assertIn("assert.ok((f(a, b)) > 0);", new)
+        # ya con node:test importado: se añade lo que falta; un matcher raro deja los expect como están
+        mixto = "import { test } from 'node:test';\ndescribe('x', () => { expect(a).toHaveProperty('b'); });\n"
+        new, _ = fix_jest(mixto)
+        self.assertIn("import { describe, test } from 'node:test';", new)
+        self.assertIn("expect(a).toHaveProperty('b')", new)
+        # un test que ya importa todo no se toca
+        ok = "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('a', () => assert.ok(1));\n"
+        self.assertEqual(fix_jest(ok), (ok, []))
+
+    def test_tests_sueltos_e_inventados(self):
+        root = repo()
+        (root / "tests").mkdir(exist_ok=True)
+        (root / "tests" / "a.test.mjs").write_text("x\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base"], cwd=root, check=True)
+        files = ["a.test.mjs", "b.test.mjs", "tests/ejemplo2.test.mjs", "tests/README.md", "tests/c.test.mjs"]
+        for rel in files:
+            (root / rel).write_text("y\n", encoding="utf-8")
+        notes = fix_stray_tests(root, files, "Pide tests/c.test.mjs")
+        self.assertFalse((root / "a.test.mjs").exists())
+        self.assertFalse((root / "b.test.mjs").exists())
+        self.assertTrue((root / "tests" / "b.test.mjs").exists())
+        self.assertFalse((root / "tests" / "ejemplo2.test.mjs").exists())
+        self.assertFalse((root / "tests" / "README.md").exists())
+        self.assertTrue((root / "tests" / "c.test.mjs").exists())
+        self.assertEqual(len(notes), 4)
 
     def test_orden_de_bloques(self):
         # el plan del parche 2: el CHANGELOG espera a los tests (5, 6), que van detrás del código

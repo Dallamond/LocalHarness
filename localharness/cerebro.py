@@ -319,6 +319,224 @@ def fix_duplicate_functions(text: str) -> tuple[str, list[str]]:
     return text, removed
 
 
+def fix_import_clash(root: Path, rel: str, text: str, exported: dict[str, dict[str, str]]) -> tuple[str, list[str]]:
+    """Un nombre importado Y declarado como función en el mismo archivo (`Identifier 'crearReloj' has already been
+    declared`): si el módulo importado lo exporta, se quita la función local (manda la del módulo); si no, se quita
+    el nombre del import. Variables y clases repetidas no se tocan: las ve el depurador."""
+    funcs = {m.group(2): m for m in FUNC_DECL.finditer(text) if not m.group(1)}
+    if not funcs:
+        return text, []
+    edits: list[tuple[int, int, str]] = []  # (desde, hasta, texto nuevo) sobre `text`
+    notes: list[str] = []
+    for m in IMPORT_NAMED.finditer(text):
+        indent, names, quote, spec = m.groups()
+        try:
+            target = (root / rel).parent.joinpath(spec).resolve().relative_to(root.resolve()).as_posix()
+        except ValueError:
+            continue
+        have = exported.get(target)
+        if have is None:
+            continue  # el módulo no existe: lo trata `missing_module`
+        keep, changed = [], False
+        for s in (x.strip() for x in names.split(",") if x.strip()):
+            decl = funcs.get(s.split(" as ")[-1].strip())
+            if decl is None:
+                keep.append(s)
+            elif s.split(" as ")[0].strip() in have:
+                end = _block_end(text, text.index("{", decl.end()))
+                if end is None:
+                    keep.append(s)
+                    continue
+                edits.append((decl.start(), end, ""))
+                keep.append(s)
+                notes.append(f"{rel}: {decl.group(2)} estaba importada de {spec} y declarada aquí: queda la del módulo")
+            else:
+                changed = True
+                notes.append(f"{rel}: fuera {decl.group(2)} del import de {spec} (no la exporta y ya está declarada aquí)")
+        if changed:
+            edits.append((m.start(), m.end(),
+                          f"{indent}import {{ {', '.join(keep)} }} from {quote}{spec}{quote};" if keep else ""))
+    for a, b, new in sorted(edits, reverse=True):
+        text = text[:a] + new + (text[b:].lstrip("\n") if not new else text[b:])
+    return text, notes
+
+
+def _close(text: str, start: int) -> int | None:
+    """Fin (exclusivo) del paréntesis/llave/corchete que abre en `start`, saltando cadenas."""
+    depth, i, n = 0, start, len(text)
+    while i < n:
+        c = text[i]
+        if c in "\"'`":
+            i += 1
+            while i < n and text[i] != c:
+                i += 2 if text[i] == "\\" else 1
+        elif c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return None
+
+
+def _split_args(text: str) -> list[str]:
+    parts, depth, cur, i, n = [], 0, "", 0, len(text)
+    while i < n:
+        c = text[i]
+        if c in "\"'`":
+            j = i + 1
+            while j < n and text[j] != c:
+                j += 2 if text[j] == "\\" else 1
+            cur += text[i:j + 1]
+            i = j + 1
+            continue
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        if c == "," and depth == 0:
+            parts.append(cur.strip())
+            cur = ""
+        else:
+            cur += c
+        i += 1
+    if cur.strip():
+        parts.append(cur.strip())
+    return parts
+
+
+EXPECT = re.compile(r"(?<![\w$.])expect\(")
+EXPECT_MATCHER = re.compile(r"\s*\.\s*(?:(not)\s*\.\s*)?(\w+)\s*\(")
+NODE_TEST_IMPORT = re.compile(r"import[ \t]*\{([^}]*)\}[ \t]*from[ \t]*['\"]node:test['\"][ \t]*;?")
+
+
+def _assertion(a: str, matcher: str, args: list[str], neg: bool) -> str | None:
+    """Un `expect(a).matcher(args)` de Jest como llamada a `assert` de node:test; None si no se sabe traducir."""
+    def p(x: str) -> str:
+        return x if re.fullmatch(r"[\w$.]+", x) else f"({x})"
+    b = args[0] if args else ""
+    cmp = {"toBeGreaterThan": (">", "<="), "toBeGreaterThanOrEqual": (">=", "<"),
+           "toBeLessThan": ("<", ">="), "toBeLessThanOrEqual": ("<=", ">")}
+    if matcher == "toBe":
+        return f"assert.{'notStrictEqual' if neg else 'strictEqual'}({a}, {b})"
+    if matcher in ("toEqual", "toStrictEqual"):
+        return f"assert.{'notDeepStrictEqual' if neg else 'deepStrictEqual'}({a}, {b})"
+    if matcher in ("toBeTruthy", "toBeFalsy"):
+        return f"assert.ok({'!' if (matcher == 'toBeFalsy') != neg else ''}{p(a)})"
+    if matcher in ("toBeNull", "toBeUndefined"):
+        return f"assert.{'notStrictEqual' if neg else 'strictEqual'}({a}, {matcher[6:].lower()})"
+    if matcher == "toBeDefined":
+        return f"assert.{'strictEqual' if neg else 'notStrictEqual'}({a}, undefined)"
+    if matcher == "toContain" and b:
+        return f"assert.ok({'!' if neg else ''}{p(a)}.includes({b}))"
+    if matcher == "toHaveLength" and b:
+        return f"assert.{'notStrictEqual' if neg else 'strictEqual'}({p(a)}.length, {b})"
+    if matcher in cmp and b:
+        return f"assert.ok({p(a)} {cmp[matcher][1 if neg else 0]} {p(b)})"
+    if matcher == "toBeCloseTo" and b:
+        digits = args[1] if len(args) > 1 else "2"
+        return f"assert.ok({'!' if neg else ''}(Math.abs({p(a)} - {p(b)}) < 10 ** -{p(digits)} / 2))"
+    if matcher == "toBeInstanceOf" and b:
+        return f"assert.ok({'!' if neg else ''}({p(a)} instanceof {p(b)}))"
+    if matcher == "toMatch" and b:
+        test = f"{b}.test({a})" if b.startswith("/") else f"{p(a)}.includes({b})"
+        return f"assert.ok({'!' if neg else ''}{test})"
+    if matcher == "toThrow":
+        if neg:
+            return f"assert.doesNotThrow({a})"
+        if not b:
+            return f"assert.throws({a})"
+        if b[0] in "\"'`":
+            return f"assert.throws({a}, (e) => e.message.includes({b}))"
+        return f"assert.throws({a}, {b})"
+    return None
+
+
+def fix_jest(text: str) -> tuple[str, list[str]]:
+    """Tests estilo Jest (`describe`/`test`/`expect` sin importar): se importan de node:test y los `expect(…).toBe(…)`
+    se traducen a `assert`. El 20/10 gpt-oss los escribió así en `w-tareas`, `w-propinas` y `j-tres-en-raya` (la
+    guardia tenía razón, pero el modelo no los arreglaba en 4 rondas); es mecánico. Si algún `expect` no se sabe
+    traducir se deja tal cual (sí se importan los nombres de node:test)."""
+    used = {m.group(1) for m in JEST_CALL.finditer(text)} - imported_names(text)
+    if not used:
+        return text, []
+    notes: list[str] = []
+    new = text
+    if "expect" in used:
+        out, pos, ok = [], 0, True
+        while True:
+            m = EXPECT.search(new, pos)
+            if not m:
+                out.append(new[pos:])
+                break
+            end_a = _close(new, m.end() - 1)
+            mm = EXPECT_MATCHER.match(new, end_a) if end_a else None
+            end_b = _close(new, mm.end() - 1) if mm else None
+            repl = None
+            if end_b:
+                repl = _assertion(new[m.end():end_a - 1].strip(), mm.group(2), _split_args(new[mm.end():end_b - 1]),
+                                  bool(mm.group(1)))
+            if repl is None:
+                ok = False
+                break
+            out.append(new[pos:m.start()] + repl)
+            pos = end_b
+        if ok:
+            new = "".join(out)
+            notes.append("expect de Jest traducido a assert")
+        used.discard("expect")
+    head = []
+    wanted = sorted(used & {"describe", "test", "it", "beforeEach", "afterEach"})
+    if wanted:
+        have = NODE_TEST_IMPORT.search(new)
+        if have:
+            names = sorted({s.strip() for s in have.group(1).split(",") if s.strip()} | set(wanted))
+            new = new[:have.start()] + f"import {{ {', '.join(names)} }} from 'node:test';" + new[have.end():]
+        else:
+            head.append(f"import {{ {', '.join(wanted)} }} from 'node:test';")
+        notes.append(f"importado de node:test: {', '.join(wanted)}")
+    if re.search(r"(?<![\w$.])assert\.", new) and "assert" not in imported_names(new):
+        head.append("import assert from 'node:assert/strict';")
+    if head:
+        new = "\n".join(head) + "\n" + new
+    return new, notes
+
+
+STRAY_NAME = re.compile(r"^(?:ejemplo|example|sample|demo|prueba)\d*[._-]", re.I)
+
+
+def fix_stray_tests(root: Path, changed: list[str], task: str) -> list[str]:
+    """Tests que el plan dejó donde no van: un `x.test.mjs` suelto en la raíz (el 20/10 en `v-divisas` salieron 4,
+    con `./resumen.js` que no existe) pasa a `tests/` (o se borra si ya hay uno con ese nombre), y los inventados que la
+    tarea no pide (`tests/ejemplo2.test.mjs`, `tests/README.md` en `j-tres-en-raya`) se quitan."""
+    notes: list[str] = []
+    if not (root / "tests").is_dir():
+        return notes
+    try:
+        tracked = set(subprocess.run(["git", "ls-files"], cwd=root, capture_output=True, timeout=60)
+                      .stdout.decode("utf-8", "replace").split("\n"))
+    except (OSError, subprocess.TimeoutExpired):
+        return notes
+    for rel in changed:
+        path, name = root / rel, Path(rel).name
+        if not path.is_file() or rel in tracked or name in task:
+            continue  # lo que ya estaba en el repo o la tarea nombra no se toca
+        if "/" not in rel and ".test." in name and Path(rel).suffix in JS:
+            target = root / "tests" / name
+            if target.exists():
+                path.unlink()
+                notes.append(f"{rel}: fuera, ya existe tests/{name}")
+            else:
+                path.replace(target)
+                notes.append(f"{rel}: movido a tests/{name}")
+        elif rel.startswith("tests/") and rel.count("/") == 1 and (
+                STRAY_NAME.match(name) or Path(rel).suffix.lower() in (".md", ".txt")):
+            path.unlink()
+            notes.append(f"{rel}: fuera, la tarea no lo pide")
+    return notes
+
+
 def _block_end(text: str, start: int) -> int | None:
     """Fin (exclusivo) del bloque `{…}` que abre en `start`, saltando cadenas y comentarios."""
     depth, i, n = 0, start, len(text)
@@ -773,12 +991,18 @@ class Cerebro(Boss):
 
     # --- arreglos sin modelo
     def mechanical(self) -> list[str]:
+        notes: list[str] = fix_stray_tests(self.root, self.changed(), getattr(self, "task_text", ""))
         changed = [p for p in self.changed() if Path(p).suffix in JS]
         if not changed:
-            return []
-        notes: list[str] = []
+            return notes
         for rel in changed:
             if is_test_path(rel):
+                path = self.root / rel
+                text = path.read_text(encoding="utf-8", errors="replace")
+                new, jest = fix_jest(text)
+                if new != text:
+                    path.write_text(new, encoding="utf-8", newline="\n")
+                    notes += [f"{rel}: {n}" for n in jest]
                 continue
             path = self.root / rel
             text = path.read_text(encoding="utf-8", errors="replace")
@@ -802,6 +1026,8 @@ class Cerebro(Boss):
             new, fixed = fix_imports(self.root, rel, text, exported)
             new, missing = fix_missing_imports(self.root, rel, new, exported)
             fixed += missing
+            new, clash = fix_import_clash(self.root, rel, new, exported)
+            fixed += clash
             if fixed and new != text:
                 path.write_text(new, encoding="utf-8", newline="\n")
                 notes += fixed
@@ -1150,6 +1376,7 @@ class Cerebro(Boss):
         task, mark, prev = task.partition(PREV_MARK)
         task = task.rstrip()
         self.protected = protected_paths(task)
+        self.task_text = task
         task = self.with_sections(task)
         self.rewritten = set()
         rules = self.rules()

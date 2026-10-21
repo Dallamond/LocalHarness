@@ -1,0 +1,44 @@
+{
+  "descripcion": "gpt-oss solo en la M40 con el diagnóstico pensando a fondo (effort high, 6000 tokens) y la revisión en low. El diagnóstico lee mucho y escribe poco.",
+  "agente": "Jefe local 2",
+  "servidores": [
+    {
+      "id": "principal",
+      "name": "3060 (libre)",
+      "port": 8083,
+      "device": "CUDA0",
+      "role": "general",
+      "thinking": "normal"
+    },
+    {
+      "id": "m40",
+      "name": "M40",
+      "port": 8081,
+      "device": "CUDA1",
+      "role": "general",
+      "thinking": "normal"
+    }
+  ],
+  "modelos": {
+    "principal": null,
+    "m40": {
+      "modelo": "gpt-oss-20b-UD-Q4_K_XL",
+      "opciones": {
+        "ctx": 32768,
+        "n_cpu_moe": 0
+      }
+    }
+  },
+  "pensamiento": {
+    "m40": "normal"
+  },
+  "horas": 12,
+  "minutos_tarea": 45,
+  "presupuesto": 1,
+  "roles": {
+    "diagnosticar": {
+      "effort": "high",
+      "max_tokens": 6000
+    }
+  }
+}

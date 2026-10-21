@@ -3,6 +3,70 @@
 Última actualización: 18/10/2026 23:36 (cierre del día: ver «CIERRE 18/10»). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
 
 
+## ▶ 21/10/2026 — Paquete de arreglos mecánicos y cola de la mañana (M40 sola; SIN commit aún)
+**Push hecho** (`d4615cf` y `134d29b` ya en `origin/main`). **Código nuevo en el árbol (378 tests OK, LocalHarness reiniciado 09:35):**
+- `cerebro.fix_jest`: tests estilo Jest sin importar → `import … from 'node:test'` y `expect(…).toBe/toEqual/toThrow/…` traducido
+  a `assert` (si un matcher no se sabe traducir se deja y solo se importa). Ataca `w-propinas`, `w-tareas` (mismo fallo: `describe`/`expect`
+  en `tests/main.test.mjs` y `tests/vista.test.mjs`) y `j-tres-en-raya`.
+- `cerebro.fix_stray_tests`: `x.test.mjs` suelto en la raíz → `tests/` (o fuera si ya existe); `tests/ejemplo*.test.mjs` y `tests/README.md`
+  que la tarea no pide → fuera. Causa real de `v-divisas` (20/10): 4 tests en la raíz importaban `./resumen.js`, que no existe.
+- `cerebro.fix_import_clash` (la rama `arreglo-declaracion-import` del worktree `../LocalHarness-wt` ya está aplicada aquí; se puede borrar).
+- Contendientes con `roles` (pensamiento por papel): `ajustar_llama` los pone en `llama.jefe_roles` y el orquestador los mezcla sobre
+  `config.roles` del agente; al acabar vuelven a `{}`. Nuevos: `m40-solo-gptoss-plan-medio` (planificar effort medium) y
+  `m40-solo-gptoss-diag-alto` (diagnosticar effort high, 6000 tokens).
+**Cola (`scripts/encolar_hoy.py`, en este orden, `basico` 22 casos salvo que se diga):** `m40-solo-gptoss` ×2 tiradas con el código nuevo
+(antes 90,6 y 73,6 %) → `diag-alto` → `plan-medio` → `m40-solo-qwen35-35b-a3b` → `m40-solo-gptoss` en `cuentas-claras` guiada (31,0 %).
+Se compara por los casos que cada arreglo ataca (`w-propinas`, `w-tareas`, `j-tres-en-raya`, `v-divisas`, `a-modulo-falta`), no por la media.
+**Pendiente con las dos GPU:** A/B de `dividir`; `diag-alto`/`plan-medio` solo valen si la base nueva es estable (ruido ~17 puntos con n=1).
+
+## ▶ 20/10/2026 — Retomado SOLO en la M40 (la 3060 es de Lucas para otro proyecto)
+**Cola retomada a las ~14:40** (servidor reabierto; el PC/servidor se había cortado el 19/10 a las 23:09 con `gemma4-12b` en el caso
+15). Quitadas de la cola las 3 tandas que necesitan la 3060 (`par-gptoss-coder14b-dividir` ×2 y `par-gptoss-qwen9b-dividir`):
+**el A/B de `dividir` sigue sin medir** hasta que la 3060 esté libre. Quitada también `gemma4-12b` (ver abajo). Orden actual:
+`m40-solo-qwen35-35b-a3b` (22 casos) → `m40-solo-gptoss` en `cuentas-claras` guiada → `m40-solo-qwen3-32b` → `m40-solo-coder32b`.
+**Resultados del 19/10 (anotados hoy, `basico`, nota media del examen oculto):**
+- `par-gptoss-coder14b-cola` (gpt-oss M40 + Coder-14B 3060, reparto por cola): **69,7 %** (22), 14 al 100. Peor que gpt-oss solo.
+- `m40-solo-qwen3-coder-30b` (cribado 8): **68,8 %**, 4 al 100. «Afinado para código» no se nota en este flujo.
+- `m40-solo-qwen35-35b-a3b` (cribado 8): **88,5 %**, 6 al 100. El único que se acerca a gpt-oss; confirmando con los 22.
+- `m40-solo-gemma4-12b`: **no válido**. 14 casos a 0 por «tiempo agotado» (35 min); el informe dice 1,1 tok/s, pero esa columna no es fiable
+  (ver `coder32b` abajo). Causa sin averiguar; mirar el log del servidor antes de repetirla.
+- `m40-solo-gptoss-profundo` (razonamiento alto, 18/10): **33,2 %** (22), 6 al 100. No piensa mejor, solo tarda más (2,4–2,9 tok/s
+  medidos; 7 min en un caso de 2): los 0 son «sin cambios» o tiempo agotado. Descartado como configuración.
+**`m40-solo-gptoss`, 2.ª tirada (20/10, `basico`): 73,6 %** (12 al 100, 90 min de parche) frente a **90,6 %** de la 1.ª (17 al 100,
+68 min). **Conclusión principal: el ruido entre tiradas es de ~17 puntos con n=1.** 12 de 22 casos dan lo mismo; 7 difieren ≥30.
+Peores: `j-tres-en-raya` 100→0, `w-propinas` 100→0, `w-tareas` 80→0 (los tres «descartado (revisión)»), `v-renombrar` 100→66,7,
+`t-valores` 100→75, `d-mixto`/`e-texto` 100→66,7, `j-serpiente` 80→60. Mejores: `a-modulo-falta` 66,7→100, `t-sin-inventar`
+66,7→83,3. `v-divisas` 0 las dos veces (descartado por tests). **Consecuencia: diferencias de menos de ~15 puntos entre contendientes
+con una sola tirada no son significativas**; las tablas del 18/10 (79,9 / 71,2 / 69,7…) se leen como «peores o iguales», no ordenadas.
+Los ceros de `w-propinas` y `j-tres-en-raya` NO son falsos positivos: la guardia `JEST_CALL` tiene razón (gpt-oss escribe tests con
+`expect`/`describe` sin importar; en `j-tres-en-raya` el plan además inventó `tests/ejemplo2…6.test.mjs` y un `tests/README.md`, 13
+bloques en vez de ~5). Fallo del modelo/plan, no de la revisión. Mejora posible: que el arreglo borre los tests inventados que la
+tarea no pide y reescriba los Jest con `node:test` mecánicamente (no con el modelo). `w-tareas` aún sin mirar.
+**`m40-solo-qwen35-35b-a3b` (Qwen3.5-35B-A3B, MoE de 3B activos, solo en la M40; 20/10, `basico`, 22 casos): 83,6 %**, 16 al 100, 110 min
+de parche (gpt-oss: 90,6 / 73,6 % en 68 / 90 min). Entre las dos tiradas de gpt-oss: **empate técnico**, algo más lento. Flojos:
+`t-valores` 0, `a-modulo-falta` 0 (el hueco que cubre `fix_import_clash`), `d-import-mal` 50, `w-propinas` 50, `w-tareas` 60,
+`j-serpiente` 80. Gana donde gpt-oss falla siempre: `v-divisas` 100 (gpt-oss 0 las dos veces); `j-tres-en-raya` 100 (16,4 min).
+Es el único modelo distinto de gpt-oss que llega a este nivel; vale otra tirada para separarlos (con n=1 el ruido es ~17 puntos).
+**`m40-solo-gptoss` en `cuentas-claras` guiada (20/10, 18 parches, examen de 29 tests): 31,0 %**, 6/18 integrados (1 con deuda), 150 min
+(18:08–20:38). Dentro del rango de los locales (20–35 %) y muy lejos de Claude dirigiendo (96,6 %). La nota sube hasta el parche 8
+(31 %) y se queda plana los 10 siguientes: 6 «descartado (revisión)» y 5 «descartado (tests)», 1 «sin cambios». Los parches 1–4 (la base)
+integran 3 de 4, así que aquí no hay la cascada total de otras veces; lo que frena es la revisión rechazando y los tests rojos en
+parches largos (10–18 min cada uno antes de rendirse). Misma conclusión que el 09/10: el cuello de botella es el jefe local, no gpt-oss.
+**`m40-solo-qwen3-32b` (Qwen3-32B denso, sin razonamiento, solo en la M40; 20/10, cribado de 6 casos de `basico`): 95,8 %**, 5 al 100, 64 min.
+`e-precio`, `e-texto`, `t-valores`, `d-mixto`, `a-modulo-falta` 100; `m-carrito` 75. En esos mismos 6 casos: gpt-oss 94,5 % (1.ª) y 84,7 % (2.ª),
+Qwen3.5-35B-A3B 66,7 %. Es el mejor de los seis, pero 3–5× más lento por caso (6–15 min frente a 1–5; 64 min por 6 casos, los 22 serían
+~4 h). Cribado con n=1 y casos sencillos: no confirma nada sobre los largos/tangibles. M40 a 87 °C al 100 % durante la tanda (69 °C ahora).
+**`m40-solo-coder32b` (Qwen2.5-Coder-32B Q4_K_M denso, M40 sola; 20/10, cribado de 6): PARADA a propósito tras 3 casos, 0 %** (regla de la jornada:
+<70 % a los 6 casos). `e-precio` tiempo agotado (35 min), `e-texto` «el plan no salió: respuesta vacía» (1,2 min), `t-valores` 0 (3,2 min).
+CORRECCIÓN tras ver el log del servidor: la velocidad real era **~4 tok/s por hueco** (2 huecos a la vez), normal para un denso de 32B en la M40;
+los «0,9 tok/s» del informe NO son fiables (la columna «tok/s medio» mezcla encargos fallidos/vacíos). Lo anómalo es que dos encargos llevaban
+**2.000–2.600 tokens generados** (salidas desbocadas o en bucle) y que el plan salió vacío en `e-texto`: el modelo no sigue bien el formato de
+herramientas del jefe. Lo mismo puede valer para gemma4-12b (su «1,1 tok/s» sale de la misma columna): NO se puede afirmar que fuera `flash_attn`
+ni rendimiento; mirar su log antes de repetirla. M40 apagada al acabar (solo su servidor, `stop?server=m40`). **Cola vacía y parada** a las ~23:00.
+**Código (sin fusionar, rama `arreglo-declaracion-import`, worktree `../LocalHarness-wt`, sin commit):** `fix_import_clash` en
+`cerebro.py` + test (31 OK) para el hueco de `a-modulo-falta` (nombre importado Y declarado como función en el mismo archivo). No se
+fusiona hasta acabar la cola para no mezclar dos versiones del jefe en las tandas.
+
 ## ▶ CIERRE 18/10/2026 23:36 — dónde queda todo (leer esto primero mañana)
 **Cola del banco (sigue corriendo sola, solo en la M40; se retoma con `POST /api/banco/cola/empezar` si se apaga el PC):**
 `m40-solo-gptoss-profundo` en marcha 5/22 (razonamiento alto, lento) → pendientes `m40-solo-gemma4-12b` (22), `m40-solo-qwen3-32b`
