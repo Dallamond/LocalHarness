@@ -1,0 +1,45 @@
+{
+  "descripcion": "Las dos GPU: Qwen3.5-35B-A3B en la M40 (fuerte: planifica, diagnostica, revisa; 96,7 % solo) y Qwen2.5-Coder-14B en la 3060 (obrero). Reparto por cola.",
+  "agente": "Jefe local 2",
+  "reparto": "cola",
+  "servidores": [
+    {
+      "id": "principal",
+      "name": "3060 obrero",
+      "port": 8083,
+      "device": "CUDA0",
+      "role": "rapido",
+      "thinking": "apagado"
+    },
+    {
+      "id": "m40",
+      "name": "M40 fuerte",
+      "port": 8081,
+      "device": "CUDA1",
+      "role": "fuerte",
+      "thinking": "apagado"
+    }
+  ],
+  "modelos": {
+    "principal": {
+      "modelo": "Qwen-2.5-Coder-14B-Instruct-Q4_K_M",
+      "opciones": {
+        "ctx": 8192,
+        "flash_attn": "on"
+      }
+    },
+    "m40": {
+      "modelo": "Qwen3.5-35B-A3B",
+      "opciones": {
+        "ctx": 16384
+      }
+    }
+  },
+  "pensamiento": {
+    "principal": "apagado",
+    "m40": "apagado"
+  },
+  "horas": 12,
+  "minutos_tarea": 45,
+  "presupuesto": 1
+}

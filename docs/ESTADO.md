@@ -1,6 +1,6 @@
 # Estado y traspaso — leer primero al retomar (también desde Claude Code en la web)
 
-Última actualización: 21/10/2026 22:50 (jornada de pruebas del 21/10: ver «21/10/2026»). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
+Última actualización: 21/10/2026 23:10 (jornada de pruebas del 21/10: ver «21/10/2026»). Hoja de ruta: `docs/HOJA-DE-RUTA.md`.
 
 
 ## ▶ 21/10/2026 — Jornada de pruebas: arreglos mecánicos, roles por contendiente y A/B de `dividir`
@@ -30,9 +30,9 @@
 | `par-gptoss-coder14b-cola` | 81,1 % | 14 |
 | `par-gptoss-coder14b-dividir` | 81,7 % | 14 |
 | `par-gptoss-qwen9b-dividir` | 76,7 % | 14 |
-| **`m40-solo-qwen35-35b-a3b`** | **96,7 % (20 de 22 casos al escribir esto)** | 19 |
+| **`m40-solo-qwen35-35b-a3b`** | **96,1 %** (128 min) | 20 |
 **Lecturas:**
-- **Qwen3.5-35B-A3B es el mejor contendiente con diferencia**: 100 en todo salvo `m-paso` (33) hasta el caso 20. Es lo único del día fuera
+- **Qwen3.5-35B-A3B es el mejor contendiente con diferencia**: 100 en todo salvo `m-paso` (33) y `w-tareas` (80). Es lo único del día fuera
   del ruido. Candidato a jefe/obrero principal; falta confirmar en `cuentas-claras` (prueba larga) y con una segunda tirada.
 - **`dividir` no aporta frente a `cola`** (81,7 vs 81,1 con Coder-14B; 76,7 con Qwen9B): empate dentro del ruido, se deja `cola`.
 - **`diag-alto` y `plan-medio` no se separan de la base** (87,6 y 79,2 frente a 80,0 y 70,2): hacen falta repeticiones; no cambiar los roles por defecto.
@@ -40,9 +40,9 @@
   esperados mal), `d-import-mal` (reescribe `src/calc.js` con nombres inventados), `j-serpiente`/`m-carrito` (40–80).
 - Los arreglos de la mañana sí mejoran donde atacan (`w-propinas` 100 en 6 de 7 tandas con gpt-oss, `j-tres-en-raya` 100 en 6 de 7, `a-modulo-falta`
   100 en 3 de 7), pero la 2.ª tirada de gpt-oss mostró los tres huecos que arreglan los cambios de la noche.
-**Cola al cierre:** `m40-solo-qwen35-35b-a3b` terminando (`w-tareas`) → `m40-solo-gptoss` en `cuentas-claras` guiada (31,0 % de referencia, varias horas).
-**Siguiente:** reiniciar LocalHarness al acabar la cola, commit de los tres arreglos y repetir `m40-solo-gptoss` en `basico` (mirar `v-divisas`,
-`w-propinas`, `e-texto`); una 2.ª tirada de Qwen35; con las dos GPU libres, Qwen35 en la M40 + Coder-14B en la 3060 por `cola`. `w-tareas`
+**Cierre 21/10 23:05:** cola vacía y LocalHarness apagado (la `cuentas-claras` de gpt-oss se quitó: mejor medirla mañana con el código nuevo).
+**Mañana 22/10 (las dos GPU libres hasta las 14:00):** `scripts/encolar_2gpu.py --aplicar --empezar` con LocalHarness arrancado: `par-qwen35-coder14b-cola` → `par-gptoss-coder14b-cola` (control con el código nuevo) → `par-qwen35-qwen9b-cola` → `m40-solo-qwen35-35b-a3b` (2.ª tirada) → `par-qwen35-coder14b-cola` en `cuentas-claras` guiada (~6,5 h).
+**Siguiente:** la cola de mañana de arriba (mirar `v-divisas`, `w-propinas`, `e-texto` en el control de gpt-oss). `w-tareas`
 (tirada 2 de gpt-oss, 0 tras 4 reescrituras sin cambios) sin analizar; `gemma4-12b` sigue pendiente de mirar su log.
 
 ## ▶ 20/10/2026 — Retomado SOLO en la M40 (la 3060 es de Lucas para otro proyecto)
